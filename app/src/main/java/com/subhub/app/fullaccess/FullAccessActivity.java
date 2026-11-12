@@ -308,15 +308,26 @@ public final class FullAccessActivity extends PreferencePage {
             labels.add(getText(R.string.full_access_files));
         }
         if (steps.isEmpty()) { notice(getString(R.string.full_access_scope_on)); return; }
+        confirmation = showPermissionChoices(this, steps, labels, choices -> {
+            guided.clear();
+            guided.addAll(choices);
+            continueSetup();
+        });
+    }
+
+    /** Presents the selected setup routes. Only the owning page can authorize and dispatch them. */
+    static AlertDialog showPermissionChoices(Context context, List<String> steps, List<CharSequence> labels,
+            java.util.function.Consumer<List<String>> confirmed) {
+        if (steps.size() != labels.size()) throw new IllegalArgumentException("Permission labels do not match");
         boolean[] selected = new boolean[steps.size()];
-        confirmation = new AlertDialog.Builder(this).setTitle(R.string.full_access_guide)
+        return new AlertDialog.Builder(context).setTitle(R.string.full_access_guide)
                 .setMultiChoiceItems(labels.toArray(new CharSequence[0]), selected,
                         (dialog, which, checked) -> selected[which] = checked)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    guided.clear();
-                    for (int i = 0; i < steps.size(); i++) if (selected[i]) guided.add(steps.get(i));
-                    continueSetup();
+                    List<String> requested = new java.util.ArrayList<>();
+                    for (int i = 0; i < steps.size(); i++) if (selected[i]) requested.add(steps.get(i));
+                    confirmed.accept(requested);
                 }).show();
     }
 
