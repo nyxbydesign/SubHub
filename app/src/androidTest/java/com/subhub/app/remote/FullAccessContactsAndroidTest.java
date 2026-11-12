@@ -97,10 +97,20 @@ public final class FullAccessContactsAndroidTest {
                     setup.onActivity(activity -> focused.set(activity.hasWindowFocus()));
                     return focused.get();
                 });
-                setup.onActivity(activity -> activity.startActivity(hardcore.activationIntent()));
-                control(device, By.text(Pattern.compile("(?i)activate(?: this device admin app)?")).clickable(true),
-                        "Android Device Admin approval").click();
-                await("Hardcore Mode is active", hardcore::isEnabled);
+                setup.onActivity(activity -> {
+                    hardcore.beginActivation();
+                    activity.startActivity(hardcore.activationIntent());
+                });
+                UiObject2 approval = device.wait(Until.findObject(
+                        By.res("com.android.settings", "action_button").clickable(true)), WAIT);
+                try (FileOutputStream witness = new FileOutputStream(
+                        new File(context.getCacheDir(), "full-access-admin-witness.xml"))) {
+                    device.dumpWindowHierarchy(witness);
+                }
+                assertNotNull("Android Device Admin approval in " + device.getCurrentPackageName(), approval);
+                approval.click();
+                await("Android Device Admin approval completed", hardcore::isAdminActive);
+                assertTrue("Hardcore Mode is active", hardcore.finishActivation() && hardcore.isEnabled());
                 awaitToggle(setup, false);
                 onView(withTagValue(is("full_access_toggle"))).perform(click());
                 onView(withText(R.string.full_access_share)).inRoot(isDialog()).perform(click());
