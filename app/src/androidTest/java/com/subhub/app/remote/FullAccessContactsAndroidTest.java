@@ -102,13 +102,15 @@ public final class FullAccessContactsAndroidTest {
                     activity.startActivity(hardcore.activationIntent());
                 });
                 UiObject2 approval = device.wait(Until.findObject(
-                        By.res("com.android.settings", "action_button").clickable(true)), WAIT);
+                        By.res("com.android.settings", "action_button").enabled(true)), WAIT);
                 try (FileOutputStream witness = new FileOutputStream(
                         new File(context.getCacheDir(), "full-access-admin-witness.xml"))) {
                     device.dumpWindowHierarchy(witness);
                 }
                 assertNotNull("Android Device Admin approval in " + device.getCurrentPackageName(), approval);
-                approval.click();
+                var bounds = approval.getVisibleBounds();
+                assertFalse("Android Device Admin approval is visible", bounds.isEmpty());
+                assertTrue("Android Device Admin approval tap", device.click(bounds.centerX(), bounds.centerY()));
                 await("Android Device Admin approval completed", hardcore::isAdminActive);
                 assertTrue("Hardcore Mode is active", hardcore.finishActivation() && hardcore.isEnabled());
                 awaitToggle(setup, false);
