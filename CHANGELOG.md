@@ -411,6 +411,9 @@ User-facing changes from every tagged SubHub release.
 - **Count legacy session timer work before runtime handover** — Keep boot, pact expiry, and paid-pause restore from starting during a runtime handover, and retain queued timer deliveries until their work returns.
 - **Wait for Demo accounting before attaching capture** — Start attaches capture after the owner data acknowledges the Demo session and after rechecking the same bound Accessibility service.
 - **Complete Demo Sub capture and repeatable session handoff** — Demo Sub starts with its own settings and capture session, then restores ordinary Accessibility after End so the next Demo session can start cleanly.
+- **Correct Dom achievement roles and Wallet grouping** — Move the five text-filter and appearance milestones from Sub to Dom while preserving existing achievement IDs, requirements, artwork and earned receipts, and group paid tributes with Wallet Bound.
+- **Show peer presence on authenticated app updates** — New contract and app data update Online as soon as they are accepted, and ordinary sync carries foreground changes while Last seen survives expiry.
+- **Refresh the open Contract on peer changes** — The Contract screen refreshes its peer status as presence changes and shows applied contract updates while the screen stays open.
 
 ### Faster & smoother
 
@@ -473,6 +476,7 @@ User-facing changes from every tagged SubHub release.
 - **Reduce idle background sync and repeated offline retries** — Check quiet active background peers every five minutes and back off unavailable peers to fifteen minutes, without delaying healthy new data, foreground/network recovery, pairing or revocation.
 - **Preserve stored screen values while metadata refreshes** — Show saved app selections and allowances immediately, enrich metadata in place, and coalesce repeated page reads so ongoing work can finish without loading-copy flashes.
 - **Read lightweight roster projections away from the main thread** — Build Dom roster cards from identity, presence and session totals without formatting unused contracts or app allowances.
+- **Reuse verified immutable update manifests** — Update checks skip repeated manifest downloads when GitHub reports the same immutable asset digest and contact the current repository directly.
 
 ### Improved
 
@@ -658,6 +662,7 @@ User-facing changes from every tagged SubHub release.
 - **Register Demo Sub diagnostic source labels** — Add fixed names for the tracked Demo Sub runtime and test files so canonical CI can summarize compilation failures without exposing diagnostics.
 - **Report bounded unit test source labels** — Include up to eight allowlisted source labels when Gradle reports failed JVM tests.
 - **Reconcile development changes for 0.7.0** — Bring Demo Sub and the latest development changes into the 0.7.0 draft while retaining the stable dependency baseline and manual native test selection.
+- **Integrate eligible development changes for 0.7.0** — Bring the reviewed achievement, Wallet, peer, and updater changes through dev.254 into the stable candidate.
 
 ### Quality
 
@@ -747,6 +752,7 @@ User-facing changes from every tagged SubHub release.
 - **Run capture host Android fixtures on the native runner** — Keep the two pure API-boundary contracts in JVM tests and move fourteen unchanged Intent-dependent contracts to the explicitly inventoried Android suite.
 - **Fence stale Demo Start after a visibility change** — Verify that hide and re-add retire a permission-approved reservation and that a delayed callback cannot consume the fresh reservation.
 - **Admit the isolated expiry fixture through the legacy barrier** — Bind the exact registered debug fixture to the physical Application for legacy ticket accounting while preserving its isolated preferences.
+- **Register crossed peer retries in native suites** — The battery and device regression suites include authenticated crossed-dial retries and the malformed and background controls.
 
 ### Maintenance
 
@@ -758,6 +764,7 @@ User-facing changes from every tagged SubHub release.
 - **Deps: Bump com.microsoft.onnxruntime:onnxruntime-android** — Bumps [com.microsoft.onnxruntime:onnxruntime-android](https://github.com/microsoft/onnxruntime) from 1.20.0 to 1.31.1.
 - **Deps: Bump org.jetbrains.kotlin.android from 2.2.21 to 2.4.21** — Bumps [org.jetbrains.kotlin.android](https://github.com/JetBrains/kotlin) from 2.2.21 to 2.4.21.
 - **Preserve unqualified internal Sub code for OPS handoff** — Preserve the stopped owner, session, capture, accounting and lifecycle work as exact source snapshots for implementation handoff.
+- **Deps: Bump androidx.test.uiautomator:uiautomator** — Bumps androidx.test.uiautomator:uiautomator from 2.4.0 to 2.4.1.
 
 </details>
 
