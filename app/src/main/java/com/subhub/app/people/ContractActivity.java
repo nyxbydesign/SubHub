@@ -9,7 +9,9 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import androidx.core.view.ViewCompat;
+import androidx.lifecycle.Lifecycle;
 import com.subhub.app.R;
+import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.SubHubNavigation;
 import java.util.LinkedHashMap;
@@ -22,6 +24,12 @@ public final class ContractActivity extends RolePage {
     private String atmosphereSummary;
     private boolean contractUnknown;
     private java.util.List<Object> renderedContract;
+    private AutoCloseable presenceObserver, configurationObserver;
+    private boolean refreshQueued;
+    private final Runnable refreshObservedContract = () -> {
+        refreshQueued = false;
+        if (canRefreshObservedContract()) refresh();
+    };
     private final Map<String, View> details = new LinkedHashMap<>();
     private final Map<String, ImageView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
@@ -41,6 +49,33 @@ public final class ContractActivity extends RolePage {
             expandedAbout = state.getBoolean("contract_about_expanded");
         }
         page(R.string.role_contract, SubHubNavigation.Screen.CONTRACT, false);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (isFinishing()) return;
+        presenceObserver = RemoteUi.observePresence(this::queueObservedRefresh);
+        configurationObserver = RemoteUi.observeConfiguration(this::queueObservedRefresh);
+    }
+
+    @Override protected void onPause() {
+        for (AutoCloseable observer : new AutoCloseable[]{presenceObserver, configurationObserver})
+            if (observer != null) try { observer.close(); } catch (Exception ignored) { /* Memory-only observer. */ }
+        presenceObserver = null;
+        configurationObserver = null;
+        body.removeCallbacks(refreshObservedContract);
+        refreshQueued = false;
+        super.onPause();
+    }
+
+    private void queueObservedRefresh() {
+        if (canRefreshObservedContract() && !refreshQueued)
+            refreshQueued = body.post(refreshObservedContract);
+    }
+
+    private boolean canRefreshObservedContract() {
+        return body != null && !isFinishing() && !isDestroyed()
+                && getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
