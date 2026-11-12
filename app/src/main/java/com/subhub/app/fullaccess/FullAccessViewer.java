@@ -131,12 +131,15 @@ final class FullAccessViewer implements AutoCloseable {
         activity.getOnBackPressedDispatcher().addCallback(activity, pageBackCallback);
         if (pageBack != null) pageBack.setOnClickListener(view -> activity.getOnBackPressedDispatcher().onBackPressed());
 
-        for (String scope : SECTIONS) {
-            BlackmailViews.entry(overview, displayLabel(scope), icon(scope), scope, () -> selectScope(scope, true));
-            LinearLayout panel = PersonUi.card(parent);
-            panel.setTag("blackmail_page:" + scope);
-            panel.setVisibility(View.GONE);
-            sections.put(scope, new Section(scope, panel));
+        for (int start = 0; start < SECTIONS.size(); start += 2) {
+            LinearLayout row = BlackmailViews.entryRow(overview);
+            for (String scope : SECTIONS.subList(start, Math.min(start + 2, SECTIONS.size()))) {
+                BlackmailViews.entry(row, displayLabel(scope), icon(scope), scope, () -> selectScope(scope, true));
+                LinearLayout panel = PersonUi.card(parent);
+                panel.setTag("blackmail_page:" + scope);
+                panel.setVisibility(View.GONE);
+                sections.put(scope, new Section(scope, panel));
+            }
         }
     }
 

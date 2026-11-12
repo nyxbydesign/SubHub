@@ -55,12 +55,23 @@ final class BlackmailViews {
         return card;
     }
 
+    static LinearLayout entryRow(LinearLayout parent) {
+        Context context = parent.getContext();
+        LinearLayout row = new LinearLayout(context);
+        row.setBaselineAligned(false);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
+        size.bottomMargin = dp(context, 10);
+        parent.addView(row, size);
+        return row;
+    }
+
     static void entry(LinearLayout parent, int label, int resource, String scope, Runnable open) {
         Context context = parent.getContext();
-        LinearLayout tile = horizontal(context);
+        LinearLayout tile = PersonUi.column(context);
         tile.setTag("blackmail_entry:" + scope);
-        tile.setMinimumHeight(dp(context, 70));
-        tile.setPaddingRelative(dp(context, 14), dp(context, 10), dp(context, 14), dp(context, 10));
+        tile.setMinimumHeight(dp(context, 106));
+        int padding = dp(context, 12);
+        tile.setPaddingRelative(padding, padding, padding, padding);
         tile.setBackgroundResource(R.drawable.bg_card);
         tile.setForeground(ripple(context, null));
         tile.setFocusable(true);
@@ -75,20 +86,24 @@ final class BlackmailViews {
         };
         badge.setBackground(shape(context, badgeColor, 14));
         badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-        badge.addView(icon(context, resource, R.color.text_primary),
-                new FrameLayout.LayoutParams(dp(context, 22), dp(context, 22), Gravity.CENTER));
-        LinearLayout.LayoutParams badgeSize = new LinearLayout.LayoutParams(dp(context, 44), dp(context, 44));
-        badgeSize.setMarginEnd(dp(context, 13));
-        tile.addView(badge, badgeSize);
+        ImageView glyph = icon(context, resource, R.color.text_primary);
+        glyph.setTag("blackmail_entry_icon");
+        glyph.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        glyph.setPadding(0, 0, 0, 0);
+        badge.addView(glyph, new FrameLayout.LayoutParams(dp(context, 22), dp(context, 22), Gravity.CENTER));
+        FrameLayout icons = new FrameLayout(context);
+        icons.addView(badge, new FrameLayout.LayoutParams(dp(context, 44), dp(context, 44), Gravity.START));
+        ImageView arrow = icon(context, R.drawable.ic_overview_chevron, R.color.accent_text);
+        icons.addView(arrow, new FrameLayout.LayoutParams(dp(context, 18), dp(context, 18),
+                Gravity.END | Gravity.CENTER_VERTICAL));
+        tile.addView(icons, new LinearLayout.LayoutParams(-1, dp(context, 44)));
 
         TextView title = text(context, context.getText(label), R.dimen.ui_text_section, R.color.text_primary, true);
-        tile.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        ImageView arrow = icon(context, R.drawable.ic_overview_chevron, R.color.accent_text);
-        LinearLayout.LayoutParams arrowSize = new LinearLayout.LayoutParams(dp(context, 18), dp(context, 18));
-        arrowSize.setMarginStart(dp(context, 8));
-        tile.addView(arrow, arrowSize);
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.bottomMargin = dp(context, 9);
+        LinearLayout.LayoutParams titleSize = new LinearLayout.LayoutParams(-1, -2);
+        titleSize.topMargin = dp(context, 6);
+        tile.addView(title, titleSize);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1);
+        if (parent.getChildCount() > 0) size.setMarginStart(dp(context, 10));
         parent.addView(tile, size);
     }
 

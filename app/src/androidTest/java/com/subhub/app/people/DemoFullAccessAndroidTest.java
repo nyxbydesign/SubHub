@@ -20,6 +20,7 @@ import android.os.Environment;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
@@ -179,14 +180,42 @@ public final class DemoFullAccessAndroidTest {
     }
 
     private void assertLanding(Activity activity) {
-        await(() -> onMain(() -> visible(activity, "blackmail_entry:contacts") != null));
+        await(() -> onMain(() -> {
+            View first = visible(activity, "blackmail_entry:contacts");
+            return first != null && first.getWidth() > 0;
+        }));
         instrumentation.runOnMainSync(() -> {
-            for (String scope : List.of("contacts", "sms", "notifications", "apps", "files", "screen")) {
-                assertNotNull(scope, visible(activity, "blackmail_entry:" + scope));
-                assertNull(scope, visible(activity, "blackmail_page:" + scope));
+            assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
+            List<String> scopes = List.of("contacts", "sms", "notifications", "apps", "files", "screen");
+            int previousTop = -1;
+            for (int index = 0; index < scopes.size(); index += 2) {
+                String first = scopes.get(index), second = scopes.get(index + 1);
+                View left = visible(activity, "blackmail_entry:" + first);
+                View right = visible(activity, "blackmail_entry:" + second);
+                assertNotNull(first, left);
+                assertNotNull(second, right);
+                assertSame(left.getParent(), right.getParent());
+                assertTrue(Math.abs(left.getWidth() - right.getWidth()) <= 1);
+                assertEquals(left.getHeight(), right.getHeight());
+                assertNotEquals(left.getLeft(), right.getLeft());
+                assertCenteredIcon(left);
+                assertCenteredIcon(right);
+                View row = (View) left.getParent();
+                assertTrue(row.getTop() > previousTop);
+                previousTop = row.getTop();
+                assertNull(first, visible(activity, "blackmail_page:" + first));
+                assertNull(second, visible(activity, "blackmail_page:" + second));
             }
             assertNull(MediaProjectionLeaseRegistry.owner());
         });
+    }
+
+    private static void assertCenteredIcon(View tile) {
+        View glyph = tile.findViewWithTag("blackmail_entry_icon");
+        assertNotNull(glyph);
+        View badge = (View) glyph.getParent();
+        assertTrue(Math.abs(glyph.getLeft() + glyph.getRight() - badge.getWidth()) <= 1);
+        assertTrue(Math.abs(glyph.getTop() + glyph.getBottom() - badge.getHeight()) <= 1);
     }
 
     private static void tapEntry(String scope) {

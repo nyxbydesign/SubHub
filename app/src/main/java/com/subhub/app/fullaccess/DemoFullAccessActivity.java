@@ -3,7 +3,6 @@ package com.subhub.app.fullaccess;
 import android.content.Intent;
 import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
-import android.view.WindowManager;
 import android.widget.LinearLayout;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -55,7 +54,6 @@ public final class DemoFullAccessActivity extends PreferencePage {
         if (data == null) { finish(); return; }
         source = new DemoFullAccess(this, data.acknowledged().generation, ControllerPinManager.domWorkspaceRevision());
         if (!authorized()) { finish(); return; }
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         page(R.string.full_access_title);
         controls = PersonUi.column(this);
         page.addView(controls, new LinearLayout.LayoutParams(-1, -2));

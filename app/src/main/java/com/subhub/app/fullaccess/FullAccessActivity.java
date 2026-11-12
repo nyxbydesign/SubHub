@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.view.WindowManager;
 import android.widget.LinearLayout;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonId;
@@ -39,7 +38,6 @@ public final class FullAccessActivity extends PreferencePage {
         super.onCreate(state);
         String peer = getIntent().getStringExtra(PEER);
         if (!validPeer(peer) || !viewerAllowed(this)) { finish(); return; }
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         page(R.string.full_access_title);
         LinearLayout controls = PersonUi.column(this);
         page.addView(controls, new LinearLayout.LayoutParams(-1, -2));
