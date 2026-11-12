@@ -99,6 +99,15 @@ public final class FullAccessScreen {
         catch (RuntimeException unavailable) { return false; }
     }
 
+    static boolean screenAlertsAvailable(Context context) {
+        NotificationManager notifications = context.getSystemService(NotificationManager.class);
+        if (notifications == null || !notifications.areNotificationsEnabled()) return false;
+        NotificationChannel active = notifications.getNotificationChannel(ACTIVE_CHANNEL);
+        NotificationChannel request = notifications.getNotificationChannel(REQUEST_CHANNEL);
+        return (active == null || active.getImportance() != NotificationManager.IMPORTANCE_NONE)
+                && (request == null || request.getImportance() != NotificationManager.IMPORTANCE_NONE);
+    }
+
     static NotificationManager activeNotifications(Context context) {
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         if (notifications == null || !notifications.areNotificationsEnabled()) return null;

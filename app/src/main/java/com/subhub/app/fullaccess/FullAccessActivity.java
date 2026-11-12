@@ -225,6 +225,19 @@ public final class FullAccessActivity extends PreferencePage {
         LinearLayout screen = PersonUi.card(controls);
         PersonUi.text(screen, getString(R.string.full_access_screen), true);
         PersonUi.text(screen, getString(R.string.full_access_screen_setup_note), false);
+        if (!FullAccessScreen.screenAlertsAvailable(this)) {
+            PersonUi.text(screen, getString(R.string.full_access_screen_alerts_required), false);
+            PersonUi.action(screen, R.string.full_access_screen_alerts_settings, () -> {
+                if (resumed && allowed()) {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+                    } catch (android.content.ActivityNotFoundException unavailable) {
+                        notice(getString(R.string.full_access_setup_failed));
+                    }
+                }
+            }, false);
+        }
     }
 
     private void renderDataSetup(ScopeState scope, boolean usage) {
