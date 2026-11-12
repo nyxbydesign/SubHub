@@ -876,6 +876,7 @@ JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessScreenFramesTest.java": "unit_full_access_screen_frames_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessSmsPrivacyTest.java": "unit_full_access_sms_privacy_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessSmsThreadsTest.java": "unit_full_access_sms_threads_test",
+    b"app/src/test/java/com/subhub/app/remote/FullAccessLoadingTest.java": "unit_full_access_loading_test",
     b"app/src/test/java/com/subhub/app/remote/FullAccessWireTest.java": "unit_full_access_wire_test",
     b"app/src/test/java/com/subhub/app/runtime/DeviceFailureSettlementTest.java": "unit_device_failure_settlement",
     b"app/src/test/java/com/subhub/app/service/LatestFrameBrokerAsyncTest.java": "unit_latest_frame_broker_async",
