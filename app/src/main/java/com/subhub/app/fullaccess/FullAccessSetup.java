@@ -201,6 +201,16 @@ public final class FullAccessSetup {
                 PersonUi.action(panel, R.string.blackmail_files_android_permission, () -> finishAccessReview(state, false, true), false);
             if (state.files == FullAccessFiles.Setup.ANDROID_10)
                 PersonUi.text(panel, host.getString(R.string.blackmail_files_android_10), false);
+            if (demo == null && !FullAccessScreen.screenAlertsAvailable(app)) {
+                PersonUi.text(panel, host.getString(R.string.full_access_screen_alerts_required), false);
+                PersonUi.action(panel, R.string.full_access_screen_alerts_settings, () -> {
+                    if (!resumed || !showable() || !allowed.getAsBoolean() || pending != null || !remaining.isEmpty()) return;
+                    flow = state.epoch;
+                    remaining.add("screen");
+                    advance();
+                    refresh();
+                }, false);
+            }
         }
         if (state.enabled && pending == null && remaining.isEmpty() && !FullAccessDataSources.hasSmsAccess(app)) {
             PersonUi.action(panel, demo == null ? R.string.full_access_import_sms : R.string.demo_full_access_sms_import,

@@ -24,6 +24,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -138,6 +139,26 @@ public final class BlackmailViewsAndroidTest {
             if ("true".equals(InstrumentationRegistry.getArguments().getString("blackmail_preview")))
                 capture(app, grouped, "blackmail-notification-content-synthetic.png");
         });
+    }
+
+    @Test public void authorizedTransientRefreshPreservesLoadedRowsButDenialClearsThem() throws Exception {
+        FullAccessViewer.Continuous pages = new FullAccessViewer.Continuous();
+        pages.accept(new JSONObject().put("items", new JSONArray()
+                .put(new JSONObject().put("id", "1").put("title", "Sample contact")))
+                .put("nextCursor", "next"), "", false);
+        pages.fail("", R.string.blackmail_refresh_unavailable);
+        assertEquals(List.of("1"), List.copyOf(pages.rows.keySet()));
+        assertEquals("next", pages.next);
+        assertFalse(pages.canAdvance());
+
+        pages.accept(new JSONObject().put("items", new JSONArray()
+                .put(new JSONObject().put("id", "1").put("title", "Sample contact")))
+                .put("nextCursor", "next"), "", false);
+        assertTrue(pages.canAdvance());
+
+        pages.fail("next", R.string.full_access_permission_needed);
+        assertTrue(pages.rows.isEmpty());
+        assertFalse(pages.canAdvance());
     }
 
     private static void assertNeutralIcon(LinearLayout row) {

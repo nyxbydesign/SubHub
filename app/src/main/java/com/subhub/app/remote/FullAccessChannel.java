@@ -54,6 +54,8 @@ public final class FullAccessChannel implements AutoCloseable {
     }
 
     public boolean isOpen() { return !closed.get(); }
+    public boolean supportsLazyContactPhotos() { return opened.optBoolean("lazyContactPhotos"); }
+    public boolean supportsLazyAppUsage() { return opened.optBoolean("lazyAppUsage"); }
 
     /** Worker-only check for publication after the transfer's terminal marker. */
     public boolean isCurrent() { return !closed.get() && current.getAsBoolean(); }

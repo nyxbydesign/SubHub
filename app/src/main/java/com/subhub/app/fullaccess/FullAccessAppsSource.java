@@ -9,19 +9,26 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import androidx.annotation.RequiresApi;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 final class FullAccessAppsSource {
     private static final int MAX_EVENTS = 100_000;
+    private static final long SNAPSHOT_MILLIS = 10_000;
+    private static final Pattern PACKAGE = Pattern.compile("[a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)*");
 
     private FullAccessAppsSource() { }
 
@@ -36,29 +43,120 @@ final class FullAccessAppsSource {
     }
 
     static JSONObject page(Context context, int offset, int limit, long now) throws JSONException {
-        PackageManager manager = context.getPackageManager();
-        List<ApplicationInfo> apps = new java.util.ArrayList<>(manager.getInstalledApplications(0));
-        apps.removeIf(app -> isSystemApp(app.flags));
-        apps.sort(Comparator.comparing(info -> info.packageName));
-        Usage usage = Build.VERSION.SDK_INT >= 28 && hasUsageAccess(context) ? usage(context, now) : null;
-        JSONArray rows = new JSONArray();
-        int end = offset >= apps.size() ? apps.size() : offset + Math.min(limit, apps.size() - offset);
-        for (int index = offset; index < end; index++) {
-            ApplicationInfo info = apps.get(index);
-            JSONObject item = new JSONObject().put("id", info.packageName)
-                    .put("title", FullAccessDataSources.bounded(String.valueOf(info.loadLabel(manager)), 160))
-                    .put("detail", info.packageName);
-            if (usage != null && usage.since >= 0) {
-                FullAccessForegroundUsage.Totals totals = usage.totals.get(info.packageName);
-                item.put("todayMillis", totals == null ? 0 : totals.todayMillis)
-                        .put("weekMillis", totals == null ? 0 : totals.weekMillis);
+        return new Reader().page(context, offset, "", limit, now, true);
+    }
+
+    static boolean validPackages(String node) {
+        String[] packages = node.split(",", -1);
+        if (packages.length > FullAccessDataSources.DETAIL_BATCH_SIZE) return false;
+        for (String name : packages) if (!validPackage(name)) return false;
+        return true;
+    }
+
+    private static boolean validPackage(String name) {
+        return name.length() <= 255 && PACKAGE.matcher(name).matches();
+    }
+
+    /** Reuse source snapshots only for the lifetime of this authenticated connection. */
+    static final class Reader {
+        private List<ApplicationInfo> apps;
+        private long appsAt;
+        private Usage usage;
+        private long usageAt;
+        private boolean measuredUsage;
+
+        JSONObject page(Context context, int offset, String after, int limit, long now, boolean includeUsage)
+                throws JSONException {
+            List<ApplicationInfo> installed = installed(context);
+            int start = Math.min(offset, installed.size());
+            if (!after.isEmpty()) {
+                if (!validPackage(after)) throw new IllegalArgumentException("Invalid app cursor");
+                while (start < installed.size() && installed.get(start).packageName.compareTo(after) <= 0) start++;
             }
-            rows.put(item);
+            Usage values = includeUsage ? usageSnapshot(context, now) : null;
+            JSONArray rows = new JSONArray();
+            int end = start + Math.min(limit, installed.size() - start);
+            PackageManager manager = context.getPackageManager();
+            for (int index = start; index < end; index++) {
+                ApplicationInfo app = installed.get(index);
+                JSONObject item = new JSONObject().put("id", app.packageName)
+                        .put("title", FullAccessDataSources.bounded(String.valueOf(app.loadLabel(manager)), 160))
+                        .put("detail", app.packageName);
+                if (hasTotals(values)) addTotals(item, values, app.packageName);
+                rows.put(item);
+            }
+            boolean usageAvailable = includeUsage ? hasTotals(values) : hasUsageAccess(context);
+            JSONObject result = FullAccessDataSources.response("ok", rows).put("usageAvailable", usageAvailable);
+            if (hasTotals(values)) result.put("since", values.since);
+            if (end < installed.size()) {
+                String next = includeUsage ? Integer.toString(end) : installed.get(end - 1).packageName;
+                result.put("nextCursor", next);
+            }
+            return result;
         }
-        JSONObject result = FullAccessDataSources.response("ok", rows).put("usageAvailable", usage != null && usage.since >= 0);
-        if (usage != null && usage.since >= 0) result.put("since", usage.since);
-        if (end < apps.size()) result.put("nextCursor", Integer.toString(end));
-        return result;
+
+        JSONObject usagePage(Context context, String node, long now) throws JSONException {
+            Usage values = usageSnapshot(context, now);
+            JSONArray rows = new JSONArray();
+            if (hasTotals(values)) {
+                Set<String> requested = new HashSet<>(List.of(node.split(",", -1)));
+                for (ApplicationInfo app : installed(context)) {
+                    if (!requested.remove(app.packageName)) continue;
+                    rows.put(addTotals(new JSONObject().put("id", app.packageName), values, app.packageName));
+                    if (requested.isEmpty()) break;
+                }
+            }
+            JSONObject result = FullAccessDataSources.response("ok", rows).put("usageAvailable", hasTotals(values));
+            if (hasTotals(values)) result.put("since", values.since);
+            return result;
+        }
+
+        private List<ApplicationInfo> installed(Context context) {
+            long now = SystemClock.elapsedRealtime();
+            if (apps == null || now - appsAt >= SNAPSHOT_MILLIS) {
+                List<ApplicationInfo> next = new ArrayList<>(context.getPackageManager().getInstalledApplications(0));
+                next.removeIf(app -> isSystemApp(app.flags));
+                next.sort(Comparator.comparing(info -> info.packageName));
+                apps = next;
+                appsAt = now;
+            }
+            return apps;
+        }
+
+        private Usage usageSnapshot(Context context, long now) {
+            if (Build.VERSION.SDK_INT < 28 || !hasUsageAccess(context)) {
+                measuredUsage = false;
+                usage = null;
+                return null;
+            }
+            long elapsed = SystemClock.elapsedRealtime();
+            if (!measuredUsage || elapsed - usageAt >= SNAPSHOT_MILLIS) {
+                usage = FullAccessAppsSource.usage(context, now);
+                usageAt = elapsed;
+                measuredUsage = true;
+            }
+            return usage;
+        }
+    }
+
+    private static boolean hasTotals(Usage usage) { return usage != null && usage.since >= 0; }
+
+    private static JSONObject addTotals(JSONObject item, Usage usage, String pkg) throws JSONException {
+        FullAccessForegroundUsage.Totals totals = usage.totals.get(pkg);
+        return item.put("todayMillis", totals == null ? 0 : totals.todayMillis)
+                .put("weekMillis", totals == null ? 0 : totals.weekMillis);
+    }
+
+    static void removeUsage(JSONObject response) throws JSONException {
+        response.put("usageAvailable", false).remove("since");
+        JSONArray rows = response.optJSONArray("items");
+        if (rows == null) return;
+        for (int index = 0; index < rows.length(); index++) {
+            JSONObject item = rows.optJSONObject(index);
+            if (item == null) continue;
+            item.remove("todayMillis");
+            item.remove("weekMillis");
+        }
     }
 
     static boolean isSystemApp(int flags) {

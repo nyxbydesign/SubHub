@@ -36,6 +36,10 @@ final class FullAccessContactsSource {
     private FullAccessContactsSource() { }
 
     static JSONObject page(Context context, long after, int limit) throws JSONException {
+        return page(context, after, limit, true);
+    }
+
+    static JSONObject page(Context context, long after, int limit, boolean includePhotos) throws JSONException {
         if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED)
             return FullAccessDataSources.response("permission_required", new JSONArray());
         ContentResolver resolver = context.getContentResolver();
@@ -66,13 +70,53 @@ final class FullAccessContactsSource {
             String detail = contact == null ? "" : FullAccessDataSources.bounded(String.join("\n", contact), 512);
             JSONObject row = new JSONObject().put("id", last)
                     .put("title", entry.getValue().name()).put("detail", detail);
-            String photo = readPhoto(resolver, entry.getValue().thumbnailUri());
-            if (photo != null) row.put("photo", photo);
+            String thumbnail = entry.getValue().thumbnailUri();
+            if (includePhotos) {
+                String photo = readPhoto(resolver, thumbnail);
+                if (photo != null) row.put("photo", photo);
+            } else if (thumbnail != null) {
+                row.put("hasPhoto", true);
+            }
             rows.put(row);
         }
         JSONObject result = FullAccessDataSources.response("ok", rows);
         if (more && last != null) result.put("nextCursor", last);
         return result;
+    }
+
+    static boolean validPhotoIds(String node) {
+        String[] ids = node.split(",", -1);
+        if (ids.length > FullAccessDataSources.DETAIL_BATCH_SIZE) return false;
+        for (String id : ids) {
+            try {
+                if (FullAccessSmsSource.number(id) <= 0) return false;
+            } catch (IllegalArgumentException invalid) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static JSONObject photos(Context context, String node) throws JSONException {
+        if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED)
+            return FullAccessDataSources.response("permission_required", new JSONArray());
+        ContentResolver resolver = context.getContentResolver();
+        String[] ids = node.split(",", -1);
+        String placeholders = String.join(",", Collections.nCopies(ids.length, "?"));
+        String id = ContactsContract.Contacts._ID;
+        JSONArray items = new JSONArray();
+        try (Cursor cursor = resolver.query(ContactsContract.Contacts.CONTENT_URI,
+                new String[]{id, ContactsContract.Contacts.PHOTO_THUMBNAIL_URI},
+                id + " IN (" + placeholders + ")", ids, null)) {
+            if (cursor == null) return FullAccessDataSources.response("unavailable", items);
+            while (items.length() < ids.length && cursor.moveToNext()) {
+                String photo = readPhoto(resolver, cursor.getString(1));
+                JSONObject row = new JSONObject().put("id", Long.toString(cursor.getLong(0)));
+                if (photo != null) row.put("photo", photo);
+                items.put(row);
+            }
+        }
+        return FullAccessDataSources.response("ok", items);
     }
 
     private static String readPhoto(ContentResolver resolver, String thumbnailUri) {

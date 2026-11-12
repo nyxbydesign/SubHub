@@ -111,8 +111,11 @@ public final class FullAccessScreenService extends Service {
         leaseHeld = true;
         owner = session;
         try {
-            if (FullAccessScreen.activeNotifications(this) == null)
-                throw new IllegalStateException("Screen sharing indicator unavailable");
+            if (FullAccessScreen.activeNotifications(this) == null) {
+                session.end(FullAccessScreen.ALERTS_REQUIRED);
+                releaseCapture();
+                return START_NOT_STICKY;
+            }
             Notification notification = sharingNotification(session);
             if (Build.VERSION.SDK_INT >= 29)
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);

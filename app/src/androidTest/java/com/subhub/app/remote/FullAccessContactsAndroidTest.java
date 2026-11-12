@@ -6,6 +6,7 @@ import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.hamcrest.CoreMatchers.is;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -19,6 +20,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.provider.ContactsContract;
 
@@ -47,6 +49,7 @@ import org.json.JSONObject;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -55,9 +58,11 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -129,18 +134,34 @@ public final class FullAccessContactsAndroidTest {
                         com.subhub.app.fullaccess.FullAccessDataSources.isScopeEnabled(context, "contacts"));
                 awaitRemainingPermissions(device, setup);
                 assertTrue(FullAccessGrant.isLocallyEnabled(context));
+                assertTrue("The installed-app list is approved even when optional usage is declined",
+                        com.subhub.app.fullaccess.FullAccessDataSources.isScopeEnabled(context, "apps"));
                 assertEquals(initialSms, context.checkSelfPermission(Manifest.permission.READ_SMS));
                 addSyntheticContact(device, setup);
             }
 
             verifySmsExportWithoutAndroidSmsPermission(pair);
-            try (FullAccessChannel live = pair.open("contacts")) {
-                JSONObject response = live.query(page());
+            verifyFilesBrowseAndTransfer(pair);
+            try (FullAccessChannel apps = pair.open("apps")) {
+                assertTrue(apps.supportsLazyAppUsage());
+                JSONObject rows = apps.query(new JSONObject().put("op", "app_rows"));
+                assertEquals("ok", rows.getString("status"));
+                assertTrue(rows.getJSONArray("items").length() > 0);
+                assertFalse(rows.getJSONArray("items").getJSONObject(0).has("todayMillis"));
+            }
+            try (AutoCloseable busySync = pair.holdOrdinaryIncoming(); FullAccessChannel live = pair.open("contacts")) {
+                assertTrue(live.supportsLazyContactPhotos());
+                JSONObject response = live.query(new JSONObject().put("op", "contact_rows"));
                 assertEquals("ok", response.getString("status"));
                 JSONArray contacts = response.getJSONArray("items");
                 assertEquals("Only the fixture contact should exist in the disposable guest", 1, contacts.length());
                 JSONObject row = contacts.getJSONObject(0);
                 assertEquals(CONTACT, row.getString("title"));
+                assertFalse(row.has("photo"));
+                assertFalse(response.getString("scopeRevision").isEmpty());
+                JSONObject photos = live.query(new JSONObject().put("op", "contact_photos").put("node", row.getString("id")));
+                assertEquals(response.getString("scopeRevision"), photos.getString("scopeRevision"));
+                assertEquals(row.getString("id"), photos.getJSONArray("items").getJSONObject(0).getString("id"));
                 assertTrue(row.getString("detail").replaceAll("[^0-9]", "").contains(NUMBER));
 
                 assertTrue(FullAccessGrant.disable(context));
@@ -164,6 +185,56 @@ public final class FullAccessContactsAndroidTest {
         } finally {
             FullAccessGrant.disable(context);
             if (hardcore.isAdminActive()) hardcore.disable();
+        }
+    }
+
+    private void verifyFilesBrowseAndTransfer(SyntheticPair pair) throws Exception {
+        assertTrue("All files access was approved through Android settings", Environment.isExternalStorageManager());
+        String name = "BlackmailFixture-" + UUID.randomUUID();
+        File folder = new File(Environment.getExternalStorageDirectory(), name);
+        assertTrue("Create an owned synthetic folder", folder.mkdir());
+        File file = new File(folder, "fixture.txt");
+        byte[] contents = "Synthetic Blackmail transfer".getBytes(StandardCharsets.UTF_8);
+        try {
+            try (FileOutputStream output = new FileOutputStream(file)) {
+                output.write(contents);
+            }
+            try (FullAccessChannel files = pair.open("files")) {
+                JSONArray roots = files.query(new JSONObject().put("op", "list")).getJSONArray("items");
+                JSONObject selected = null;
+                for (int rootIndex = 0; rootIndex < roots.length() && selected == null; rootIndex++) {
+                    JSONObject root = roots.getJSONObject(rootIndex);
+                    assertTrue(root.getBoolean("directory"));
+                    String cursor = "";
+                    for (int pageIndex = 0; pageIndex < 8; pageIndex++) {
+                        JSONObject page = files.query(new JSONObject().put("op", "list")
+                                .put("node", root.getString("id")).put("cursor", cursor));
+                        assertEquals("ready", page.getString("status"));
+                        JSONArray rows = page.getJSONArray("items");
+                        if (pageIndex == 0) assertTrue(rows.length() <= 12);
+                        for (int index = 0; index < rows.length(); index++) {
+                            JSONObject row = rows.getJSONObject(index);
+                            if (name.equals(row.getString("title"))) selected = row;
+                        }
+                        cursor = page.optString("nextCursor");
+                        if (selected != null || cursor.isEmpty()) break;
+                    }
+                }
+                assertNotNull("Selected shared root exposed the owned synthetic folder", selected);
+                assertTrue(selected.getBoolean("directory"));
+                JSONObject nested = files.query(new JSONObject().put("op", "list").put("node", selected.getString("id")));
+                assertEquals("ready", nested.getString("status"));
+                JSONArray entries = nested.getJSONArray("items");
+                assertEquals(1, entries.length());
+                JSONObject entry = entries.getJSONObject(0);
+                assertEquals(file.getName(), entry.getString("title"));
+                ByteArrayOutputStream saved = new ByteArrayOutputStream();
+                files.transfer(new JSONObject().put("op", "download").put("node", entry.getString("id")), saved);
+                assertArrayEquals(contents, saved.toByteArray());
+            }
+        } finally {
+            if (file.exists()) assertTrue(file.delete());
+            assertTrue(folder.delete());
         }
     }
 
@@ -203,12 +274,18 @@ public final class FullAccessContactsAndroidTest {
     }
 
     private void awaitRemainingPermissions(UiDevice device, ActivityScenario<ProfileEditorActivity> scenario) {
+        AtomicBoolean storageRequested = new AtomicBoolean();
         await("Inline switch after remaining Android prompts are dismissed", () -> {
             String pkg = device.getCurrentPackageName();
             if (pkg != null && !context.getPackageName().equals(pkg)) {
                 UiObject2 deny = device.findObject(By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button")));
                 if (deny != null) deny.click();
-                else if (pkg.equals("com.android.settings") || pkg.endsWith(".documentsui")) device.pressBack();
+                else if (pkg.equals("com.android.settings")) {
+                    UiObject2 storage = device.findObject(By.text(Pattern.compile("(?i)allow access to manage all files")));
+                    if (storage != null && !Environment.isExternalStorageManager() && storageRequested.compareAndSet(false, true))
+                        storage.click();
+                    else device.pressBack();
+                } else if (pkg.endsWith(".documentsui")) device.pressBack();
                 return false;
             }
             AtomicBoolean ready = new AtomicBoolean();
@@ -314,6 +391,28 @@ public final class FullAccessContactsAndroidTest {
             Method listen = RemoteFeature.class.getDeclaredMethod("accept", PeerTransport.class);
             listen.setAccessible(true);
             accept = worker.submit(() -> listen.invoke(receiver, sub));
+        }
+
+        AutoCloseable holdOrdinaryIncoming() throws Exception {
+            ThreadPoolExecutor incoming = (ThreadPoolExecutor) field("incomingSessions").get(receiver);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            Future<?> worker = incoming.submit(() -> {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            if (!started.await(WAIT, TimeUnit.MILLISECONDS)) {
+                release.countDown();
+                throw new AssertionError("Ordinary inbound worker did not start");
+            }
+            return () -> {
+                release.countDown();
+                worker.get(WAIT, TimeUnit.MILLISECONDS);
+            };
         }
 
         FullAccessChannel open(String scope) throws Exception {

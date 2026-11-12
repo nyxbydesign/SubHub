@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,6 +25,7 @@ final class FullAccessSmsExport {
     private static final int MAX_BYTES = 128 * 1024;
     private static final int MAX_LINES = 1000;
     private static final int MAX_MESSAGE_CHARS = 1000;
+    private static final AtomicLong CONTENT_REVISION = new AtomicLong();
 
     private FullAccessSmsExport() { }
 
@@ -34,11 +36,16 @@ final class FullAccessSmsExport {
 
     static boolean available(Context context) { return file(context, false).getBaseFile().exists(); }
 
-    static void clear(Context context) { file(context, false).delete(); }
+    static void clear(Context context) { clear(context, false); }
 
     static boolean demoAvailable(Context context) { return file(context, true).getBaseFile().exists(); }
 
-    static void clearDemo(Context context) { file(context, true).delete(); }
+    static void clearDemo(Context context) { clear(context, true); }
+
+    private static void clear(Context context, boolean demo) {
+        file(context, demo).delete();
+        CONTENT_REVISION.incrementAndGet();
+    }
 
     static JSONArray readSelection(Context context, Uri selected) throws IOException {
         if (selected == null || !"content".equals(selected.getScheme())) throw new IOException("SMS export unavailable");
@@ -78,64 +85,85 @@ final class FullAccessSmsExport {
         try {
             output.write(bytes);
             export.finishWrite(output);
+            CONTENT_REVISION.incrementAndGet();
         } catch (IOException | RuntimeException failed) {
             export.failWrite(output);
             throw failed;
         }
     }
 
-    static JSONObject page(Context context, long epoch, int offset, int limit) throws IOException, JSONException {
-        return page(context, epoch, offset, limit, false);
-    }
+    static final class Reader {
+        private Transcript cached;
+        private File cachedPath;
+        private long cachedEpoch;
+        private long cachedRevision;
 
-    static JSONObject page(Context context, long epoch, int offset, int limit, boolean demo)
-            throws IOException, JSONException {
-        AtomicFile export = file(context, demo);
-        if (!export.getBaseFile().exists()) return FullAccessDataSources.response("unavailable", new JSONArray());
-        JSONObject stored = new JSONObject(new String(export.readFully(), StandardCharsets.UTF_8));
-        if (stored.getLong("epoch") != epoch) return FullAccessDataSources.response("unavailable", new JSONArray());
-        JSONArray lines = stored.getJSONArray("lines");
-        JSONArray rows = new JSONArray();
-        int end = offset >= lines.length() ? lines.length() : offset + Math.min(limit, lines.length() - offset);
-        for (int index = offset; index < end; index++) {
-            rows.put(new JSONObject().put("id", Integer.toString(index))
-                    .put("title", messageText(lines.getString(index))));
+        JSONObject page(Context context, long epoch, int offset, int limit, boolean demo)
+                throws IOException, JSONException {
+            Transcript transcript = transcript(context, epoch, demo);
+            if (transcript == null) return FullAccessDataSources.response("unavailable", new JSONArray());
+            JSONArray lines = transcript.lines;
+            JSONArray rows = new JSONArray();
+            int end = offset >= lines.length() ? lines.length() : offset + Math.min(limit, lines.length() - offset);
+            for (int index = offset; index < end; index++) {
+                rows.put(new JSONObject().put("id", Integer.toString(index))
+                        .put("title", messageText(lines.getString(index))));
+            }
+            JSONObject result = FullAccessDataSources.response("ok", rows);
+            if (end < lines.length()) result.put("nextCursor", Integer.toString(end));
+            return result;
         }
-        JSONObject result = FullAccessDataSources.response("ok", rows);
-        if (end < lines.length()) result.put("nextCursor", Integer.toString(end));
-        return result;
-    }
 
-    static JSONObject conversations(Context context, long epoch, String cursor, int limit, boolean demo)
-            throws IOException, JSONException {
-        FullAccessSmsSource.pageSize(limit);
-        if (cursor != null && !cursor.isEmpty()) throw new IllegalArgumentException("Invalid SMS export cursor");
-        Transcript transcript = transcript(context, epoch, demo);
-        if (transcript == null) return FullAccessDataSources.response("unavailable", new JSONArray());
-        JSONArray rows = new JSONArray();
-        if (transcript.lines.length() > 0) {
-            JSONObject summary = line(transcript.lines, transcript.lines.length() - 1);
-            rows.put(summary.put("id", transcript.node).put("title", context.getString(R.string.full_access_sms_export_title)));
+        JSONObject conversations(Context context, long epoch, String cursor, int limit, boolean demo)
+                throws IOException, JSONException {
+            FullAccessSmsSource.pageSize(limit);
+            if (cursor != null && !cursor.isEmpty()) throw new IllegalArgumentException("Invalid SMS export cursor");
+            Transcript transcript = transcript(context, epoch, demo);
+            if (transcript == null) return FullAccessDataSources.response("unavailable", new JSONArray());
+            JSONArray rows = new JSONArray();
+            if (transcript.lines.length() > 0) {
+                JSONObject summary = line(transcript.lines, transcript.lines.length() - 1);
+                rows.put(summary.put("id", transcript.node).put("title", context.getString(R.string.full_access_sms_export_title)));
+            }
+            return FullAccessDataSources.response("ok", rows);
         }
-        return FullAccessDataSources.response("ok", rows);
-    }
 
-    static JSONObject thread(Context context, long epoch, String node, String cursor, int limit, boolean demo)
-            throws IOException, JSONException {
-        int count = FullAccessSmsSource.pageSize(limit);
-        Transcript transcript = transcript(context, epoch, demo);
-        if (transcript == null || !transcript.node.equals(node))
-            return FullAccessDataSources.response("unavailable", new JSONArray());
-        int end = exportEnd(node, cursor, transcript.lines.length());
-        int first = Math.max(0, end - count);
-        JSONArray rows = new JSONArray();
-        // Plain-text exports do not describe senders or dates. Preserve file order without
-        // fabricating those fields, and follow the viewer's newest-first response convention.
-        for (int index = end - 1; index >= first; index--) rows.put(line(transcript.lines, index));
-        JSONObject result = FullAccessDataSources.response("ok", rows)
-                .put("title", context.getString(R.string.full_access_sms_export_title));
-        if (first > 0) result.put("nextCursor", node + "-" + first);
-        return result;
+        JSONObject thread(Context context, long epoch, String node, String cursor, int limit, boolean demo)
+                throws IOException, JSONException {
+            int count = FullAccessSmsSource.pageSize(limit);
+            Transcript transcript = transcript(context, epoch, demo);
+            if (transcript == null || !transcript.node.equals(node))
+                return FullAccessDataSources.response("unavailable", new JSONArray());
+            int end = exportEnd(node, cursor, transcript.lines.length());
+            int first = Math.max(0, end - count);
+            JSONArray rows = new JSONArray();
+            // Plain-text exports do not describe senders or dates. Preserve file order without
+            // fabricating those fields, and follow the viewer's newest-first response convention.
+            for (int index = end - 1; index >= first; index--) rows.put(line(transcript.lines, index));
+            JSONObject result = FullAccessDataSources.response("ok", rows)
+                    .put("title", context.getString(R.string.full_access_sms_export_title));
+            if (first > 0) result.put("nextCursor", node + "-" + first);
+            return result;
+        }
+
+        private Transcript transcript(Context context, long epoch, boolean demo) throws IOException, JSONException {
+            AtomicFile export = file(context, demo);
+            File path = export.getBaseFile();
+            if (!path.exists()) return null;
+            long revision = CONTENT_REVISION.get();
+            if (cached != null && epoch == cachedEpoch && revision == cachedRevision && path.equals(cachedPath)) return cached;
+            byte[] bytes = export.readFully();
+            JSONObject stored = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            if (stored.getLong("epoch") != epoch) return null;
+            JSONArray lines = stored.getJSONArray("lines");
+            if (lines.length() > MAX_LINES) return null;
+            cached = new Transcript(node(stored.optString("revision"), bytes, demo), lines);
+            cachedEpoch = epoch;
+            cachedRevision = revision;
+            cachedPath = path;
+            return cached;
+        }
+
     }
 
     static int exportEnd(String node, String cursor, int length) {
@@ -149,17 +177,6 @@ final class FullAccessSmsExport {
         String body = messageText(lines.getString(index));
         JSONObject item = new JSONObject().put("id", Integer.toString(index));
         return body.isEmpty() ? item.put("redacted", true) : item.put("detail", body);
-    }
-
-    private static Transcript transcript(Context context, long epoch, boolean demo) throws IOException, JSONException {
-        AtomicFile export = file(context, demo);
-        if (!export.getBaseFile().exists()) return null;
-        byte[] bytes = export.readFully();
-        JSONObject stored = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-        if (stored.getLong("epoch") != epoch) return null;
-        JSONArray lines = stored.getJSONArray("lines");
-        if (lines.length() > MAX_LINES) return null;
-        return new Transcript(node(stored.optString("revision"), bytes, demo), lines);
     }
 
     static String node(String revision, byte[] bytes, boolean demo) {
