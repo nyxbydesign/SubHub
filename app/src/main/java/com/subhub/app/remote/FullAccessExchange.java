@@ -24,7 +24,7 @@ final class FullAccessExchange {
     static boolean validScope(String scope) { return scope != null && SCOPES.contains(scope); }
 
     static void serve(Context context, PeerTransport.Connection connection, String scope, BooleanSupplier current,
-            BooleanSupplier foreground, Consumer<AutoCloseable> ownSource) throws Exception {
+            BooleanSupplier foreground, boolean screenRequestStates, Consumer<AutoCloseable> ownSource) throws Exception {
         if (!current.getAsBoolean()) {
             RemoteProtocol.write(connection.output(), FullAccessChannel.frame(FullAccessChannel.OPENED)
                     .put("status", "disabled"));
@@ -32,6 +32,7 @@ final class FullAccessExchange {
             RemoteProtocol.read(connection.input());
             return;
         }
+        FullAccessDataSources.ReadSession pages = new FullAccessDataSources.ReadSession();
         FullAccessFiles.Session files = null;
         FullAccessScreen.Session screen = null;
         try {
@@ -40,7 +41,8 @@ final class FullAccessExchange {
                 ownSource.accept(files);
             }
             write(connection, FullAccessChannel.frame(FullAccessChannel.OPENED).put("status", "ready")
-                    .put("detailVersion", FullAccessChannel.DETAIL_VERSION), current);
+                    .put("detailVersion", FullAccessChannel.DETAIL_VERSION)
+                    .put("lazyContactPhotos", "contacts".equals(scope)).put("lazyAppUsage", "apps".equals(scope)), current);
             while (current.getAsBoolean()) {
                 connection.setReadTimeoutMillis("screen".equals(scope) ? 4_000 : 12_000);
                 JSONObject request = RemoteProtocol.read(connection.input());
@@ -62,7 +64,7 @@ final class FullAccessExchange {
                         screen = FullAccessScreen.open(context, current, foreground);
                         ownSource.accept(screen);
                     }
-                    JSONObject response = new JSONObject().put("status", screen.status());
+                    JSONObject response = new JSONObject().put("status", screen.statusForViewer(screenRequestStates));
                     byte[] image = screen.takeLatest();
                     if (image != null && image.length > 0 && image.length <= MAX_JPEG)
                         response.put("image", Base64.getEncoder().encodeToString(image));
@@ -72,7 +74,7 @@ final class FullAccessExchange {
                     if (!FullAccessDataSources.supportsRead(scope, operation, node))
                         throw new IOException("Invalid Full Access view operation");
                     respond(connection, FullAccessDataSources.page(context, scope, operation, node,
-                            FullAccessChannel.text(request, "cursor")), current);
+                            FullAccessChannel.text(request, "cursor"), pages), current);
                 }
             }
         } finally {

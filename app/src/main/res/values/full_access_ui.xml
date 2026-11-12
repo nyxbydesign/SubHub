@@ -70,6 +70,7 @@
 
     <string name="full_access_more">Next page</string>
 
+    <string name="full_access_screen_requesting">Requesting screen sharing…</string>
     <string name="full_access_screen_pending">Waiting for the Sub to approve screen sharing…</string>
 
     <string name="full_access_screen_declined">The screen share was declined.</string>
@@ -100,6 +101,7 @@
 
     <string name="full_access_guide">Set up permissions</string>
 
+    <string name="full_access_screen_sub_alerts_required">Screen sharing needs notifications enabled on the Sub’s phone.</string>
     <string name="full_access_screen_alerts_required">Turn on screen-sharing notifications to receive requests and stop a live view.</string>
     <string name="full_access_screen_alerts_settings">Notification settings</string>
     <string name="full_access_screen_setup_note">Your Dom can request a live view. Android asks before each session.</string>

@@ -48,6 +48,7 @@ public final class RemoteFeature {
     private final ExecutorService acceptor=Executors.newSingleThreadExecutor(r->new Thread(r,"subhub-peer-accept"));
     // Keep four workers and twelve queued slots; old outgoing work cannot consume UI or inbound capacity.
     private final ThreadPoolExecutor operations=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),r->new Thread(r,"subhub-peer-operation"),new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor incomingOpeners = incomingOpeners();
     private final ThreadPoolExecutor incomingSessions=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->new Thread(r,"subhub-peer-incoming"),new ThreadPoolExecutor.AbortPolicy());
     private final ThreadPoolExecutor sessions=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new SynchronousQueue<>(),r->new Thread(r,"subhub-peer-session"),new ThreadPoolExecutor.AbortPolicy());
     private final Semaphore revocations=new Semaphore(1);
@@ -55,6 +56,14 @@ public final class RemoteFeature {
     private final ThreadPoolExecutor fullAccessOutgoing = fullAccessWorkers("subhub-full-access-view");
     private final Map<PeerTransport.Connection, FullAccessShare> fullAccessShares = new ConcurrentHashMap<>();
     private final Set<FullAccessChannel> fullAccessViews = ConcurrentHashMap.newKeySet();
+
+    private static ThreadPoolExecutor incomingOpeners() {
+        ThreadPoolExecutor workers = new ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(4), task -> new Thread(task, "subhub-peer-open"),
+                new ThreadPoolExecutor.AbortPolicy());
+        workers.allowCoreThreadTimeOut(true);
+        return workers;
+    }
 
     private static ThreadPoolExecutor fullAccessWorkers(String name) {
         return new ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS,
@@ -309,7 +318,7 @@ public final class RemoteFeature {
         stableConnectionPending.set(true);requestAutomaticSync();
     }
     /** Admission survives future cancellation until the actual resource-using callable exits. */
-    private static class AdmittedTask<T> extends FutureTask<T> {
+    static class AdmittedTask<T> extends FutureTask<T> {
         private final java.util.concurrent.atomic.AtomicBoolean started=new java.util.concurrent.atomic.AtomicBoolean();
         private final java.util.concurrent.atomic.AtomicBoolean released=new java.util.concurrent.atomic.AtomicBoolean();
         private final Runnable release;
@@ -905,26 +914,39 @@ public final class RemoteFeature {
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(55);track(connection,"",deadline);
             leases.incrementAndGet();
             AtomicBoolean transferred = new AtomicBoolean();
-            AdmittedTask<Void> task=new AdmittedTask<>(()->{
-                connection.setReadTimeoutMillis(8_000);
+            AdmittedTask<Void> opener = new AdmittedTask<>(() -> {
+                connection.setReadTimeoutMillis(Math.min(8_000, remaining(deadline)));
                 JSONObject first = RemoteProtocol.read(connection.input());
                 if (FullAccessChannel.OPEN.equals(first.optString("type"))) {
                     transferred.set(admitFullAccess(active, connection, first));
                 } else {
-                    incoming(active, connection, first, deadline);
+                    // A full sync must never occupy the workers admitting new interactive views.
+                    AdmittedTask<Void> session = new AdmittedTask<>(() -> {
+                        incoming(active, connection, first, deadline);
+                        return null;
+                    }, () -> releaseIncoming(connection));
+                    transferred.set(true);
+                    try { incomingSessions.execute(session); }
+                    catch (RejectedExecutionException full) { session.cancel(false); }
                 }
                 return null;
-            },()->{
-                if (!transferred.get()) {
-                    untrack(connection);close(connection);leases.decrementAndGet();suspendIfIdle();
-                }
+            }, () -> {
+                if (!transferred.get()) releaseIncoming(connection);
             });
-            try{incomingSessions.execute(task);}catch(RejectedExecutionException full){task.cancel(false);}
+            try { incomingOpeners.execute(opener); }
+            catch (RejectedExecutionException full) { opener.cancel(false); }
         }
         boolean failed=false;
         synchronized(endpointLock){if(endpoint==active){endpoint=null;failed=true;}}
         if(failed){close(active);deferEndpointAttempt();scheduleConnectedSync(Math.max(0,nextEndpointAttempt-SystemClock.elapsedRealtime()));}
     }
+    private void releaseIncoming(PeerTransport.Connection connection) {
+        untrack(connection);
+        close(connection);
+        leases.decrementAndGet();
+        suspendIfIdle();
+    }
+
     /** Returns only the current, uniquely paired Dom on the Sub's device. */
     public RemoteStore.Peer fullAccessSubPeer() {
         if (stopped || !DeviceRolePreferences.supportsSub(context)) return null;
@@ -954,12 +976,28 @@ public final class RemoteFeature {
         long workspace = ControllerPinManager.domWorkspaceRevision();
         CompletableFuture<FullAccessChannel> result = new CompletableFuture<>();
         leases.incrementAndGet();
+        AtomicBoolean handedOff = new AtomicBoolean();
+        AtomicReference<PeerTransport.Connection> openingSocket = new AtomicReference<>();
+        AdmittedTask<Void> task = new AdmittedTask<>(() -> {
+            openFullAccess(peer, scope, workspace, result, handedOff, openingSocket);
+            return null;
+        }, () -> {
+            if (!handedOff.get()) {
+                leases.decrementAndGet();
+                deferSuspendIfIdle();
+            }
+        });
+        result.whenComplete((channel, failure) -> {
+            if (!result.isCancelled()) return;
+            task.cancel(true);
+            PeerTransport.Connection pending = openingSocket.getAndSet(null);
+            if (pending != null) close(pending);
+        });
         try {
-            fullAccessOutgoing.execute(() -> openFullAccess(peer, scope, workspace, result));
+            fullAccessOutgoing.execute(task);
         } catch (RejectedExecutionException unavailable) {
-            leases.decrementAndGet();
-            deferSuspendIfIdle();
             result.complete(FullAccessChannel.denied(scope, "busy"));
+            task.cancel(false);
         }
         return result;
     }
@@ -971,9 +1009,11 @@ public final class RemoteFeature {
     }
 
     private void openFullAccess(RemoteStore.Peer peer, String scope, long workspace,
-            CompletableFuture<FullAccessChannel> result) {
+            CompletableFuture<FullAccessChannel> result, AtomicBoolean handedOff,
+            AtomicReference<PeerTransport.Connection> openingSocket) {
         PeerTransport.Connection connection = null;
         FullAccessChannel channel = null;
+        String phase = "authority";
         try {
             requireDomWorkspace();
             if (!currentFullAccessViewer(peer, workspace) || result.isCancelled()) throw new SecurityException();
@@ -983,13 +1023,17 @@ public final class RemoteFeature {
                 return;
             }
             RemoteStore.Peer current = withActivePeer(peer, () -> store.peer(peer.identity, peer.generation));
-            connection = transport().connect(current.identity, current.route, 8_000);
-            if (!current.identity.equals(connection.authenticatedPeerIdentity()) || !currentFullAccessViewer(peer, workspace)
-                    || result.isCancelled()) throw new SecurityException();
+            phase = "dial";
+            connection = dialFullAccess(transport(), current.identity, current.route);
+            openingSocket.set(connection);
+            phase = "open";
+            if (result.isCancelled() || !current.identity.equals(connection.authenticatedPeerIdentity())
+                    || !currentFullAccessViewer(peer, workspace)) throw new SecurityException();
             connections.put(connection, key(peer));
             connection.setReadTimeoutMillis(8_000);
             RemoteProtocol.write(connection.output(), FullAccessChannel.frame(FullAccessChannel.OPEN)
-                    .put("generation", peer.generation).put("scope", scope));
+                    .put("generation", peer.generation).put("scope", scope)
+                    .put("screenRequestStates", "screen".equals(scope)));
             JSONObject response = RemoteProtocol.read(connection.input());
             FullAccessChannel.require(response, FullAccessChannel.OPENED);
             String status = response.getString("status");
@@ -1010,21 +1054,31 @@ public final class RemoteFeature {
                         deferSuspendIfIdle();
                     });
             reference.set(channel);
+            handedOff.set(true);
             fullAccessViews.add(channel);
             if ("files".equals(scope)) channel.keepAlive(timer, fullAccessOutgoing);
             if (!result.complete(channel)) channel.close();
         } catch (Exception unavailable) {
             if (channel != null) channel.close();
+            if (!result.isCancelled()) logSessionFailure("blackmail-" + scope + "-" + phase, unavailable);
             result.completeExceptionally(new IOException("Full Access unavailable"));
         } finally {
-            if (channel == null) {
-                if (connection != null) {
-                    untrack(connection);
-                    close(connection);
-                }
-                leases.decrementAndGet();
-                deferSuspendIfIdle();
+            if (connection != null) openingSocket.compareAndSet(connection, null);
+            if (channel == null && connection != null) {
+                untrack(connection);
+                close(connection);
             }
+        }
+    }
+
+    static PeerTransport.Connection dialFullAccess(PeerTransport transport, String identity, String route) throws IOException {
+        if (route.isEmpty()) return transport.connect(identity, "", 8_000);
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(8_000);
+        try {
+            return transport.connect(identity, route, 3_000);
+        } catch (IOException staleRoute) {
+            if (Thread.currentThread().isInterrupted()) throw staleRoute;
+            return transport.connect(identity, "", remaining(deadline));
         }
     }
 
@@ -1077,9 +1131,10 @@ public final class RemoteFeature {
                         if (share.closed.get()) watch.cancel(false);
                     }
                     FullAccessExchange.serve(context, connection, scope, share::current, appPresence::foreground,
-                            share::attach);
+                            first.optBoolean("screenRequestStates"), share::attach);
                 } catch (Exception unavailable) {
-                    // Frames and exception messages can contain private data.
+                    if (!share.closed.get() && !(unavailable instanceof java.io.EOFException))
+                        logSessionFailure("blackmail-" + scope + "-read", unavailable);
                 } finally {
                     share.close();
                     fullAccessShares.remove(connection, share);
@@ -1524,10 +1579,10 @@ public final class RemoteFeature {
         for(PairingOperationLease lease:pairingLeases.values())lease.close();
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
         acceptor.shutdownNow();
-        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing}) {
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingOpeners,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing}) {
             for(Runnable queued:pool.shutdownNow())if(queued instanceof Future<?>)((Future<?>)queued).cancel(false);
         }
-        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing})
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingOpeners,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing})
             if(!pool.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Peer work did not stop");
         acceptor.awaitTermination(10,TimeUnit.SECONDS);
         if(!pairingDeadlineTimer.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Pairing deadlines did not stop");

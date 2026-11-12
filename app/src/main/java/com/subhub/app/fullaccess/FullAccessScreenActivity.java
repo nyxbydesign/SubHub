@@ -46,8 +46,12 @@ public final class FullAccessScreenActivity extends Activity {
         }
         try {
             MediaProjectionManager projection = getSystemService(MediaProjectionManager.class);
-            if (projection == null || FullAccessScreen.activeNotifications(this) == null) {
+            if (projection == null) {
                 end(FullAccessScreen.UNAVAILABLE);
+                return;
+            }
+            if (FullAccessScreen.activeNotifications(this) == null) {
+                end(FullAccessScreen.ALERTS_REQUIRED);
                 return;
             }
             Intent consent = projection.createScreenCaptureIntent();
@@ -60,6 +64,7 @@ public final class FullAccessScreenActivity extends Activity {
             Toast.makeText(this, messages[ThreadLocalRandom.current().nextInt(messages.length)],
                     Toast.LENGTH_SHORT).show();
             startActivityForResult(consent, SCREEN_CONSENT);
+            session.markRequestIssued();
         } catch (RuntimeException unavailable) {
             end(FullAccessScreen.UNAVAILABLE);
         }

@@ -66,6 +66,7 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
                 + "detail_title TEXT NOT NULL DEFAULT '', detail_text TEXT NOT NULL DEFAULT '', "
                 + "small_icon TEXT NOT NULL DEFAULT '', UNIQUE(epoch,event_key,posted_at))");
         database.execSQL("CREATE INDEX notification_history_time ON " + TABLE + "(posted_at)");
+        createGroupIndex(database);
     }
 
     @Override public void onUpgrade(SQLiteDatabase database, int oldVersion, int newVersion) {
@@ -87,6 +88,11 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
             database.execSQL("UPDATE " + TABLE + " SET detail_title='', detail_text='', details_token=''"
                     + " WHERE details_token<>? OR details_token='' OR posted_at<?", new Object[]{token, approvedSince});
         }
+        createGroupIndex(database);
+    }
+
+    private static void createGroupIndex(SQLiteDatabase database) {
+        database.execSQL("CREATE INDEX notification_history_group ON " + TABLE + "(epoch,pkg,posted_at,_id)");
     }
 
     private static void addTextColumn(SQLiteDatabase database, String column) {

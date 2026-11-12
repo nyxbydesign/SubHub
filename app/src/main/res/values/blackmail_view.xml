@@ -15,6 +15,8 @@
     <string name="blackmail_live_screen">Live</string>
     <string name="blackmail_messages_partial">Showing the most recent conversations.</string>
     <string name="blackmail_list_incomplete">Some entries could not be loaded.</string>
+    <string name="blackmail_loading_entries">Loading entries…</string>
+    <string name="blackmail_refresh_unavailable">Couldn’t refresh. Showing the last loaded entries.</string>
     <string name="blackmail_detail_update">Update the Sub’s app for conversations and grouped notifications.</string>
     <plurals name="blackmail_notification_count">
         <item quantity="one">%d notification</item>

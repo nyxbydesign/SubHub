@@ -10,6 +10,7 @@ import android.widget.ListView;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.util.PageScrollView;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.function.BiConsumer;
 
 /** A viewport-sized, recycled list within the shared Blackmail page shell. */
@@ -51,6 +52,17 @@ final class BlackmailList extends ListView {
     boolean nearEdge() {
         return isShown() && getChildCount() > 0 && (newestAtEnd ? getFirstVisiblePosition() <= 2
                 : getLastVisiblePosition() >= rows.getCount() - 3);
+    }
+
+    List<String> visibleItemIds() {
+        List<String> ids = new ArrayList<>();
+        if (!isShown() || getChildCount() == 0) return ids;
+        int end = Math.min(rows.getCount(), getLastVisiblePosition() + 1);
+        for (int index = Math.max(0, getFirstVisiblePosition()); index < end; index++) {
+            String key = rows.getItem(index).key;
+            if (key.startsWith("item:")) ids.add(key.substring("item:".length()));
+        }
+        return ids;
     }
 
     boolean near(String key) {

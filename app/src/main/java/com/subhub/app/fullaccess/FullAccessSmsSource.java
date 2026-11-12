@@ -1,7 +1,6 @@
 package com.subhub.app.fullaccess;
 
 import android.Manifest;
-import android.content.ContentUris;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -9,6 +8,9 @@ import android.net.Uri;
 import android.provider.ContactsContract;
 import android.provider.Telephony;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -84,23 +86,47 @@ final class FullAccessSmsSource {
                 if (!selected.offer(metadata.getLong(1), metadata.getLong(2), metadata.getLong(0))) break;
             }
         }
-        JSONArray rows = new JSONArray();
-        for (Conversation conversation : selected.items) {
-            Uri uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, conversation.latest.id);
-            try (Cursor message = context.getContentResolver().query(uri, MESSAGE,
-                    SENT_OR_RECEIVED, new String[]{INBOX, SENT}, null)) {
-                if (message == null || !message.moveToFirst() || message.getLong(0) != conversation.latest.id
-                        || message.getLong(1) != conversation.thread || message.getLong(2) != conversation.latest.time)
-                    continue;
-                rows.put(message(message).put("id", "sms-" + conversation.thread)
-                        .put("title", title(context, message.getString(3), contactsAllowed)));
-            }
-        }
+        JSONArray rows = conversationRows(context, selected.items, contactsAllowed);
         if (!canRead(context)) return empty("permission_required");
         JSONObject result = FullAccessDataSources.response("ok", rows);
         if (selected.more) result.put("nextCursor", "list-" + selected.last().suffix());
         if (partial) result.put("partial", true);
         return result;
+    }
+
+    private static JSONArray conversationRows(Context context, List<Conversation> items, boolean contactsAllowed)
+            throws JSONException {
+        JSONArray rows = new JSONArray();
+        if (items.isEmpty()) return rows;
+        Map<Long, Conversation> wanted = new HashMap<>();
+        String[] args = new String[items.size() + 2];
+        for (int index = 0; index < items.size(); index++) {
+            Conversation item = items.get(index);
+            wanted.put(item.latest.id, item);
+            args[index] = Long.toString(item.latest.id);
+        }
+        args[items.size()] = INBOX;
+        args[items.size() + 1] = SENT;
+        String placeholders = String.join(",", Collections.nCopies(items.size(), "?"));
+        Map<Long, JSONObject> matches = new HashMap<>();
+        Map<String, String> titles = new HashMap<>();
+        try (Cursor source = context.getContentResolver().query(Telephony.Sms.CONTENT_URI, MESSAGE,
+                ID + " IN (" + placeholders + ") AND " + SENT_OR_RECEIVED, args, null)) {
+            if (source == null) return rows;
+            while (source.moveToNext()) {
+                long id = source.getLong(0);
+                Conversation item = wanted.get(id);
+                if (item == null || source.getLong(1) != item.thread || source.getLong(2) != item.latest.time) continue;
+                String address = source.getString(3);
+                String name = titles.computeIfAbsent(address, value -> title(context, value, contactsAllowed));
+                matches.put(id, message(source).put("id", "sms-" + item.thread).put("title", name));
+            }
+        }
+        for (Conversation item : items) {
+            JSONObject match = matches.get(item.latest.id);
+            if (match != null) rows.put(match);
+        }
+        return rows;
     }
 
     static JSONObject thread(Context context, String node, String cursor, int limit, boolean contactsAllowed)

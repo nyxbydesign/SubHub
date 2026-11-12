@@ -22,11 +22,13 @@ import java.util.function.BooleanSupplier;
 
 /** A process-local screen request owned by one authenticated viewer connection. */
 public final class FullAccessScreen {
+    static final String REQUESTING = "requesting_consent";
     static final String AWAITING = "awaiting_consent";
     static final String STREAMING = "streaming";
     static final String DECLINED = "declined";
     static final String UNAVAILABLE = "unavailable";
     static final String IN_USE = "capture_in_use";
+    static final String ALERTS_REQUIRED = "screen_alerts_required";
     static final String EXTRA_SESSION = "screen_session";
     static final String ACTIVE_CHANNEL = "full_access_screen_active";
     private static final String REQUEST_CHANNEL = "full_access_screen_requests";
@@ -151,6 +153,7 @@ public final class FullAccessScreen {
         final FullAccessScreenFrames frames = new FullAccessScreenFrames();
         private final BooleanSupplier grantCurrent;
         private volatile String phase = AWAITING;
+        private volatile boolean requestIssued;
         private boolean promptClaimed;
         private boolean approvalReceived;
         private Runnable onEnd;
@@ -165,8 +168,18 @@ public final class FullAccessScreen {
 
         public String status() {
             revalidate();
-            return phase;
+            String current = phase;
+            return AWAITING.equals(current) && !requestIssued ? REQUESTING : current;
         }
+
+        public String statusForViewer(boolean detailed) {
+            String current = status();
+            if (!detailed && REQUESTING.equals(current)) return AWAITING;
+            if (!detailed && ALERTS_REQUIRED.equals(current)) return UNAVAILABLE;
+            return current;
+        }
+
+        void markRequestIssued() { requestIssued = true; }
 
         public byte[] takeLatest() {
             if (!captureAllowed()) return null;
@@ -206,6 +219,7 @@ public final class FullAccessScreen {
         synchronized boolean acceptApproval(Intent result) {
             if (!AWAITING.equals(phase) || !promptClaimed || approvalReceived || result == null) return false;
             approvalReceived = true;
+            requestIssued = true;
             approval = result;
             return true;
         }
@@ -247,30 +261,36 @@ public final class FullAccessScreen {
             if (promptClaimed || !AWAITING.equals(phase)) return;
             try {
                 NotificationManager notifications = activeNotifications(context);
-                if (notifications != null) {
-                    String title = context.getString(R.string.full_access_screen_request);
-                    notifications.createNotificationChannel(new NotificationChannel(REQUEST_CHANNEL, title,
-                            NotificationManager.IMPORTANCE_DEFAULT));
-                    NotificationChannel channel = notifications.getNotificationChannel(REQUEST_CHANNEL);
-                    if (channel != null && channel.getImportance() != NotificationManager.IMPORTANCE_NONE) {
-                        PendingIntent consent = PendingIntent.getActivity(context, 0, consentIntent(this),
-                                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_ONE_SHOT);
-                        notifications.notify(id, REQUEST_ID, new Notification.Builder(context, REQUEST_CHANNEL)
-                                .setContentTitle(title)
-                                .setSmallIcon(android.R.drawable.ic_menu_view)
-                                .setContentIntent(consent)
-                                .setAutoCancel(true)
-                                .setLocalOnly(true)
-                                .setVisibility(Notification.VISIBILITY_PRIVATE)
-                                .setTimeoutAfter(CONSENT_WINDOW_MS)
-                                .build());
-                        return;
-                    }
+                if (notifications == null) {
+                    end(ALERTS_REQUIRED);
+                    return;
                 }
+                String title = context.getString(R.string.full_access_screen_request);
+                // Existing channels keep their Android settings. New requests are time-sensitive.
+                notifications.createNotificationChannel(new NotificationChannel(REQUEST_CHANNEL, title,
+                        NotificationManager.IMPORTANCE_HIGH));
+                NotificationChannel channel = notifications.getNotificationChannel(REQUEST_CHANNEL);
+                if (channel == null || channel.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                    end(ALERTS_REQUIRED);
+                    return;
+                }
+                PendingIntent consent = PendingIntent.getActivity(context, 0, consentIntent(this),
+                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_ONE_SHOT);
+                notifications.notify(id, REQUEST_ID, new Notification.Builder(context, REQUEST_CHANNEL)
+                        .setContentTitle(title)
+                        .setSmallIcon(android.R.drawable.ic_menu_view)
+                        .setContentIntent(consent)
+                        .setAutoCancel(true)
+                        .setLocalOnly(true)
+                        .setVisibility(Notification.VISIBILITY_PRIVATE)
+                        .setTimeoutAfter(CONSENT_WINDOW_MS)
+                        .build());
+                markRequestIssued();
+            } catch (SecurityException denied) {
+                end(ALERTS_REQUIRED);
             } catch (RuntimeException unavailable) {
-                // A blocked notification cannot launch a background consent Activity.
+                end(UNAVAILABLE);
             }
-            end(UNAVAILABLE);
         }
 
         private void cancelRequestNotification() {

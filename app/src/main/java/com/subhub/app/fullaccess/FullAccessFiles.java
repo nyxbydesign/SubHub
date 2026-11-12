@@ -69,8 +69,9 @@ public final class FullAccessFiles {
     private static final String BINARY = "application/octet-stream";
     private static final String DIRECTORY = DocumentsContract.Document.MIME_TYPE_DIR;
     private static final int MAX_ROOTS = 16;
-    private static final int PAGE_SIZE = 48;
-    private static final int PAGE_SCAN_LIMIT = 512;
+    private static final int FIRST_FOLDER_PAGE = 12;
+    private static final int PAGE_SIZE = 32;
+    private static final int PAGE_SCAN_LIMIT = 256;
     private static final int MAX_HANDLES = 8192;
     private static final int MAX_DEPTH = 64;
     private static final int MAX_ARCHIVE_ENTRIES = 30_000;
@@ -323,12 +324,13 @@ public final class FullAccessFiles {
                 } else if (!node.equals(pageNode) || !cursor.equals(cursorToken)) {
                     return status("expired");
                 }
+                int limit = cursor == null || cursor.isEmpty() ? FIRST_FOLDER_PAGE : PAGE_SIZE;
                 JSONArray items = new JSONArray();
                 ChildReader reader;
                 synchronized (this) { reader = page; }
                 if (reader == null) return status("expired");
-                for (int scanned = 0; scanned < PAGE_SCAN_LIMIT && items.length() < PAGE_SIZE && reader.advance(); scanned++) {
-                    checkLive();
+                for (int scanned = 0; scanned < PAGE_SCAN_LIMIT && items.length() < limit && reader.advance(); scanned++) {
+                    if (scanned % 8 == 0) checkLive();
                     Node child = reader.current();
                     if (child != null) items.put(describe(child));
                 }
@@ -647,7 +649,6 @@ public final class FullAccessFiles {
         }
 
         private JSONObject describe(Node node) throws JSONException, IOException {
-            checkLive();
             String id = UUID.randomUUID().toString();
             synchronized (this) {
                 if (closed) throw new IOException("File view closed");
