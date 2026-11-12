@@ -38,6 +38,7 @@ public final class FullAccessGrant {
         if (!localChoiceAllowed(context) || expectedDomKey == null || expectedDomKey.isEmpty()) return false;
         RemoteStore.Peer dom = selectedDom(context);
         if (dom == null || !expectedDomKey.equals(key(dom))) return false;
+        boolean saved;
         synchronized (LOCK) {
             if (clearing || !localChoiceAllowed(context)) return false;
             SharedPreferences preferences = preferences(context);
@@ -45,11 +46,12 @@ public final class FullAccessGrant {
                     && preferences.getLong("epoch", -1) > 0) return true;
             long epoch;
             do { epoch = RANDOM.nextLong() & Long.MAX_VALUE; } while (epoch == 0);
-            boolean saved = preferences.edit().putString("recipient", expectedDomKey)
+            saved = preferences.edit().putString("recipient", expectedDomKey)
                     .putLong("epoch", epoch).commit();
             revokedInProcess = !saved;
-            return saved;
         }
+        if (saved) refreshPeerRuntime(context);
+        return saved;
     }
 
     public static boolean isLocallyEnabled(Context context) { return epoch(context) >= 0; }
@@ -97,8 +99,14 @@ public final class FullAccessGrant {
             FullAccessDataSources.clear(context);
         } finally {
             synchronized (LOCK) { clearing = false; }
+            refreshPeerRuntime(context);
         }
         return saved;
+    }
+
+    private static void refreshPeerRuntime(Context context) {
+        try { RemoteFeature.get(context).changed(); }
+        catch (RuntimeException unavailable) { /* The next paired sync reads current authority. */ }
     }
 
     private static boolean localChoiceAllowed(Context context) {

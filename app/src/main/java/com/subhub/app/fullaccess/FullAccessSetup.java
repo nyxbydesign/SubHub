@@ -4,10 +4,13 @@ import android.Manifest;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.View;
+import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
@@ -15,11 +18,13 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
+import com.subhub.app.people.FeatureConsentView;
 import com.subhub.app.people.InternalSubData;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.people.ProfileStore;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.HardcoreModeManager;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.util.AsyncUiScope;
 import com.subhub.app.util.StateToggle;
 import java.util.ArrayDeque;
@@ -33,8 +38,14 @@ public final class FullAccessSetup {
     private final AppCompatActivity host;
     private final Context app;
     private final LinearLayout panel;
+    private final FeatureConsentView features;
     private final BooleanSupplier allowed;
     private final DemoFullAccess demo;
+    private final HardcoreModeManager hardcore;
+    private final SharedPreferences hardcoreSettings;
+    private final SharedPreferences.OnSharedPreferenceChangeListener hardcoreChange = (settings, key) -> {
+        if (key == null || HardcoreModeManager.KEY_REQUESTED.equals(key)) refresh();
+    };
     private final AsyncUiScope work;
     private final ActivityResultLauncher<String> permission;
     private final ActivityResultLauncher<Intent> settings;
@@ -45,13 +56,19 @@ public final class FullAccessSetup {
     private long flow = -1;
     private long exportEpoch = -1;
     private boolean launched;
+    private CompoundButton featureToggle;
+    private AlertDialog confirmation;
 
-    public FullAccessSetup(AppCompatActivity host, LinearLayout parent, boolean demo, BooleanSupplier allowed, Bundle state) {
+    public FullAccessSetup(AppCompatActivity host, LinearLayout parent, FeatureConsentView features,
+            BooleanSupplier allowed, Bundle state) {
         this.host = host;
         this.app = host.getApplicationContext();
         this.allowed = allowed;
-        this.demo = demo ? new DemoFullAccess(app, InternalSubData.get(host).acknowledged().generation,
+        this.features = features;
+        this.demo = features == null ? new DemoFullAccess(app, InternalSubData.get(host).acknowledged().generation,
                 ControllerPinManager.domWorkspaceRevision()) : null;
+        hardcore = demo == null ? new HardcoreModeManager(app) : null;
+        hardcoreSettings = demo == null ? app.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0) : null;
         panel = PersonUi.column(host);
         parent.addView(panel, new LinearLayout.LayoutParams(-1, -2));
         work = AsyncUiScope.forPage(host);
@@ -87,11 +104,15 @@ public final class FullAccessSetup {
 
     public void resume() {
         resumed = true;
+        if (hardcoreSettings != null) hardcoreSettings.registerOnSharedPreferenceChangeListener(hardcoreChange);
         refresh();
         advance();
     }
 
-    public void pause() { resumed = false; }
+    public void pause() {
+        resumed = false;
+        if (hardcoreSettings != null) hardcoreSettings.unregisterOnSharedPreferenceChangeListener(hardcoreChange);
+    }
 
     public void saveState(Bundle state) {
         state.putString("full_access_pending", launched ? pending : null);
@@ -104,23 +125,54 @@ public final class FullAccessSetup {
 
     private void refresh() {
         if (!resumed || !allowed.getAsBoolean()) return;
+        if (!showable()) {
+            hide();
+            return;
+        }
         work.load("profile-full-access-state", () -> {
-            if (demo != null) return new State(demo.current(), demo.available(), false, "", "", 0,
+            if (demo != null) return new State(demo.current(), demo.available(), "", "", 0,
                     FullAccessFiles.sharedRootsAvailable(app, true, 0));
             long epoch = FullAccessGrant.epoch(app);
-            return new State(epoch >= 0, FullAccessGrant.eligible(app),
-                    new HardcoreModeManager(app).isEnabled(), FullAccessGrant.pairedDom(app),
+            return new State(epoch >= 0, FullAccessGrant.eligible(app), FullAccessGrant.pairedDom(app),
                     FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.sharedRootsAvailable(app, false, epoch));
         }, state -> {
-            if (resumed && allowed.getAsBoolean()) render(state);
+            if (!resumed || !allowed.getAsBoolean()) return;
+            if (showable()) render(state);
+            else hide();
         }, failure -> { if (resumed) notice(R.string.full_access_unavailable); });
+    }
+
+    private boolean showable() { return demo != null || hardcore.isEnabled(); }
+
+    private void hide() {
+        work.cancel("profile-full-access-state");
+        if (featureToggle != null) {
+            features.removeView((View) featureToggle.getParent());
+            featureToggle = null;
+        }
+        if (confirmation != null) confirmation.dismiss();
+        panel.removeAllViews();
+        remaining.clear();
+        pending = null;
+        launched = false;
+        flow = -1;
+        exportEpoch = -1;
     }
 
     private void render(State state) {
         panel.removeAllViews();
-        StateToggle toggle = (StateToggle) host.getLayoutInflater().inflate(R.layout.view_form_toggle, panel, false);
-        toggle.setText(R.string.full_access_title);
-        toggle.setTag("full_access_toggle");
+        CompoundButton toggle;
+        if (features != null) {
+            if (featureToggle == null)
+                featureToggle = features.editable("blackmail", R.string.full_access_title, state.enabled);
+            toggle = featureToggle;
+        } else {
+            toggle = (StateToggle) host.getLayoutInflater().inflate(R.layout.view_form_toggle, panel, false);
+            toggle.setText(R.string.full_access_title);
+            toggle.setTag("full_access_toggle");
+            panel.addView(toggle, new LinearLayout.LayoutParams(-1, -2));
+        }
+        toggle.setOnCheckedChangeListener(null);
         toggle.setChecked(state.enabled);
         toggle.setEnabled((state.enabled || state.eligible) && pending == null && remaining.isEmpty()
                 && !work.isPending("profile-full-access-switch"));
@@ -129,10 +181,8 @@ public final class FullAccessSetup {
             if (next) confirm(state);
             else switchGrant(state, false);
         });
-        panel.addView(toggle, new LinearLayout.LayoutParams(-1, -2));
         if (!state.enabled && !state.eligible && demo == null)
-            PersonUi.text(panel, host.getString(state.hardcore ? R.string.full_access_pair_needed
-                    : R.string.full_access_hardcore_needed), false);
+            PersonUi.text(panel, host.getString(R.string.full_access_pair_needed), false);
         if (state.enabled && pending == null && remaining.isEmpty() && !state.sharedRoots) {
             if (FullAccessFiles.supportsSharedRoots()) {
                 PersonUi.action(panel, R.string.blackmail_files_enable, () -> {
@@ -161,8 +211,8 @@ public final class FullAccessSetup {
     }
 
     private void confirm(State state) {
-        if (!resumed || !allowed.getAsBoolean() || !state.eligible) { refresh(); return; }
-        new AlertDialog.Builder(host)
+        if (!resumed || !allowed.getAsBoolean() || !showable() || !state.eligible) { refresh(); return; }
+        confirmation = new AlertDialog.Builder(host)
                 .setTitle(demo == null ? host.getString(R.string.full_access_grant_title, state.paired)
                         : host.getString(R.string.demo_full_access_enable_title))
                 .setMessage(demo == null ? R.string.full_access_grant_disclosure : R.string.demo_full_access_enable_disclosure)
@@ -170,13 +220,15 @@ public final class FullAccessSetup {
                 .setPositiveButton(demo == null ? R.string.full_access_share : R.string.role_enabled,
                         (dialog, which) -> switchGrant(state, true))
                 .setOnCancelListener(dialog -> refresh())
-                .show();
+                .create();
+        confirmation.setOnDismissListener(dialog -> confirmation = null);
+        confirmation.show();
     }
 
     private void switchGrant(State state, boolean next) {
-        if (!resumed || !allowed.getAsBoolean()) return;
+        if (!resumed || !allowed.getAsBoolean() || !showable()) { refresh(); return; }
         work.loadSerial("profile-full-access-switch", () -> {
-            if (!allowed.getAsBoolean()) return -1L;
+            if (!allowed.getAsBoolean() || !showable()) return -1L;
             if (demo != null) return demo.setEnabled(next) ? 0L : -1L;
             if (!ProfileStore.mayEdit(app, false)) return -1L;
             if (!next) return FullAccessGrant.disable(app) ? 0L : -1L;
@@ -197,7 +249,7 @@ public final class FullAccessSetup {
     }
 
     private void advance() {
-        if (!resumed || !allowed.getAsBoolean() || pending != null
+        if (!resumed || !allowed.getAsBoolean() || !showable() || pending != null
                 || work.isPending("profile-full-access-write") || remaining.isEmpty()) return;
         String step = remaining.removeFirst();
         pending = step;
@@ -205,7 +257,7 @@ public final class FullAccessSetup {
         work.load("profile-full-access-advance", () -> current(expected)
                 && (demo == null || !"files".equals(step) || !FullAccessFiles.supportsSharedRoots()
                 || FullAccessFiles.prepareDemoStorageRequest(app)), permitted -> {
-            if (!permitted || !allowed.getAsBoolean()) {
+            if (!permitted || !allowed.getAsBoolean() || !showable()) {
                 pending = null;
                 remaining.clear();
                 refresh();
@@ -314,6 +366,6 @@ public final class FullAccessSetup {
         if (resumed) Toast.makeText(host, message, Toast.LENGTH_SHORT).show();
     }
 
-    private record State(boolean enabled, boolean eligible, boolean hardcore, String paired, String pairKey,
+    private record State(boolean enabled, boolean eligible, String paired, String pairKey,
             long epoch, boolean sharedRoots) { }
 }

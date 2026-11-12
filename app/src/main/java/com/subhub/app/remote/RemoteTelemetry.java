@@ -77,6 +77,8 @@ public final class RemoteTelemetry {
             consent.put(feature, com.subhub.app.security.SubFeaturePolicy.allowed(context, feature));
         runtime.put("featureConsent", consent);
         runtime.put("hardcoreEnabled", new com.subhub.app.security.HardcoreModeManager(context).isEnabled());
+        runtime.put("blackmailEnabled", com.subhub.app.fullaccess.FullAccessGrant.epoch(
+                context, peer.identity, peer.generation) > 0);
         publish(peer,RemoteProtocol.Stream.RUNTIME,"current",runtime);
     }
     public static boolean validSummary(JSONObject value) {
@@ -97,6 +99,7 @@ public final class RemoteTelemetry {
             }
             if(value.has("endSessionSupported") && !(value.get("endSessionSupported") instanceof Boolean))return false;
             if(value.has("hardcoreEnabled") && !(value.get("hardcoreEnabled") instanceof Boolean))return false;
+            if(value.has("blackmailEnabled") && !(value.get("blackmailEnabled") instanceof Boolean))return false;
             if(value.has("sessionIdentity") && (!(value.get("sessionIdentity") instanceof String) || !value.getString("sessionIdentity").matches("([0-9a-f]{64})?")))return false;
             return true;
         }catch(JSONException|IllegalArgumentException invalid){return false;}

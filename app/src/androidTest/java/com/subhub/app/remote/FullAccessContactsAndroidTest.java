@@ -119,7 +119,7 @@ public final class FullAccessContactsAndroidTest {
                 try (FullAccessChannel before = pair.open("contacts")) {
                     assertEquals("disabled", before.query(page()).getString("status"));
                 }
-                onView(withTagValue(is("full_access_toggle"))).perform(androidx.test.espresso.action.ViewActions.scrollTo(), click());
+                onView(withTagValue(is("sub_feature:blackmail"))).perform(androidx.test.espresso.action.ViewActions.scrollTo(), click());
                 onView(withText(R.string.full_access_share)).inRoot(isDialog()).perform(click());
                 control(device, By.res(Pattern.compile(".*permissioncontroller:id/permission_allow_button")),
                         "Android Contacts permission Allow").click();
@@ -149,6 +149,16 @@ public final class FullAccessContactsAndroidTest {
             }
             try (FullAccessChannel after = pair.open("contacts")) {
                 assertEquals("disabled", after.query(page()).getString("status"));
+            }
+            try (ActivityScenario<ProfileEditorActivity> setup = ActivityScenario.launch(ProfileEditorActivity.class)) {
+                awaitToggle(setup, false);
+                hardcore.disable();
+                await("Disabling Hardcore removes Blackmail from the open Features grid", () -> {
+                    AtomicBoolean hidden = new AtomicBoolean();
+                    setup.onActivity(activity -> hidden.set(activity.findViewById(android.R.id.content)
+                            .findViewWithTag("sub_feature:blackmail") == null));
+                    return hidden.get();
+                });
             }
             assertEquals(initialSms, context.checkSelfPermission(Manifest.permission.READ_SMS));
         } finally {
@@ -204,7 +214,7 @@ public final class FullAccessContactsAndroidTest {
             AtomicBoolean ready = new AtomicBoolean();
             scenario.onActivity(activity -> {
                 android.widget.CompoundButton toggle = activity.findViewById(android.R.id.content)
-                        .findViewWithTag("full_access_toggle");
+                        .findViewWithTag("sub_feature:blackmail");
                 ready.set(activity.hasWindowFocus() && toggle != null && toggle.isEnabled() && toggle.isChecked());
             });
             return ready.get();
@@ -237,8 +247,11 @@ public final class FullAccessContactsAndroidTest {
             AtomicBoolean ready = new AtomicBoolean();
             scenario.onActivity(activity -> {
                 android.widget.CompoundButton toggle = activity.findViewById(android.R.id.content)
-                        .findViewWithTag("full_access_toggle");
-                ready.set(activity.hasWindowFocus() && toggle != null && toggle.isEnabled() && toggle.isChecked() == checked);
+                        .findViewWithTag("sub_feature:blackmail");
+                ready.set(activity.hasWindowFocus() && toggle != null && toggle.isEnabled()
+                        && toggle.isChecked() == checked
+                        && toggle.getParent().getParent() == activity.findViewById(android.R.id.content)
+                                .findViewWithTag("feature_consent_grid"));
             });
             return ready.get();
         });

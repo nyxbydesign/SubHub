@@ -6,6 +6,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.subhub.app.people.PersonSnapshot.Freshness;
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -87,6 +88,21 @@ public class FullAccessWireTest {
         assertFalse(FullAccessChannel.queryOp("sms", "group", "org.example.mail"));
         assertFalse(FullAccessChannel.queryOp("notifications", "group", ""));
         assertFalse(FullAccessChannel.queryOp("notifications", "groups", "org.example.mail"));
+    }
+
+    @Test public void domEntryRequiresCurrentHardcoreAndGrantFromTheActivePeer() throws Exception {
+        JSONObject active = new JSONObject().put("hardcoreEnabled", true).put("blackmailEnabled", true);
+        assertTrue(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.CURRENT, active));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.STALE, active));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.REVOKED, Freshness.CURRENT, active));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.CURRENT,
+                new JSONObject().put("hardcoreEnabled", true)));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.CURRENT,
+                active.put("hardcoreEnabled", false)));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.CURRENT,
+                active.put("hardcoreEnabled", true).put("blackmailEnabled", false)));
+        assertFalse(RemotePersonRepository.canViewBlackmail(RemoteStore.State.ACTIVE, Freshness.CURRENT,
+                active.put("blackmailEnabled", "true")));
     }
 
     private static final class TestConnection implements PeerTransport.Connection {

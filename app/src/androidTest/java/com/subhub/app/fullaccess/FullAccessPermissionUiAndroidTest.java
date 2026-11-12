@@ -2,7 +2,6 @@ package com.subhub.app.fullaccess;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -39,18 +38,15 @@ public final class FullAccessPermissionUiAndroidTest {
         assertFalse(FullAccessGrant.isLocallyEnabled(context));
     }
 
-    @Test public void openingSubSetupWithoutHardcoreShowsNoPermissionPrompt() {
+    @Test public void openingSubSetupWithoutHardcoreHidesBlackmailAndShowsNoPermissionPrompt() {
         int sms = context.checkSelfPermission(Manifest.permission.READ_SMS);
         int contacts = context.checkSelfPermission(Manifest.permission.READ_CONTACTS);
         try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(ProfileEditorActivity.class)) {
             awaitSetup(scenario);
             scenario.onActivity(activity -> {
                 assertTrue(activity.hasWindowFocus());
-                android.widget.CompoundButton toggle = activity.findViewById(android.R.id.content)
-                        .findViewWithTag("full_access_toggle");
-                assertNotNull(toggle);
-                assertFalse(toggle.isChecked());
-                assertFalse(toggle.isEnabled());
+                assertNull(activity.findViewById(android.R.id.content).findViewWithTag("sub_feature:blackmail"));
+                assertNull(activity.findViewById(android.R.id.content).findViewWithTag("full_access_toggle"));
                 assertNull(activity.findViewById(android.R.id.content).findViewWithTag("full_access_guide"));
                 assertNull(activity.findViewById(android.R.id.content).findViewWithTag("full_access_permission:sms_access"));
             });
@@ -64,7 +60,7 @@ public final class FullAccessPermissionUiAndroidTest {
         AtomicBoolean ready = new AtomicBoolean();
         while (SystemClock.elapsedRealtime() < deadline) {
             scenario.onActivity(activity -> ready.set(activity.hasWindowFocus()
-                    && activity.findViewById(android.R.id.content).findViewWithTag("full_access_toggle") != null));
+                    && activity.findViewById(android.R.id.content).findViewWithTag("feature_consent_grid") != null));
             if (ready.get()) return;
             SystemClock.sleep(40);
         }

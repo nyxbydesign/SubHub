@@ -3,7 +3,10 @@ package com.subhub.app.security;
 import android.app.Activity;
 import android.widget.LinearLayout;
 import com.subhub.app.R;
+import com.subhub.app.fullaccess.FullAccessGrant;
+import com.subhub.app.people.FeatureConsentView;
 import com.subhub.app.people.PersonUi;
+import com.subhub.app.util.AsyncUiScope;
 
 /** A Sub can change participation locally even when configuration belongs to a paired Dom. */
 public final class SubFeatureControls {
@@ -16,17 +19,17 @@ public final class SubFeatureControls {
         bindChoices(activity, parent, null);
     }
 
-    public static void bindDraft(Activity activity, LinearLayout parent, Draft draft) {
-        bindChoices(activity, parent, draft);
+    public static FeatureConsentView bindDraft(Activity activity, LinearLayout parent, Draft draft) {
+        return bindChoices(activity, parent, draft);
     }
 
-    private static void bindChoices(Activity activity, LinearLayout parent, Draft draft) {
+    private static FeatureConsentView bindChoices(Activity activity, LinearLayout parent, Draft draft) {
         parent.removeAllViews();
-        if (!DeviceRolePreferences.supportsSub(activity) || DeviceRolePreferences.isDomWorkspace(activity)) return;
+        if (!DeviceRolePreferences.supportsSub(activity) || DeviceRolePreferences.isDomWorkspace(activity)) return null;
         parent.setPadding(0, PersonUi.dp(activity, 10), 0, 0);
         android.widget.TextView heading = PersonUi.text(parent, activity.getString(R.string.sub_features_title), true);
         heading.setPadding(0, 0, 0, PersonUi.dp(activity, 4));
-        com.subhub.app.people.FeatureConsentView grid = new com.subhub.app.people.FeatureConsentView(activity);
+        FeatureConsentView grid = new FeatureConsentView(activity);
         parent.addView(grid, new LinearLayout.LayoutParams(-1, -2));
         for (int index = 0; index < KEYS.length; index++) {
             String key = KEYS[index];
@@ -36,6 +39,17 @@ public final class SubFeatureControls {
                 control.setOnCheckedChangeListener((view, checked) -> draft.values.put(key, checked));
             }
         }
+        if (draft == null && new HardcoreModeManager(activity).isEnabled()) {
+            android.content.Context app = activity.getApplicationContext();
+            AsyncUiScope.forContext(activity).load("self-profile-blackmail", () -> FullAccessGrant.isLocallyEnabled(app),
+                    enabled -> {
+                        if (grid.isAttachedToWindow() && DeviceRolePreferences.supportsSub(app)
+                                && !DeviceRolePreferences.isDomWorkspace(app)
+                                && new HardcoreModeManager(app).isEnabled())
+                            grid.readOnly("blackmail", R.string.full_access_title, enabled);
+                    }, failure -> { });
+        }
+        return grid;
     }
 
     /** Only explicit Save applies changed choices through their existing local policy APIs. */

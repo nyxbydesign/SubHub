@@ -12,7 +12,7 @@ import java.util.Set;
 public final class PersonSnapshot {
     public enum Connection { LOCAL, UNPAIRED, PENDING, PAIRED, CONNECTED, OFFLINE, REVOKED, ERROR }
     public enum Freshness { CURRENT, STALE, UNKNOWN }
-    public enum Capability { VIEW_CONTRACT, EDIT_CONTRACT, VIEW_STATS, MANAGE_CONNECTION, END_SESSION }
+    public enum Capability { VIEW_CONTRACT, EDIT_CONTRACT, VIEW_STATS, MANAGE_CONNECTION, END_SESSION, VIEW_BLACKMAIL }
 
     public final PersonId id;
     public final String name, device, contractName, serviceLabel, currency;

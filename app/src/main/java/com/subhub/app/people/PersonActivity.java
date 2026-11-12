@@ -479,7 +479,7 @@ public final class PersonActivity extends RolePage {
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
-                    if (internal || ProfileViews.remoteContactTarget(person.id)) {
+                    if (internal || person.can(PersonSnapshot.Capability.VIEW_BLACKMAIL)) {
                         PersonUi.row(destinations, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
                             if (!guardTarget()) return;
                             if (internal) startActivity(DummySubPreview.childIntent(this,

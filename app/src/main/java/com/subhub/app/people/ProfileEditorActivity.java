@@ -118,10 +118,11 @@ public final class ProfileEditorActivity extends PreferencePage {
             LinearLayout choices = card(page); choices.setTag("profile_edit_features");
             LinearLayout controls = PersonUi.column(this);
             choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
-            com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
-            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, controls, false, this::mayEdit, state);
+            FeatureConsentView grid = com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
+            if (grid != null)
+                fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, controls, grid, this::mayEdit, state);
         } else if (internal) {
-            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, card(page), true, this::mayEdit, state);
+            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, card(page), null, this::mayEdit, state);
         }
         ProfileActionRow formActions = new ProfileActionRow(this);
         formActions.setTag("profile_form_actions");

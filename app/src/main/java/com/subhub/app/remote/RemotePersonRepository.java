@@ -44,6 +44,7 @@ public final class RemotePersonRepository implements PersonRepository {
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
         String sessionIdentity=runtime==null?"":runtime.optString("sessionIdentity","");
         if(peer.state==RemoteStore.State.ACTIVE && live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("endSessionSupported") && runtime.optBoolean("serviceActive") && sessionIdentity.matches("[0-9a-f]{64}"))capabilities.add(PersonSnapshot.Capability.END_SESSION);
+        if (canViewBlackmail(peer.state, live, runtime)) capabilities.add(PersonSnapshot.Capability.VIEW_BLACKMAIL);
         String applied=summaryOnly?"":store.metadata(peer.identity,peer.generation,"applied_revision","0"),desired=summaryOnly?"":store.metadata(peer.identity,peer.generation,"desired_revision","0");
         if(!summaryOnly){RemoteStore.Command latest=store.latestCommand(peer.identity,peer.generation);if(latest==null || !latest.pending())desired=applied;}
         if(summaryOnly)capabilities.clear();
@@ -56,6 +57,12 @@ public final class RemotePersonRepository implements PersonRepository {
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
                 .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
+    }
+
+    static boolean canViewBlackmail(RemoteStore.State pairing, PersonSnapshot.Freshness freshness, JSONObject runtime) {
+        return pairing == RemoteStore.State.ACTIVE && freshness == PersonSnapshot.Freshness.CURRENT && runtime != null
+                && Boolean.TRUE.equals(runtime.opt("hardcoreEnabled"))
+                && Boolean.TRUE.equals(runtime.opt("blackmailEnabled"));
     }
     static PersonSnapshot.Connection connection(RemoteStore.State state,PeerPresence.Observation presence,
             long contact,String error) {
