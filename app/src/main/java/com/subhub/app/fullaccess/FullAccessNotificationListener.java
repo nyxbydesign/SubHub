@@ -25,8 +25,10 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
             new ArrayBlockingQueue<>(64), new ThreadPoolExecutor.DiscardPolicy());
 
     @Override public void onNotificationPosted(StatusBarNotification notification) {
-        if (notification == null || !FullAccessDataSources.notificationScopeWasChosen(this)
-                || !android.os.Process.myUserHandle().equals(notification.getUser())) return;
+        if (notification == null || !android.os.Process.myUserHandle().equals(notification.getUser())) return;
+        boolean paired = FullAccessDataSources.notificationScopeWasChosen(this);
+        boolean demo = DemoFullAccess.hasNotificationChoice(this);
+        if (!paired && !demo) return;
         Notification source = notification.getNotification();
         if (source == null || source.visibility == Notification.VISIBILITY_SECRET
                 || (source.flags & Notification.FLAG_LOCAL_ONLY) != 0) return;
@@ -37,8 +39,10 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
         String eventKey = keyDigest(notification.getKey());
         long postedAt = notification.getPostTime();
         String category = category(source.category);
-        if (eventKey != null) writes.execute(() ->
-                FullAccessDataSources.recordNotification(this, eventKey, packageName, category, postedAt, preview));
+        if (eventKey != null) writes.execute(() -> {
+            if (paired) FullAccessDataSources.recordNotification(this, eventKey, packageName, category, postedAt, preview);
+            if (demo) DemoFullAccess.recordNotification(this, eventKey, packageName, category, postedAt, preview);
+        });
     }
 
     @Override public void onDestroy() {

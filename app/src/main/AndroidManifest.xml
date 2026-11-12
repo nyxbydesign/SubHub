@@ -59,6 +59,7 @@
         <service android:name=".capture.export.ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
         <activity android:name=".fullaccess.FullAccessActivity" android:exported="false" />
+        <activity android:name=".fullaccess.DemoFullAccessActivity" android:exported="false" />
         <activity android:name=".fullaccess.FullAccessScreenActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" />
         <service android:name=".fullaccess.FullAccessScreenService" android:exported="false"

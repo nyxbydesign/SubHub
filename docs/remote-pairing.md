@@ -49,13 +49,15 @@ Compatible devices expose Start and Stop beside the Sub profile’s applied serv
 
 ## Full Access
 
-On the Sub’s phone, open Profile → Edit profile → Full Access. Hardcore Mode must already be enabled. The setup screen identifies the paired Dom and describes the data available to them. The Sub can grant each supported data permission separately or choose several in the permission setup checklist. Ordinary startup and pairing do not ask for these permissions. Android may deny SMS access on some devices or installers. The Sub can then share a transcript they select instead.
+On the Sub’s phone, turn on Full Access in Edit profile after enabling Hardcore Mode. Confirm the paired Dom, then follow Android’s permission screens. SubHub requests supported permissions that are missing and continues if you decline one. Android may deny direct SMS access on some devices or installers. The Sub can share a transcript they select instead.
 
-The Dom opens Full Access from the Sub’s profile. Contacts, notification history, SMS, and apps reflect the Sub’s enabled sources and Android permissions. Notification history covers up to seven days after enabling that scope. Protected notifications and credential content are excluded. App usage is based on foreground activity reported by Android and can cover a shorter period than the selected range.
+The Dom opens Full Access from the Sub’s profile. One page shows Contacts, notification history, SMS, and apps reflect the Sub’s enabled sources and Android permissions. Notification history covers up to seven days after enabling that scope. Protected notifications and credential content are excluded. App usage is based on foreground activity reported by Android and can cover a shorter period than the selected range.
 
-Files are read-only on the Sub’s phone. The Dom can browse Android-permitted shared folders, preview supported media, and explicitly download files or folders. Opening Screen sends a request to the Sub. Screen sharing uses SubHub notifications for requests and the local Stop sharing action. Android asks before each new screen-sharing session. The live view has no audio or saved recording and stops when the Dom leaves the tab or the Sub stops sharing.
+Files are read-only on the Sub’s phone. The Dom can browse Android-permitted shared folders, preview supported media, and explicitly download files or folders. View screen sends a request to the Sub. Screen sharing uses SubHub notifications for requests and the local Stop sharing action. Android asks before each new screen-sharing session. The live view has no audio or saved recording and stops when the Dom closes the view, leaves the page, or the Sub stops sharing.
 
 The Sub can turn off Full Access locally even during Hardcore Mode. Turning off Hardcore Mode or ending the pairing also ends the grant. Already completed downloads remain with the recipient.
+
+To view this phone’s data in Demo Sub, turn on Full Access in the Demo Sub profile editor. Demo Sub uses the same Full Access page for local data, including installed apps and Android foreground usage when available. Demo’s settings, activity totals, limits and ledger still belong to its own sessions. Demo Full Access shares nothing with another device.
 
 ## Activity
 

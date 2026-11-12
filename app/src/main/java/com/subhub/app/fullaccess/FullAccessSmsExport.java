@@ -28,15 +28,18 @@ final class FullAccessSmsExport {
 
     private FullAccessSmsExport() { }
 
-    private static AtomicFile file(Context context) {
-        return new AtomicFile(new File(context.getNoBackupFilesDir(), "full-access-sms-export.json"));
+    private static AtomicFile file(Context context, boolean demo) {
+        String name = "full-access-sms-export.json";
+        return new AtomicFile(new File(context.getNoBackupFilesDir(), demo ? "demo-" + name : name));
     }
 
-    static boolean available(Context context) {
-        return file(context).getBaseFile().exists();
-    }
+    static boolean available(Context context) { return file(context, false).getBaseFile().exists(); }
 
-    static void clear(Context context) { file(context).delete(); }
+    static void clear(Context context) { file(context, false).delete(); }
+
+    static boolean demoAvailable(Context context) { return file(context, true).getBaseFile().exists(); }
+
+    static void clearDemo(Context context) { file(context, true).delete(); }
 
     static JSONArray readSelection(Context context, Uri selected) throws IOException {
         if (selected == null || !"content".equals(selected.getScheme())) throw new IOException("SMS export unavailable");
@@ -69,7 +72,11 @@ final class FullAccessSmsExport {
     }
 
     static void store(Context context, long epoch, JSONArray lines) throws IOException, JSONException {
-        AtomicFile export = file(context);
+        store(context, epoch, lines, false);
+    }
+
+    static void store(Context context, long epoch, JSONArray lines, boolean demo) throws IOException, JSONException {
+        AtomicFile export = file(context, demo);
         byte[] bytes = new JSONObject().put("epoch", epoch).put("lines", lines).toString().getBytes(StandardCharsets.UTF_8);
         FileOutputStream output = export.startWrite();
         try {
@@ -82,7 +89,12 @@ final class FullAccessSmsExport {
     }
 
     static JSONObject page(Context context, long epoch, int offset, int limit) throws IOException, JSONException {
-        AtomicFile export = file(context);
+        return page(context, epoch, offset, limit, false);
+    }
+
+    static JSONObject page(Context context, long epoch, int offset, int limit, boolean demo)
+            throws IOException, JSONException {
+        AtomicFile export = file(context, demo);
         if (!export.getBaseFile().exists()) return FullAccessDataSources.response("unavailable", new JSONArray());
         JSONObject stored = new JSONObject(new String(export.readFully(), StandardCharsets.UTF_8));
         if (stored.getLong("epoch") != epoch) return FullAccessDataSources.response("unavailable", new JSONArray());

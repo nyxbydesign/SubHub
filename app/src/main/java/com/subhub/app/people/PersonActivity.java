@@ -479,9 +479,12 @@ public final class PersonActivity extends RolePage {
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
-                    if (!internal && ProfileViews.remoteContactTarget(person.id)) {
+                    if (internal || ProfileViews.remoteContactTarget(person.id)) {
                         PersonUi.row(destinations, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
-                            if (guardTarget()) com.subhub.app.fullaccess.FullAccessActivity.openPeer(this, person.id);
+                            if (!guardTarget()) return;
+                            if (internal) startActivity(DummySubPreview.childIntent(this,
+                                    com.subhub.app.fullaccess.DemoFullAccessActivity.class));
+                            else com.subhub.app.fullaccess.FullAccessActivity.openPeer(this, person.id);
                         }).setTag("person_tab:full_access");
                     }
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
@@ -668,7 +671,7 @@ public final class PersonActivity extends RolePage {
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
         if (!editable && !internal) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !internal);
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, internal || person.id.isLocal());
         if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
                 getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,

@@ -34,7 +34,7 @@ import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
 import com.subhub.app.R;
-import com.subhub.app.fullaccess.FullAccessActivity;
+import com.subhub.app.people.ProfileEditorActivity;
 import com.subhub.app.fullaccess.FullAccessGrant;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -91,7 +91,7 @@ public final class FullAccessContactsAndroidTest {
         UiDevice device = UiDevice.getInstance(instrumentation);
 
         try (SyntheticPair pair = new SyntheticPair(context)) {
-            try (ActivityScenario<FullAccessActivity> setup = ActivityScenario.launch(FullAccessActivity.class)) {
+            try (ActivityScenario<ProfileEditorActivity> setup = ActivityScenario.launch(ProfileEditorActivity.class)) {
                 await("Focused SubHub setup before Device Admin", () -> {
                     AtomicBoolean focused = new AtomicBoolean();
                     setup.onActivity(activity -> focused.set(activity.hasWindowFocus()));
@@ -114,28 +114,22 @@ public final class FullAccessContactsAndroidTest {
                 await("Android Device Admin approval completed", hardcore::isAdminActive);
                 assertTrue("Hardcore Mode is active", hardcore.finishActivation() && hardcore.isEnabled());
                 awaitToggle(setup, false);
-                onView(withTagValue(is("full_access_toggle"))).perform(click());
-                onView(withText(R.string.full_access_share)).inRoot(isDialog()).perform(click());
-                awaitToggle(setup, true);
-                assertTrue(FullAccessGrant.isLocallyEnabled(context));
                 assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission(Manifest.permission.READ_CONTACTS));
                 assertEquals(initialSms, context.checkSelfPermission(Manifest.permission.READ_SMS));
-
                 try (FullAccessChannel before = pair.open("contacts")) {
-                    assertEquals("permission_required", before.query(page()).getString("status"));
+                    assertEquals("disabled", before.query(page()).getString("status"));
                 }
-                try (FullAccessChannel sms = pair.open("sms")) {
-                    assertEquals("permission_required", sms.query(page()).getString("status"));
-                }
-                assertEquals(initialSms, context.checkSelfPermission(Manifest.permission.READ_SMS));
-                onView(withTagValue(is("full_access_permission:contacts"))).perform(click());
+                onView(withTagValue(is("full_access_toggle"))).perform(androidx.test.espresso.action.ViewActions.scrollTo(), click());
+                onView(withText(R.string.full_access_share)).inRoot(isDialog()).perform(click());
                 control(device, By.res(Pattern.compile(".*permissioncontroller:id/permission_allow_button")),
                         "Android Contacts permission Allow").click();
                 await("Contacts permission granted through Android UI", () ->
                         context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED);
                 await("Contacts source explicitly enabled", () ->
                         com.subhub.app.fullaccess.FullAccessDataSources.isScopeEnabled(context, "contacts"));
-                awaitToggle(setup, true);
+                awaitRemainingPermissions(device, setup);
+                assertTrue(FullAccessGrant.isLocallyEnabled(context));
+                assertEquals(initialSms, context.checkSelfPermission(Manifest.permission.READ_SMS));
                 addSyntheticContact(device, setup);
             }
 
@@ -185,7 +179,26 @@ public final class FullAccessContactsAndroidTest {
         }
     }
 
-    private void addSyntheticContact(UiDevice device, ActivityScenario<FullAccessActivity> setup) {
+    private void awaitRemainingPermissions(UiDevice device, ActivityScenario<ProfileEditorActivity> scenario) {
+        await("Inline switch after remaining Android prompts are dismissed", () -> {
+            String pkg = device.getCurrentPackageName();
+            if (pkg != null && !context.getPackageName().equals(pkg)) {
+                UiObject2 deny = device.findObject(By.res(Pattern.compile(".*permissioncontroller:id/permission_deny_button")));
+                if (deny != null) deny.click();
+                else if (pkg.equals("com.android.settings") || pkg.endsWith(".documentsui")) device.pressBack();
+                return false;
+            }
+            AtomicBoolean ready = new AtomicBoolean();
+            scenario.onActivity(activity -> {
+                android.widget.CompoundButton toggle = activity.findViewById(android.R.id.content)
+                        .findViewWithTag("full_access_toggle");
+                ready.set(activity.hasWindowFocus() && toggle != null && toggle.isEnabled() && toggle.isChecked());
+            });
+            return ready.get();
+        });
+    }
+
+    private void addSyntheticContact(UiDevice device, ActivityScenario<ProfileEditorActivity> setup) {
         Intent insert = new Intent(ContactsContract.Intents.Insert.ACTION)
                 .setType(ContactsContract.RawContacts.CONTENT_TYPE)
                 .putExtra(ContactsContract.Intents.Insert.NAME, CONTACT)
@@ -206,7 +219,7 @@ public final class FullAccessContactsAndroidTest {
         return new JSONObject().put("op", "page");
     }
 
-    private static void awaitToggle(ActivityScenario<FullAccessActivity> scenario, boolean checked) {
+    private static void awaitToggle(ActivityScenario<ProfileEditorActivity> scenario, boolean checked) {
         await("Visible Full Access setup state", () -> {
             AtomicBoolean ready = new AtomicBoolean();
             scenario.onActivity(activity -> {

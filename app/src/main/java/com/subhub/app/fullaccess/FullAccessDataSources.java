@@ -17,7 +17,7 @@ import org.json.JSONObject;
 /** Sub-owned, bounded Full Access readers. Nothing here launches a permission request. */
 public final class FullAccessDataSources {
     private static final String SETTINGS = "full_access_data_scopes";
-    private static final int PAGE_SIZE = 12;
+    static final int PAGE_SIZE = 12;
     private static final String SMS_SOURCE = "sms_source";
     private static final String DIRECT_SMS = "direct";
     private static final String EXPORTED_SMS = "export";
@@ -243,7 +243,7 @@ public final class FullAccessDataSources {
         return settings(context).getString(SMS_SOURCE, "");
     }
 
-    private static boolean hasNotificationAccess(Context context) {
+    static boolean hasNotificationAccess(Context context) {
         ComponentName listener = new ComponentName(context, FullAccessNotificationListener.class);
         if (Build.VERSION.SDK_INT >= 27) {
             NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -278,7 +278,7 @@ public final class FullAccessDataSources {
         return new JSONObject().put("status", status).put("items", items);
     }
 
-    private static long cursor(String value, long first, long max) {
+    static long cursor(String value, long first, long max) {
         if (value == null || value.isEmpty()) return first;
         if (value.length() > 19) throw new IllegalArgumentException("Invalid cursor");
         long parsed = Long.parseLong(value);

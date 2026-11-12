@@ -56,6 +56,29 @@ public final class FullAccessScreen {
         return session;
     }
 
+    /** Use the Android approval returned to the local viewer without sending a peer request. */
+    static Session startLocal(android.app.Activity host, Intent approval, BooleanSupplier grantCurrent) {
+        Session session = new Session(host.getApplicationContext(), grantCurrent);
+        if (!session.revalidate() || !session.claimPrompt(null) || !session.acceptApproval(approval)) {
+            session.close();
+            return session;
+        }
+        synchronized (LOCK) {
+            if (active != null || MediaProjectionLeaseRegistry.owner() != null) {
+                session.end(IN_USE);
+                return session;
+            }
+            active = session;
+        }
+        try {
+            host.startForegroundService(new Intent(host, FullAccessScreenService.class)
+                    .putExtra(EXTRA_SESSION, session.id));
+        } catch (RuntimeException unavailable) {
+            session.close();
+        }
+        return session;
+    }
+
     static Session find(String id) {
         synchronized (LOCK) {
             return active != null && active.id.equals(id) ? active : null;

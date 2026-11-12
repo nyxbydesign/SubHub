@@ -17,17 +17,21 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
     private static final String TABLE = "posted_notifications";
     private static final String FILE = "full-access-notifications.db";
 
-    FullAccessNotificationHistory(Context context) {
-        super(context, path(context).getAbsolutePath(), null, 2);
+    FullAccessNotificationHistory(Context context) { this(context, false); }
+
+    FullAccessNotificationHistory(Context context, boolean demo) {
+        super(context, path(context, demo).getAbsolutePath(), null, 2);
         setWriteAheadLoggingEnabled(false);
     }
 
-    private static File path(Context context) {
-        return new File(context.getNoBackupFilesDir(), FILE);
+    private static File path(Context context, boolean demo) {
+        return new File(context.getNoBackupFilesDir(), demo ? "demo-" + FILE : FILE);
     }
 
-    static void clear(Context context) {
-        File file = path(context);
+    static void clear(Context context) { clear(context, false); }
+
+    static void clear(Context context, boolean demo) {
+        File file = path(context, demo);
         if (file.exists()) SQLiteDatabase.deleteDatabase(file);
     }
 

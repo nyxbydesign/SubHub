@@ -21,6 +21,7 @@ public final class ProfileEditorActivity extends PreferencePage {
     private long internalControllerRevision;
     private String avatar;
     private com.subhub.app.security.SubFeatureControls.Draft features;
+    private com.subhub.app.fullaccess.FullAccessSetup fullAccess;
     private EditText name, about, gender, age;
     private LinearLayout portrait;
     private TextView save, change, remove;
@@ -118,9 +119,9 @@ public final class ProfileEditorActivity extends PreferencePage {
             LinearLayout controls = PersonUi.column(this);
             choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
             com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
-            PersonUi.row(controls, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
-                if (mayEdit()) com.subhub.app.fullaccess.FullAccessActivity.openSetup(this);
-            }).setTag("full_access_setup");
+            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, controls, false, this::mayEdit, state);
+        } else if (internal) {
+            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, card(page), true, this::mayEdit, state);
         }
         ProfileActionRow formActions = new ProfileActionRow(this);
         formActions.setTag("profile_form_actions");
@@ -200,11 +201,18 @@ public final class ProfileEditorActivity extends PreferencePage {
     @Override protected void onResume() {
         super.onResume();
         if (!mayEdit()) finish();
-        else if (internal) { findViewById(android.R.id.content).setVisibility(View.VISIBLE); authorityClock.post(checkInternalAuthority); }
+        else {
+            if (internal) {
+                findViewById(android.R.id.content).setVisibility(View.VISIBLE);
+                authorityClock.post(checkInternalAuthority);
+            }
+            if (fullAccess != null) fullAccess.resume();
+        }
     }
 
     @Override protected void onPause() {
         authorityClock.removeCallbacks(checkInternalAuthority);
+        if (fullAccess != null) fullAccess.pause();
         if (internal) findViewById(android.R.id.content).setVisibility(View.INVISIBLE);
         super.onPause();
     }
@@ -219,6 +227,7 @@ public final class ProfileEditorActivity extends PreferencePage {
             state.putString("profile_avatar", avatar);
         }
         if (features != null) features.saveState(state);
+        if (fullAccess != null) fullAccess.saveState(state);
         super.onSaveInstanceState(state);
     }
 }

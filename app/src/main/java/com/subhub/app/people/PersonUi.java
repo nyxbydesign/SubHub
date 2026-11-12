@@ -119,7 +119,7 @@ public final class PersonUi {
                                     value.usedMillis / 60_000L, value.displayMinutes()), null);
             int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
             app.getChildAt(0).setTag("allowance_app_icon:" + value.packageName);
-            if (value.appIcon != null || !snapshot.id.isLocal())
+            if (value.appIcon != null || !snapshot.id.isLocal() && !DummySubPreview.ID.equals(snapshot.id))
                 com.subhub.app.remote.RemoteUi.bindAppIcon((ImageView) app.getChildAt(0), value.appIcon, fallback);
             else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;

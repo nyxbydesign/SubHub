@@ -94,12 +94,16 @@ public final class FullAccessFiles {
     }
 
     public static boolean retainFolder(Context context, Intent result) {
+        return retainFolder(context, result, null);
+    }
+
+    static boolean retainFolder(Context context, Intent result, String demoGeneration) {
         if (result == null || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return false;
         Uri tree = result.getData();
         if (!validTree(tree)) return false;
         synchronized (GRANT_LOCK) {
             Set<String> selected = new HashSet<>();
-            for (Uri uri : readableTrees(context)) selected.add(uri.toString());
+            for (Uri uri : readableTrees(context, demoGeneration)) selected.add(uri.toString());
             String root = tree.toString();
             if (!selected.contains(root) && selected.size() >= MAX_ROOTS) return false;
             ContentResolver resolver = context.getContentResolver();
@@ -110,8 +114,9 @@ public final class FullAccessFiles {
                 return false;
             }
             selected.add(root);
-            boolean saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putStringSet(ROOTS, selected).commit();
+            var choices = rootsPreferences(context, demoGeneration).edit().putStringSet(ROOTS, selected);
+            if (demoGeneration != null) choices.putString("generation", demoGeneration);
+            boolean saved = choices.commit();
             if (!saved && !alreadyHeld) {
                 try {
                     resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -123,12 +128,18 @@ public final class FullAccessFiles {
         }
     }
 
-    public static boolean available(Context context) {
-        return hasBroadAccess() || !readableTrees(context).isEmpty();
+    public static boolean available(Context context) { return available(context, null); }
+
+    static boolean available(Context context, String demoGeneration) {
+        return hasBroadAccess() || !readableTrees(context, demoGeneration).isEmpty();
     }
 
     public static Session open(Context context, BooleanSupplier allowed) {
-        return new Session(context.getApplicationContext(), allowed);
+        return open(context, allowed, null);
+    }
+
+    static Session open(Context context, BooleanSupplier allowed, String demoGeneration) {
+        return new Session(context.getApplicationContext(), allowed, demoGeneration);
     }
 
     private static boolean hasBroadAccess() {
@@ -142,9 +153,14 @@ public final class FullAccessFiles {
         return false;
     }
 
-    private static List<Uri> readableTrees(Context context) {
-        Set<String> selected = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getStringSet(ROOTS, Collections.emptySet());
+    private static android.content.SharedPreferences rootsPreferences(Context context, String demoGeneration) {
+        return context.getSharedPreferences(demoGeneration == null ? PREFS : "demo_" + PREFS, Context.MODE_PRIVATE);
+    }
+
+    private static List<Uri> readableTrees(Context context, String demoGeneration) {
+        var choices = rootsPreferences(context, demoGeneration);
+        if (demoGeneration != null && !demoGeneration.equals(choices.getString("generation", ""))) return List.of();
+        Set<String> selected = choices.getStringSet(ROOTS, Collections.emptySet());
         List<Uri> trees = new ArrayList<>();
         for (UriPermission permission : context.getContentResolver().getPersistedUriPermissions()) {
             Uri uri = permission.getUri();
@@ -225,6 +241,7 @@ public final class FullAccessFiles {
         private final Context context;
         private final ContentResolver resolver;
         private final BooleanSupplier allowed;
+        private final String demoGeneration;
         private final CancellationSignal cancellation = new CancellationSignal();
         private final Map<String, Node> nodes = new LinkedHashMap<>(64, 0.75f, true);
         private volatile boolean closed;
@@ -234,10 +251,11 @@ public final class FullAccessFiles {
         private String cursorToken;
         private InputStream activeInput;
 
-        private Session(Context context, BooleanSupplier allowed) {
+        private Session(Context context, BooleanSupplier allowed, String demoGeneration) {
             this.context = context;
             resolver = context.getContentResolver();
             this.allowed = allowed;
+            this.demoGeneration = demoGeneration;
         }
 
         public JSONObject list(String node, String cursor) throws IOException, JSONException {
@@ -278,7 +296,7 @@ public final class FullAccessFiles {
                      | android.os.OperationCanceledException unavailable) {
                 closePage();
                 checkLive();
-                return status(available(context) ? "unavailable" : "permission_required");
+                return status(available(context, demoGeneration) ? "unavailable" : "permission_required");
             }
         }
 
@@ -311,7 +329,7 @@ public final class FullAccessFiles {
                 exposedBroad = items.length() > 0;
             }
             if (items.length() == 0) {
-                for (Uri tree : readableTrees(context)) {
+                for (Uri tree : readableTrees(context, demoGeneration)) {
                     checkLive();
                     try {
                         String id = DocumentsContract.getTreeDocumentId(tree);
@@ -334,7 +352,7 @@ public final class FullAccessFiles {
             exposedStorage = new StorageGrant(exposedStorage.broad || exposedBroad, Set.copyOf(exposedTrees));
             if (!isStorageGrantCurrent()) throw new IOException("Storage access ended");
             return status(items.length() == 0
-                    ? (available(context) ? "unavailable" : "permission_required") : "ready").put("items", items);
+                    ? (available(context, demoGeneration) ? "unavailable" : "permission_required") : "ready").put("items", items);
         }
 
         public String mime(String node, String operation) throws IOException {

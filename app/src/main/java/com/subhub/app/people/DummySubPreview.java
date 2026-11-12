@@ -83,6 +83,7 @@ public final class DummySubPreview {
 
     private static String sectionFor(Class<?> destination) {
         if (destination == PersonActivity.class || destination == ProfileEditorActivity.class
+                || destination == com.subhub.app.fullaccess.DemoFullAccessActivity.class
                 || destination == com.subhub.app.tasks.TasksActivity.class
                 || destination == com.subhub.app.stats.StatsActivity.class) return "";
         if (destination == com.subhub.app.settings.CensorPresetsActivity.class) return "censor";

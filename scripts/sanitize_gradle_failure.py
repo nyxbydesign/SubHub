@@ -110,6 +110,9 @@ LINT_SOURCES = {
 # Fixed tracked production-source labels; messages, paths and symbols remain omitted.
 # New or renamed sources require an explicit literal edit; unknown paths remain unknown.
 JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccess.java": "main_demo_full_access",
+    b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccessActivity.java": "main_demo_full_access_activity",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessSetup.java": "main_full_access_setup",
     b"app/src/main/java/com/subhub/app/fullaccess/FullAccessActivity.java": "main_full_access_activity",
     b"app/src/main/java/com/subhub/app/fullaccess/FullAccessAppsSource.java": "main_full_access_apps_source",
     b"app/src/main/java/com/subhub/app/fullaccess/FullAccessContactsSource.java": "main_full_access_contacts_source",
