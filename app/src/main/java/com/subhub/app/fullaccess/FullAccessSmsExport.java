@@ -14,9 +14,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -25,10 +23,7 @@ import org.json.JSONObject;
 final class FullAccessSmsExport {
     private static final int MAX_BYTES = 128 * 1024;
     private static final int MAX_LINES = 1000;
-    private static final Pattern SENSITIVE_LINE = Pattern.compile(
-            "\\b(?:otp|one[- ]time|passcode|passphrase|password|verification|security code|reset code"
-                    + "|recovery code|access token|authentication)\\b");
-    private static final Pattern SHORT_CODE = Pattern.compile("(?<![\\p{L}\\p{N}])\\p{Nd}{4,8}(?![\\p{L}\\p{N}])");
+    private static final int MAX_MESSAGE_CHARS = 1000;
 
     private FullAccessSmsExport() { }
 
@@ -60,19 +55,15 @@ final class FullAccessSmsExport {
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
         JSONArray lines = new JSONArray();
         for (String line : text.split("\\R")) {
-            String textLine = safeText(line);
-            if (textLine.isEmpty()) continue;
+            if (line.trim().isEmpty()) continue;
             if (lines.length() == MAX_LINES) throw new IOException("SMS export too large");
-            lines.put(textLine);
+            lines.put(messageText(line));
         }
         return lines;
     }
 
-    static String safeText(String body) {
-        if (body == null) return "";
-        String clean = body.trim();
-        if (clean.isEmpty() || SENSITIVE_LINE.matcher(clean.toLowerCase(Locale.ROOT)).find()) return "";
-        return FullAccessDataSources.bounded(SHORT_CODE.matcher(clean).replaceAll("••••"), 1000);
+    static String messageText(String body) {
+        return FullAccessDataSources.bounded(body, MAX_MESSAGE_CHARS);
     }
 
     static void store(Context context, long epoch, JSONArray lines) throws IOException, JSONException {
@@ -107,7 +98,8 @@ final class FullAccessSmsExport {
         JSONArray rows = new JSONArray();
         int end = offset >= lines.length() ? lines.length() : offset + Math.min(limit, lines.length() - offset);
         for (int index = offset; index < end; index++) {
-            rows.put(new JSONObject().put("id", Integer.toString(index)).put("title", lines.getString(index)));
+            rows.put(new JSONObject().put("id", Integer.toString(index))
+                    .put("title", messageText(lines.getString(index))));
         }
         JSONObject result = FullAccessDataSources.response("ok", rows);
         if (end < lines.length()) result.put("nextCursor", Integer.toString(end));
@@ -154,7 +146,7 @@ final class FullAccessSmsExport {
     }
 
     private static JSONObject line(JSONArray lines, int index) throws JSONException {
-        String body = safeText(lines.getString(index));
+        String body = messageText(lines.getString(index));
         JSONObject item = new JSONObject().put("id", Integer.toString(index));
         return body.isEmpty() ? item.put("redacted", true) : item.put("detail", body);
     }

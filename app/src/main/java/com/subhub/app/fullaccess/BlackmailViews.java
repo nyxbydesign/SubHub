@@ -55,6 +55,43 @@ final class BlackmailViews {
         return card;
     }
 
+    static void entry(LinearLayout parent, int label, int resource, String scope, Runnable open) {
+        Context context = parent.getContext();
+        LinearLayout tile = horizontal(context);
+        tile.setTag("blackmail_entry:" + scope);
+        tile.setMinimumHeight(dp(context, 70));
+        tile.setPaddingRelative(dp(context, 14), dp(context, 10), dp(context, 14), dp(context, 10));
+        tile.setBackgroundResource(R.drawable.bg_card);
+        tile.setForeground(ripple(context, null));
+        tile.setFocusable(true);
+        ViewCompat.setScreenReaderFocusable(tile, true);
+        tile.setOnClickListener(view -> open.run());
+
+        FrameLayout badge = new FrameLayout(context);
+        int badgeColor = switch (scope) {
+            case "contacts", "files" -> R.color.blackmail_entry_iris;
+            case "notifications", "screen" -> R.color.blackmail_entry_rose;
+            default -> R.color.blackmail_entry_violet;
+        };
+        badge.setBackground(shape(context, badgeColor, 14));
+        badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        badge.addView(icon(context, resource, R.color.text_primary),
+                new FrameLayout.LayoutParams(dp(context, 22), dp(context, 22), Gravity.CENTER));
+        LinearLayout.LayoutParams badgeSize = new LinearLayout.LayoutParams(dp(context, 44), dp(context, 44));
+        badgeSize.setMarginEnd(dp(context, 13));
+        tile.addView(badge, badgeSize);
+
+        TextView title = text(context, context.getText(label), R.dimen.ui_text_section, R.color.text_primary, true);
+        tile.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        ImageView arrow = icon(context, R.drawable.ic_overview_chevron, R.color.accent_text);
+        LinearLayout.LayoutParams arrowSize = new LinearLayout.LayoutParams(dp(context, 18), dp(context, 18));
+        arrowSize.setMarginStart(dp(context, 8));
+        tile.addView(arrow, arrowSize);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
+        size.bottomMargin = dp(context, 9);
+        parent.addView(tile, size);
+    }
+
     static LinearLayout row(LinearLayout parent, CharSequence title, CharSequence detail, int icon,
             boolean initials, Bitmap photo, Runnable open) {
         Context context = parent.getContext();

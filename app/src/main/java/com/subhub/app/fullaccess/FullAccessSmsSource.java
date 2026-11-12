@@ -51,7 +51,7 @@ final class FullAccessSmsSource {
                     break;
                 }
                 last = Long.toString(messages.getLong(0));
-                String text = FullAccessSmsExport.safeText(messages.getString(2));
+                String text = FullAccessSmsExport.messageText(messages.getString(2));
                 JSONObject row = new JSONObject().put("id", last)
                         .put("title", FullAccessDataSources.bounded(messages.getString(1), 160))
                         .put("time", messages.getLong(3));
@@ -143,7 +143,7 @@ final class FullAccessSmsSource {
     }
 
     private static JSONObject message(Cursor row) throws JSONException {
-        String body = FullAccessSmsExport.safeText(row.getString(4));
+        String body = FullAccessSmsExport.messageText(row.getString(4));
         JSONObject result = new JSONObject().put("id", Long.toString(row.getLong(0)))
                 .put("time", row.getLong(2))
                 .put("outgoing", row.getInt(5) == Telephony.Sms.MESSAGE_TYPE_SENT);

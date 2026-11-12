@@ -158,8 +158,8 @@ public final class FullAccessContactsAndroidTest {
     }
 
     private void verifySmsExportWithoutAndroidSmsPermission(SyntheticPair pair) throws Exception {
-        String sample = "A synthetic transcript selected for this fixture.";
-        String later = "A second line in the same conversation.";
+        String sample = "The verification appointment moved to room 873241.";
+        String later = "Meet me outside stop １７２４６８.";
         File folder = new File(context.getFilesDir(), "full-access-downloads");
         assertTrue(folder.isDirectory() || folder.mkdir());
         File transcript = File.createTempFile("full-access-fixture-", ".txt", folder);

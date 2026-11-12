@@ -1,19 +1,35 @@
 package com.subhub.app.people;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.scrollTo;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.*;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.os.Build;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
+import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.UiObject2;
+import androidx.test.uiautomator.Until;
 import com.subhub.app.OwnedUiIntegrationFixture;
 import com.subhub.app.R;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
@@ -24,6 +40,10 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -31,16 +51,86 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import org.junit.Rule;
 import org.junit.Test;
 
-/** Uses the installed apps on an owned Android guest, without granting any sensitive permission. */
+/** Exercises the Demo route and real Android consent on an owned synthetic guest. */
 public final class DemoFullAccessAndroidTest {
     @Rule public final OwnedUiIntegrationFixture integration = new OwnedUiIntegrationFixture(false);
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
 
-    @Test public void demoUsesInstalledPhoneAppsInOnePageAndInvalidatesOnLock() throws Exception {
+    @Test public void demoUsesDedicatedPhoneDataPagesAndInvalidatesOnLock() throws Exception {
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        withViewer(viewer -> {
+            assertLanding(viewer);
+            if ("true".equals(InstrumentationRegistry.getArguments().getString("blackmail_preview")))
+                renderSyntheticLanding(viewer);
+            List<ApplicationInfo> installed = new ArrayList<>(context.getPackageManager().getInstalledApplications(0));
+            installed.removeIf(app -> (app.flags & (ApplicationInfo.FLAG_SYSTEM
+                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
+            installed.sort(Comparator.comparing(app -> app.packageName));
+            assertFalse(installed.isEmpty());
+            String realApp = installed.get(0).loadLabel(context.getPackageManager()).toString();
+            assertFalse(onMain(() -> contains(viewer.findViewById(android.R.id.content), realApp)));
+
+            tapEntry("apps");
+            await(() -> onMain(() -> {
+                View apps = visible(viewer, "blackmail_page:apps");
+                return apps != null && contains(apps, realApp);
+            }));
+            assertFalse(onMain(() -> visible(viewer, "blackmail_entry:contacts") != null));
+            assertTrue(device.pressBack());
+            assertLanding(viewer);
+            assertFalse(onMain(() -> contains(viewer.findViewById(android.R.id.content), realApp)));
+
+            tapEntry("files");
+            await(() -> onMain(() -> visible(viewer, "blackmail_page:files") != null));
+            if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+                String status = context.getString(R.string.blackmail_demo_files_permission_needed);
+                await(() -> onMain(() -> {
+                    View files = visible(viewer, "blackmail_page:files");
+                    return files != null && contains(files, status);
+                }));
+            }
+            assertFalse(onMain(() -> contains(viewer.findViewById(android.R.id.content),
+                    context.getString(R.string.full_access_browse_files))));
+            assertTrue(device.pressBack());
+            assertLanding(viewer);
+        });
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 35, maxSdkVersion = 35)
+    public void demoScreenEntryShowsAndroidConsentWithoutAnotherTap() throws Exception {
+        assertEquals("Run only on the owned guest", "true",
+                InstrumentationRegistry.getArguments().getString("blackmail_owned_guest"));
+        assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS));
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        withViewer(viewer -> {
+            assertLanding(viewer);
+            assertNull(MediaProjectionLeaseRegistry.owner());
+            tapEntry("screen");
+            UiObject2 cancel = device.wait(Until.findObject(By.pkg("com.android.systemui").text("Cancel")), 10_000);
+            assertNotNull("A single Screen tap opens Android's MediaProjection consent dialog", cancel);
+            assertNull(MediaProjectionLeaseRegistry.owner());
+            cancel.click();
+            await(() -> onMain(() -> viewer.hasWindowFocus() && visible(viewer, "blackmail_page:screen") != null));
+            assertNull(MediaProjectionLeaseRegistry.owner());
+            instrumentation.runOnMainSync(viewer::recreate);
+            await(() -> onMain(viewer::isDestroyed));
+            DemoFullAccessActivity restored = awaitResumed(DemoFullAccessActivity.class);
+            await(() -> onMain(() -> restored.hasWindowFocus() && visible(restored, "blackmail_page:screen") != null));
+            assertNull(device.findObject(By.pkg("com.android.systemui").text("Cancel")));
+            assertTrue(device.pressBack());
+            assertLanding(restored);
+            assertNull(MediaProjectionLeaseRegistry.owner());
+        });
+    }
+
+    private void withViewer(Consumer<DemoFullAccessActivity> exercise) throws Exception {
+        instrumentation.getUiAutomation();
         String choices = "demo_full_access_choices";
         String[] stores = {choices, SettingsRepository.PREFERENCES_NAME, "subhub_controller_auth",
                 "subhub_onboarding", "subhub_home"};
@@ -62,6 +152,7 @@ public final class DemoFullAccessAndroidTest {
                 try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
                     scenario.onActivity(DummySubPreview::open);
                     PersonActivity profile = awaitResumed(PersonActivity.class);
+                    instrumentation.waitForIdleSync();
                     await(() -> onMain(() -> profile.findViewById(android.R.id.content)
                             .findViewWithTag("person_tab:full_access") != null));
                     instrumentation.runOnMainSync(() -> {
@@ -70,31 +161,12 @@ public final class DemoFullAccessAndroidTest {
                         assertTrue(row.performClick());
                     });
                     DemoFullAccessActivity viewer = awaitResumed(DemoFullAccessActivity.class);
-                    List<ApplicationInfo> installed = new ArrayList<>(context.getPackageManager().getInstalledApplications(0));
-                    installed.removeIf(app -> (app.flags & (ApplicationInfo.FLAG_SYSTEM
-                            | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
-                    installed.sort(Comparator.comparing(app -> app.packageName));
-                    assertFalse(installed.isEmpty());
-                    String realApp = installed.get(0).loadLabel(context.getPackageManager()).toString();
-                    await(() -> onMain(() -> {
-                        View root = viewer.findViewById(android.R.id.content);
-                        View apps = root.findViewWithTag("full_access_section:apps");
-                        return apps != null && contains(apps, realApp);
-                    }));
-                    instrumentation.runOnMainSync(() -> {
-                        View root = viewer.findViewById(android.R.id.content);
-                        for (String scope : List.of("contacts", "notifications", "sms", "apps", "files", "screen"))
-                            assertNotNull(scope, root.findViewWithTag("full_access_section:" + scope));
-                        assertNull(root.findViewWithTag("full_access_tabs"));
-                        assertTrue(contains(root, context.getString(R.string.blackmail_messages)));
-                        assertTrue(contains(root, context.getString(R.string.full_access_browse_files)));
-                        assertTrue(contains(root, context.getString(R.string.full_access_view_screen)));
-                        assertNull(MediaProjectionLeaseRegistry.owner());
-                    });
+                    exercise.accept(viewer);
                     assertEquals("Viewing phone data must not write to the peer endpoint", relationshipBefore, endpoint.snapshot());
                     // The explicit workspace change itself updates linking authority.
+                    DemoFullAccessActivity current = awaitResumed(DemoFullAccessActivity.class);
                     instrumentation.runOnMainSync(ControllerPinManager::enterSubMode);
-                    await(() -> onMain(viewer::isFinishing));
+                    await(() -> onMain(current::isFinishing));
                     instrumentation.runOnMainSync(profile::finish);
                 }
                 integration.drainReaders();
@@ -104,6 +176,45 @@ public final class DemoFullAccessAndroidTest {
                 SharedPreferenceTestRestore.restore(context.getSharedPreferences(name, 0), previous.get(name));
             if (wasDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
         }
+    }
+
+    private void assertLanding(Activity activity) {
+        await(() -> onMain(() -> visible(activity, "blackmail_entry:contacts") != null));
+        instrumentation.runOnMainSync(() -> {
+            for (String scope : List.of("contacts", "sms", "notifications", "apps", "files", "screen")) {
+                assertNotNull(scope, visible(activity, "blackmail_entry:" + scope));
+                assertNull(scope, visible(activity, "blackmail_page:" + scope));
+            }
+            assertNull(MediaProjectionLeaseRegistry.owner());
+        });
+    }
+
+    private static void tapEntry(String scope) {
+        onView(withTagValue(is("blackmail_entry:" + scope))).perform(scrollTo(), click());
+    }
+
+    private void renderSyntheticLanding(Activity activity) {
+        AtomicReference<Bitmap> image = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> {
+            View page = activity.findViewById(R.id.role_page_scroll);
+            Bitmap bitmap = Bitmap.createBitmap(page.getWidth(), page.getHeight(), Bitmap.Config.ARGB_8888);
+            page.draw(new Canvas(bitmap));
+            image.set(bitmap);
+        });
+        Bitmap bitmap = image.get();
+        File output = new File(context.getExternalCacheDir(), "blackmail-landing-synthetic.png");
+        try (FileOutputStream stream = new FileOutputStream(output)) {
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream));
+        } catch (IOException failure) {
+            throw new UncheckedIOException(failure);
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    private static View visible(Activity activity, String tag) {
+        View found = activity.findViewById(android.R.id.content).findViewWithTag(tag);
+        return found != null && found.isShown() ? found : null;
     }
 
     private <T extends Activity> T awaitResumed(Class<T> kind) {

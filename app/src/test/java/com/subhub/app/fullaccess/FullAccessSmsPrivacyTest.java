@@ -5,9 +5,13 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public final class FullAccessSmsPrivacyTest {
-    @Test public void likelyCredentialMessagesNeverBecomeRows() {
-        assertEquals("", FullAccessSmsExport.safeText("Your verification code is 873241."));
-        assertEquals("", FullAccessSmsExport.safeText("Password reset request: https://example.invalid/reset"));
+    @Test public void smsKeepsTextSuppliedByTheSource() {
+        String appointment = "Your verification appointment has moved to room 873241.";
+        String note = "The password note is next to the router.";
+        String directions = " Please meet at stop １７２４６８.\nI'll bring the forms. ";
+        assertEquals(appointment, FullAccessSmsExport.messageText(appointment));
+        assertEquals(note, FullAccessSmsExport.messageText(note));
+        assertEquals(directions, FullAccessSmsExport.messageText(directions));
     }
 
     @Test public void publicNotificationPreviewsDropCredentialsAndBoundText() {
@@ -20,9 +24,11 @@ public final class FullAccessSmsPrivacyTest {
         assertEquals(480, FullAccessNotificationListener.publicPreview(null, "x".repeat(481)).text().length());
     }
 
-    @Test public void shortCodesAreMaskedWithoutHidingOrdinaryConversation() {
-        assertEquals("Call me when you arrive.", FullAccessSmsExport.safeText("Call me when you arrive."));
-        assertEquals("Use •••• on arrival.", FullAccessSmsExport.safeText("Use 172468 on arrival."));
-        assertEquals("Use •••• on arrival.", FullAccessSmsExport.safeText("Use １７２４６８ on arrival."));
+    @Test public void missingSmsBodyStaysEmptyAndTransportBoundDoesNotSplitSurrogatePairs() {
+        assertEquals("", FullAccessSmsExport.messageText(null));
+        assertEquals("", FullAccessSmsExport.messageText(""));
+        String full = "x".repeat(998) + "🙂";
+        assertEquals(full, FullAccessSmsExport.messageText(full));
+        assertEquals("x".repeat(998) + "…", FullAccessSmsExport.messageText(full + "x"));
     }
 }

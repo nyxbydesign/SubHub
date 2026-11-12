@@ -16,7 +16,6 @@ import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
@@ -29,6 +28,7 @@ import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.remote.RemoteStore;
 import com.subhub.app.util.AsyncUiScope;
+import com.subhub.app.util.PageScrollView;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -47,11 +47,9 @@ import org.json.JSONObject;
 
 /** A read-only overview and conversation view bound to the current viewer's authority. */
 final class FullAccessViewer implements AutoCloseable {
-    private static final List<String> SECTIONS = List.of("contacts", "notifications", "sms", "apps", "files", "screen");
+    private static final List<String> SECTIONS = List.of("contacts", "sms", "notifications", "apps", "files", "screen");
     private static final int MAX_IMAGE_BYTES = 1024 * 1024;
-    private static final int PREVIEW_ROWS = 2;
-    private static final long EXPANDED_REFRESH_MILLIS = 10_000;
-    private static final long PREVIEW_REFRESH_MILLIS = 30_000;
+    private static final long REFRESH_MILLIS = 10_000;
     private static final long FRAME_MILLIS = 500;
     private static final long SESSION_CHECK_MILLIS = 1_000;
 
@@ -67,13 +65,17 @@ final class FullAccessViewer implements AutoCloseable {
     private final LinearLayout conversationPanel;
     private final TextView pageTitle;
     private final View pageBack;
-    private final ScrollView scroll;
-    private final OnBackPressedCallback conversationBack;
+    private final PageScrollView scroll;
+    private final OnBackPressedCallback pageBackCallback;
     private final Map<String, Section> sections = new LinkedHashMap<>();
     private final ArrayDeque<PageRequest> queuedPages = new ArrayDeque<>();
     private Section activeLive;
     private Conversation conversation;
-    private int overviewScroll;
+    private View.OnLayoutChangeListener conversationLayout;
+    private String selectedScope;
+    private long routeGeneration;
+    private int landingScroll, detailScroll, conversationScroll;
+    private boolean detailScrollPending;
     private boolean pageInFlight;
     private boolean resumed;
     private final Runnable guard = new Runnable() {
@@ -112,6 +114,7 @@ final class FullAccessViewer implements AutoCloseable {
 
         overview = PersonUi.column(activity);
         parent.addView(overview, new LinearLayout.LayoutParams(-1, -2));
+        if (demo != null) PersonUi.text(overview, activity.getText(R.string.demo_full_access_local), false);
         conversationPanel = PersonUi.column(activity);
         conversationPanel.setTag("blackmail_thread");
         conversationPanel.setVisibility(View.GONE);
@@ -119,20 +122,30 @@ final class FullAccessViewer implements AutoCloseable {
         pageTitle = activity.findViewById(R.id.primary_header_title);
         pageBack = activity.findViewById(R.id.button_back);
         scroll = activity.findViewById(R.id.role_page_scroll);
-        conversationBack = new OnBackPressedCallback(false) {
-            @Override public void handleOnBackPressed() { closeConversation(true); }
+        pageBackCallback = new OnBackPressedCallback(false) {
+            @Override public void handleOnBackPressed() {
+                if (conversation != null) closeConversation(true);
+                else selectScope(null, false);
+            }
         };
-        activity.getOnBackPressedDispatcher().addCallback(activity, conversationBack);
+        activity.getOnBackPressedDispatcher().addCallback(activity, pageBackCallback);
         if (pageBack != null) pageBack.setOnClickListener(view -> activity.getOnBackPressedDispatcher().onBackPressed());
 
         for (String scope : SECTIONS) {
-            LinearLayout card = BlackmailViews.section(overview,
-                    "sms".equals(scope) ? R.string.blackmail_messages : label(scope), icon(scope));
-            card.setTag("full_access_section:" + scope);
-            LinearLayout body = PersonUi.column(activity);
-            card.addView(body, new LinearLayout.LayoutParams(-1, -2));
-            sections.put(scope, new Section(scope, body));
+            BlackmailViews.entry(overview, displayLabel(scope), icon(scope), scope, () -> selectScope(scope, true));
+            LinearLayout panel = PersonUi.card(parent);
+            panel.setTag("blackmail_page:" + scope);
+            panel.setVisibility(View.GONE);
+            sections.put(scope, new Section(scope, panel));
         }
+    }
+
+    private static int displayLabel(String scope) {
+        return switch (scope) {
+            case "sms" -> R.string.blackmail_messages;
+            case "screen" -> R.string.blackmail_share_screen;
+            default -> label(scope);
+        };
     }
 
     private static int icon(String scope) {
@@ -159,43 +172,105 @@ final class FullAccessViewer implements AutoCloseable {
         };
     }
 
+    String selectedScope() { return selectedScope; }
+
+    long screenSelection() { return "screen".equals(selectedScope) ? routeGeneration : 0; }
+
+    int navigationScroll() {
+        if (!resumed || scroll == null || conversation != null || detailScrollPending)
+            return selectedScope == null ? landingScroll : detailScroll;
+        return scroll.position();
+    }
+
+    void restoreNavigation(String scope, int position) {
+        if (resumed) return;
+        selectedScope = scope != null && SECTIONS.contains(scope) ? scope : null;
+        ++routeGeneration;
+        if (selectedScope == null) landingScroll = Math.max(0, position);
+        else detailScroll = Math.max(0, position);
+        showRoute();
+    }
+
     void resume() {
         if (resumed) return;
         resumed = true;
-        for (Map.Entry<String, Section> entry : sections.entrySet()) {
-            Section section = new Section(entry.getKey(), entry.getValue().panel);
-            entry.setValue(section);
-            if (persistent(section)) showLiveAction(section);
-            else {
-                showStatus(section, R.string.full_access_waiting, false);
-                loadPage(section, "");
-            }
-        }
+        showRoute();
+        loadSelected(false);
         main.postDelayed(guard, SESSION_CHECK_MILLIS);
     }
 
     void pause() {
+        rememberScroll();
         resumed = false;
         closeConversation(false);
-        for (Section section : sections.values()) {
+        retireSections();
+        showRoute();
+    }
+
+    private void retireSections() {
+        main.removeCallbacksAndMessages(null);
+        for (Map.Entry<String, Section> entry : sections.entrySet()) {
+            Section section = entry.getValue();
             section.retire();
             section.panel.removeAllViews();
+            entry.setValue(new Section(section.scope, section.panel));
         }
         activeLive = null;
-        main.removeCallbacksAndMessages(null);
         worker.cancelPrefix("full-access-view:");
         queuedPages.clear();
         pageInFlight = false;
     }
 
+    private void rememberScroll() {
+        if (!resumed || conversation != null || scroll == null) return;
+        if (selectedScope == null) landingScroll = scroll.position();
+        else if (!detailScrollPending) detailScroll = scroll.position();
+    }
+
+    private void selectScope(String scope, boolean entered) {
+        if (!resumed || !allowed.getAsBoolean()) return;
+        rememberScroll();
+        retireSections();
+        selectedScope = scope;
+        ++routeGeneration;
+        detailScroll = 0;
+        detailScrollPending = false;
+        showRoute();
+        loadSelected(entered);
+        main.postDelayed(guard, SESSION_CHECK_MILLIS);
+    }
+
+    private void showRoute() {
+        overview.setVisibility(selectedScope == null ? View.VISIBLE : View.GONE);
+        for (Section section : sections.values())
+            section.panel.setVisibility(section.scope.equals(selectedScope) ? View.VISIBLE : View.GONE);
+        pageBackCallback.setEnabled(selectedScope != null);
+        if (pageTitle != null)
+            pageTitle.setText(selectedScope == null ? R.string.full_access_title : displayLabel(selectedScope));
+        if (scroll != null) scroll.restorePosition(selectedScope == null ? landingScroll : 0);
+    }
+
+    private void loadSelected(boolean entered) {
+        if (selectedScope == null || !allowed.getAsBoolean()) return;
+        Section section = sections.get(selectedScope);
+        detailScrollPending = detailScroll > 0 && !"screen".equals(selectedScope);
+        if ("screen".equals(selectedScope) && !entered) screenRequestEnded();
+        else if (persistent(section)) openLive(section);
+        else {
+            showStatus(section, R.string.full_access_waiting, false);
+            loadPage(section, "");
+        }
+    }
+
     @Override public void close() {
         pause();
-        conversationBack.remove();
+        pageBackCallback.remove();
         if (pageBack != null) pageBack.setOnClickListener(view -> activity.finish());
     }
 
     private boolean current(Section session) {
-        return sections.get(session.scope) == session && session.live.get() && resumed && allowed.getAsBoolean();
+        return session.scope.equals(selectedScope) && sections.get(session.scope) == session
+                && session.live.get() && resumed && allowed.getAsBoolean();
     }
 
     private static boolean persistent(Section session) {
@@ -206,16 +281,17 @@ final class FullAccessViewer implements AutoCloseable {
         return "full-access-view:" + session.scope + ":" + operation;
     }
 
-    private void showLiveAction(Section section) {
+    void screenRequestEnded() {
+        Section section = sections.get("screen");
+        if (!current(section)) return;
         section.panel.removeAllViews();
-        int action = "files".equals(section.scope) ? R.string.full_access_browse_files : R.string.full_access_view_screen;
-        BlackmailViews.action(section.panel, action, () -> {
+        BlackmailViews.action(section.panel, R.string.blackmail_share_screen, () -> {
             if (current(section)) openLive(section);
         }, true);
     }
 
-    private Section openLive(Section previous) {
-        if (activeLive != null) closeLive(activeLive);
+    private void openLive(Section previous) {
+        if (activeLive != null) retireLive(activeLive);
         Section session = sections.get(previous.scope);
         activeLive = session;
         showStatus(session, R.string.full_access_waiting, false);
@@ -224,27 +300,24 @@ final class FullAccessViewer implements AutoCloseable {
             session.localFiles = demo.openFiles(session.live::get);
             loadPage(session, "");
         } else {
-            showStatus(session, R.string.demo_full_access_screen_note, false);
-            BlackmailViews.action(session.panel, R.string.demo_full_access_screen_start, () -> {
-                if (current(session)) demoActivity.requestScreen();
-            }, true);
+            demoActivity.requestScreen();
         }
-        return session;
     }
 
-    private void closeLive(Section session) {
+    private void retireLive(Section session) {
         session.retire();
         worker.cancelPrefix("full-access-view:" + session.scope + ":");
         Section closed = new Section(session.scope, session.panel);
         sections.put(session.scope, closed);
         if (activeLive == session) activeLive = null;
-        showLiveAction(closed);
     }
 
     void showLocalScreen(Intent approval) {
         Section previous = sections.get("screen");
         if (demo == null || !current(previous)) return;
-        Section session = openLive(previous);
+        if (activeLive != null) retireLive(activeLive);
+        Section session = sections.get("screen");
+        activeLive = session;
         session.localScreen = FullAccessScreen.startLocal(activity, approval,
                 () -> session.live.get() && demo.current());
         showStatus(session, R.string.full_access_waiting, false);
@@ -320,6 +393,10 @@ final class FullAccessViewer implements AutoCloseable {
                         session.lastPage = page;
                         renderPage(session, page);
                     }
+                    if (detailScrollPending && scroll != null) {
+                        detailScrollPending = false;
+                        scroll.restorePosition(detailScroll);
+                    }
                 } else {
                     session.lastPage = null;
                     session.group = null;
@@ -327,9 +404,8 @@ final class FullAccessViewer implements AutoCloseable {
                     else showStatus(session, statusLabel(state), true);
                 }
                 if (!persistent(session) && session.cursor.isEmpty()) {
-                    long delay = session.expanded ? EXPANDED_REFRESH_MILLIS : PREVIEW_REFRESH_MILLIS;
                     main.removeCallbacks(session.refresh);
-                    main.postDelayed(session.refresh, delay);
+                    main.postDelayed(session.refresh, REFRESH_MILLIS);
                 }
             }
         }, () -> {
@@ -394,7 +470,7 @@ final class FullAccessViewer implements AutoCloseable {
         JSONArray rows = page.optJSONArray("items");
         int count = rows == null ? 0 : rows.length();
         boolean files = "files".equals(session.scope);
-        int limit = files || session.expanded ? 64 : PREVIEW_ROWS;
+        int limit = 64;
         if (count == 0) PersonUi.text(card, activity.getString(R.string.full_access_empty), false);
         boolean rowAdded = false;
         for (int index = 0; index < Math.min(limit, count); index++) {
@@ -407,35 +483,24 @@ final class FullAccessViewer implements AutoCloseable {
         }
 
         String next = page.optString("nextCursor", "");
-        if (files || session.expanded) {
-            if (files && !session.cursor.isEmpty()) {
-                BlackmailViews.action(card, R.string.full_access_first_page, () -> {
-                    if (current(session) && !session.working) resetDirectory(session);
-                }, false);
-            } else if (!session.pageHistory.isEmpty()) {
-                BlackmailViews.action(card, R.string.full_access_previous, () -> {
-                    if (!current(session) || session.working || session.pageHistory.isEmpty()) return;
-                    loadPage(session, session.pageHistory.pop());
-                }, false);
-            }
-            if (!next.isEmpty() && !next.equals(session.cursor)) BlackmailViews.action(card, R.string.full_access_more, () -> {
-                if (!current(session) || session.working) return;
-                if (!files) session.pageHistory.push(session.cursor);
-                loadPage(session, next);
+        if (files && !session.cursor.isEmpty()) {
+            BlackmailViews.action(card, R.string.full_access_first_page, () -> {
+                if (current(session) && !session.working) resetDirectory(session);
+            }, false);
+        } else if (!session.pageHistory.isEmpty()) {
+            BlackmailViews.action(card, R.string.full_access_previous, () -> {
+                if (!current(session) || session.working || session.pageHistory.isEmpty()) return;
+                loadPage(session, session.pageHistory.pop());
             }, false);
         }
+        if (!next.isEmpty() && !next.equals(session.cursor)) BlackmailViews.action(card, R.string.full_access_more, () -> {
+            if (!current(session) || session.working) return;
+            if (!files) session.pageHistory.push(session.cursor);
+            loadPage(session, next);
+        }, false);
         if ("sms".equals(session.scope) && page.optBoolean("partial"))
             PersonUi.text(card, activity.getString(R.string.blackmail_messages_partial), false);
         if (files) addClose(session);
-        else if (session.expanded || count > PREVIEW_ROWS || !next.isEmpty()) {
-            int action = session.expanded ? R.string.full_access_show_less : R.string.full_access_show_more;
-            BlackmailViews.action(card, action, () -> {
-                if (!current(session) || session.working) return;
-                session.expanded = !session.expanded;
-                if (!session.expanded && !session.cursor.isEmpty()) resetDirectory(session);
-                else renderPage(session, page);
-            }, false);
-        }
     }
 
     private void dataRow(LinearLayout card, Section session, JSONObject item) {
@@ -474,8 +539,8 @@ final class FullAccessViewer implements AutoCloseable {
     }
 
     private String messageText(JSONObject item) {
-        return item.optBoolean("redacted") ? activity.getString(R.string.full_access_message_hidden)
-                : item.optString("detail");
+        String body = item.optString("detail");
+        return body.isEmpty() ? activity.getString(R.string.full_access_message_unavailable) : body;
     }
 
     private String dated(String text, long time) {
@@ -562,12 +627,10 @@ final class FullAccessViewer implements AutoCloseable {
 
     private void openConversation(Section session, String id, String title) {
         if (!current(session) || conversation != null) return;
-        if (activeLive != null) closeLive(activeLive);
-        overviewScroll = scroll == null ? 0 : scroll.getScrollY();
+        conversationScroll = scroll == null ? 0 : scroll.position();
         conversation = new Conversation(id);
-        conversationBack.setEnabled(true);
         if (pageTitle != null) pageTitle.setText(title);
-        overview.setVisibility(View.GONE);
+        session.panel.setVisibility(View.GONE);
         conversationPanel.setVisibility(View.VISIBLE);
         if (scroll != null) scroll.scrollTo(0, 0);
         loadConversation(session, conversation, "");
@@ -576,18 +639,19 @@ final class FullAccessViewer implements AutoCloseable {
     private void closeConversation(boolean returnToOverview) {
         if (conversation == null) return;
         if (conversation.refresh != null) main.removeCallbacks(conversation.refresh);
+        clearConversationLayout();
+        conversation.rows.clear();
+        conversation.newestPage = null;
+        conversation.older = null;
         conversation = null;
-        conversationBack.setEnabled(false);
         conversationPanel.removeAllViews();
         conversationPanel.setVisibility(View.GONE);
-        overview.setVisibility(View.VISIBLE);
-        if (pageTitle != null) pageTitle.setText(R.string.full_access_title);
+        detailScroll = conversationScroll;
+        showRoute();
         if (returnToOverview && resumed) {
-            if (scroll != null) scroll.post(() -> {
-                if (conversation == null) scroll.scrollTo(0, overviewScroll);
-            });
-            for (Section section : sections.values())
-                if (!persistent(section) && section.cursor.isEmpty()) loadPage(section, "");
+            if (scroll != null) scroll.restorePosition(conversationScroll);
+            Section section = sections.get(selectedScope);
+            if (section.cursor.isEmpty()) loadPage(section, "");
         }
     }
 
@@ -643,27 +707,35 @@ final class FullAccessViewer implements AutoCloseable {
             if (thread.loading) scheduleConversationRefresh(session, thread);
             else loadConversation(session, thread, "");
         };
-        main.postDelayed(thread.refresh, EXPANDED_REFRESH_MILLIS);
+        main.postDelayed(thread.refresh, REFRESH_MILLIS);
     }
 
     private void updateConversation(Section session, Conversation thread, boolean firstPage) {
+        clearConversationLayout();
         int oldHeight = conversationPanel.getHeight();
         int oldY = scroll == null ? 0 : scroll.getScrollY();
         if (scroll != null && thread.error == 0) {
-            conversationPanel.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            conversationLayout = new View.OnLayoutChangeListener() {
                 @Override public void onLayoutChange(View view, int left, int top, int right, int bottom,
                         int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                    view.removeOnLayoutChangeListener(this);
-                    scroll.post(() -> {
+                    clearConversationLayout();
+                    main.post(() -> {
                         if (conversation != thread) return;
                         int target = firstPage ? scroll.getChildAt(0).getHeight()
                                 : oldY + Math.max(0, conversationPanel.getHeight() - oldHeight);
                         scroll.scrollTo(0, target);
                     });
                 }
-            });
+            };
+            conversationPanel.addOnLayoutChangeListener(conversationLayout);
         }
         renderConversation(session, thread);
+    }
+
+    private void clearConversationLayout() {
+        if (conversationLayout == null) return;
+        conversationPanel.removeOnLayoutChangeListener(conversationLayout);
+        conversationLayout = null;
     }
 
     private void renderConversation(Section session, Conversation thread) {
@@ -887,7 +959,7 @@ final class FullAccessViewer implements AutoCloseable {
         session.lastPage = null;
         session.group = null;
         if (persistent(session)) {
-            closeLive(session);
+            retireLive(session);
             Section closed = sections.get(session.scope);
             closed.panel.removeAllViews();
             PersonUi.text(closed.panel, activity.getString(label), false);
@@ -908,7 +980,7 @@ final class FullAccessViewer implements AutoCloseable {
 
     private void addClose(Section session) {
         BlackmailViews.action(session.panel, R.string.full_access_close_view, () -> {
-            if (current(session)) closeLive(session);
+            if (current(session)) selectScope(null, false);
         }, false);
     }
 
@@ -993,7 +1065,7 @@ final class FullAccessViewer implements AutoCloseable {
         FullAccessFiles.Session localFiles;
         FullAccessScreen.Session localScreen;
         CompletableFuture<FullAccessChannel> opening;
-        boolean working, connected, expanded, legacyRows;
+        boolean working, connected, legacyRows;
 
         Section(String scope, LinearLayout panel) {
             this.scope = scope;
@@ -1018,6 +1090,10 @@ final class FullAccessViewer implements AutoCloseable {
             live.set(false);
             main.removeCallbacks(refresh);
             lastPage = null;
+            group = null;
+            image = null;
+            status = null;
+            previewPanel = null;
             if (opening != null) opening.cancel(true);
             if (channel != null) channel.close();
             if (localFiles != null) localFiles.close();

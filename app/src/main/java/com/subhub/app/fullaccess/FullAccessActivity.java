@@ -16,8 +16,11 @@ import com.subhub.app.util.PreferencePage;
 /** The authenticated paired Dom's read-only Full Access view. */
 public final class FullAccessActivity extends PreferencePage {
     private static final String PEER = "full_access_peer";
+    private static final String SCOPE = "blackmail_scope";
+    private static final String SCROLL = "blackmail_scroll";
     private FullAccessViewer viewer;
     private boolean resumed;
+    private long revision;
 
     public static void openPeer(Activity activity, PersonId peer) {
         if (peer != null && validPeer(peer.value()) && viewerAllowed(activity))
@@ -40,23 +43,35 @@ public final class FullAccessActivity extends PreferencePage {
         page(R.string.full_access_title);
         LinearLayout controls = PersonUi.column(this);
         page.addView(controls, new LinearLayout.LayoutParams(-1, -2));
-        long revision = ControllerPinManager.domWorkspaceRevision();
-        viewer = new FullAccessViewer(this, controls, new PersonId(peer),
-                () -> resumed && !isFinishing() && !isDestroyed() && viewerAllowed(this)
-                        && ControllerPinManager.domWorkspaceRevision() == revision);
+        revision = ControllerPinManager.domWorkspaceRevision();
+        viewer = new FullAccessViewer(this, controls, new PersonId(peer), this::viewerCurrent);
+        if (state != null) viewer.restoreNavigation(state.getString(SCOPE), state.getInt(SCROLL));
     }
 
     @Override protected void onResume() {
         super.onResume();
         resumed = true;
-        if (!viewerAllowed(this)) { finish(); return; }
+        if (!viewerCurrent()) { finish(); return; }
         if (viewer != null) viewer.resume();
+    }
+
+    private boolean viewerCurrent() {
+        return resumed && !isFinishing() && !isDestroyed() && viewerAllowed(this)
+                && ControllerPinManager.domWorkspaceRevision() == revision;
     }
 
     @Override protected void onPause() {
         resumed = false;
         if (viewer != null) viewer.pause();
         super.onPause();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        if (viewer != null && viewerAllowed(this) && ControllerPinManager.domWorkspaceRevision() == revision) {
+            state.putString(SCOPE, viewer.selectedScope());
+            state.putInt(SCROLL, viewer.navigationScroll());
+        }
     }
 
     @Override protected void onDestroy() {

@@ -111,7 +111,7 @@
 
     <string name="full_access_notification_setup_note">Share seven days of notification history with app names, times, and public previews when available.</string>
 
-    <string name="full_access_message_hidden">Message hidden</string>
+    <string name="full_access_message_unavailable">Message unavailable</string>
 
     <string name="full_access_detail_time">%1$s · %2$s</string>
 

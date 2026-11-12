@@ -43,9 +43,9 @@ public final class FullAccessDataPresentationAndroidTest {
     }
 
     @Test public void groupsNotificationsByAppAndPaginatesExpandedRowsWithoutLosingRedaction() throws Exception {
-        Context test = InstrumentationRegistry.getInstrumentation().getContext();
-        File temporary = Files.createTempDirectory(test.getCacheDir().toPath(), "notification-history-").toFile();
-        Context isolated = new ContextWrapper(test) {
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File temporary = Files.createTempDirectory(target.getCacheDir().toPath(), "notification-history-").toFile();
+        Context isolated = new ContextWrapper(target) {
             @Override public File getNoBackupFilesDir() { return temporary; }
         };
         long now = System.currentTimeMillis();

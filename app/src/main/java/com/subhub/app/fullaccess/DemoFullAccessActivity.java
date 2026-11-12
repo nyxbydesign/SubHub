@@ -18,21 +18,34 @@ import com.subhub.app.util.PreferencePage;
 
 /** The Dom can inspect their own Android data through the Demo profile without a peer session. */
 public final class DemoFullAccessActivity extends PreferencePage {
+    private static final String SCOPE = "blackmail_scope";
+    private static final String SCROLL = "blackmail_scroll";
     private DemoFullAccess source;
     private LinearLayout controls;
     private FullAccessViewer viewer;
     private boolean resumed;
-    private boolean screenRequested;
+    private String restoredScope;
+    private int restoredScroll;
+    private ScreenRequest screenRequest;
+    private boolean screenResultReady;
     private Intent screenApproval;
+
+    private record ScreenRequest(FullAccessViewer viewer, long selection) {
+        boolean matches(FullAccessViewer selected) {
+            return viewer == selected && selection == viewer.screenSelection();
+        }
+    }
 
     private final ActivityResultLauncher<Intent> screen = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (!screenRequested) return;
-                screenRequested = false;
-                if (allowed() && result.getResultCode() == RESULT_OK) {
-                    screenApproval = result.getData();
-                    applyScreenApproval();
+                if (screenRequest == null) return;
+                if (!allowed() || !screenRequest.matches(viewer)) {
+                    clearScreenRequest();
+                    return;
                 }
+                screenApproval = result.getResultCode() == RESULT_OK ? result.getData() : null;
+                screenResultReady = true;
+                applyScreenResult();
             });
 
     @Override protected void onCreate(Bundle state) {
@@ -46,16 +59,24 @@ public final class DemoFullAccessActivity extends PreferencePage {
         page(R.string.full_access_title);
         controls = PersonUi.column(this);
         page.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        if (state != null) {
+            restoredScope = state.getString(SCOPE);
+            restoredScroll = state.getInt(SCROLL);
+        }
     }
 
     @Override protected void onResume() {
         super.onResume();
         resumed = true;
         if (!authorized()) { finish(); return; }
-        controls.removeAllViews();
-        PersonUi.text(controls, getString(R.string.demo_full_access_local), false);
         if (!source.current()) {
+            if (viewer != null) viewer.close();
             viewer = null;
+            clearScreenRequest();
+            restoredScope = null;
+            restoredScroll = 0;
+            controls.removeAllViews();
+            PersonUi.text(controls, getString(R.string.demo_full_access_local), false);
             LinearLayout card = PersonUi.card(controls);
             PersonUi.text(card, getString(R.string.demo_full_access_enable_profile), false);
             PersonUi.action(card, R.string.profile_edit, () -> {
@@ -63,20 +84,35 @@ public final class DemoFullAccessActivity extends PreferencePage {
             }, true);
             return;
         }
-        viewer = new FullAccessViewer(this, controls, source);
+        if (viewer == null) {
+            controls.removeAllViews();
+            viewer = new FullAccessViewer(this, controls, source);
+            viewer.restoreNavigation(restoredScope, restoredScroll);
+            restoredScope = null;
+            restoredScroll = 0;
+        }
         viewer.resume();
-        applyScreenApproval();
+        applyScreenResult();
     }
 
     @Override protected void onPause() {
         resumed = false;
-        if (viewer != null) viewer.close();
-        viewer = null;
+        if (viewer != null) viewer.pause();
         super.onPause();
     }
 
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        if (viewer != null && allowed()) {
+            state.putString(SCOPE, viewer.selectedScope());
+            state.putInt(SCROLL, viewer.navigationScroll());
+        }
+    }
+
     @Override protected void onDestroy() {
-        screenApproval = null;
+        clearScreenRequest();
+        if (viewer != null) viewer.close();
+        viewer = null;
         super.onDestroy();
     }
 
@@ -90,32 +126,51 @@ public final class DemoFullAccessActivity extends PreferencePage {
     private boolean allowed() { return authorized() && source.current(); }
 
     void requestScreen() {
-        if (!viewerCurrent() || screenRequested) return;
+        FullAccessViewer requested = viewer;
+        if (!viewerCurrent() || requested == null || screenRequest != null) return;
+        long selection = requested.screenSelection();
+        if (selection == 0) return;
         if (MediaProjectionLeaseRegistry.owner() != null) {
+            requested.screenRequestEnded();
             notice(getString(R.string.full_access_screen_busy));
             return;
         }
         try {
             MediaProjectionManager projection = getSystemService(MediaProjectionManager.class);
-            if (projection == null) { notice(getString(R.string.full_access_unavailable)); return; }
+            if (projection == null) {
+                requested.screenRequestEnded();
+                notice(getString(R.string.full_access_unavailable));
+                return;
+            }
             if (FullAccessScreen.activeNotifications(this) == null) {
+                requested.screenRequestEnded();
                 notice(getString(R.string.full_access_screen_alerts_required));
                 startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                         .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
                 return;
             }
-            screenRequested = true;
+            screenRequest = new ScreenRequest(requested, selection);
             screen.launch(projection.createScreenCaptureIntent());
         } catch (RuntimeException unavailable) {
-            screenRequested = false;
+            clearScreenRequest();
+            requested.screenRequestEnded();
             notice(getString(R.string.full_access_unavailable));
         }
     }
 
-    private void applyScreenApproval() {
-        if (screenApproval == null || !resumed) return;
+    private void applyScreenResult() {
+        if (screenRequest == null || !screenResultReady || !resumed) return;
+        ScreenRequest completed = screenRequest;
         Intent approval = screenApproval;
+        clearScreenRequest();
+        if (!viewerCurrent() || !completed.matches(viewer)) return;
+        if (approval == null) viewer.screenRequestEnded();
+        else viewer.showLocalScreen(approval);
+    }
+
+    private void clearScreenRequest() {
+        screenRequest = null;
+        screenResultReady = false;
         screenApproval = null;
-        if (viewerCurrent() && viewer != null) viewer.showLocalScreen(approval);
     }
 }

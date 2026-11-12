@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="blackmail_messages">Messages</string>
+    <string name="blackmail_share_screen">Share screen</string>
+    <color name="blackmail_entry_iris">#373052</color>
+    <color name="blackmail_entry_rose">#452E4B</color>
+    <color name="blackmail_entry_violet">#3D3051</color>
     <string name="blackmail_older_messages">Older messages</string>
     <string name="blackmail_collapse_notifications">Hide notifications</string>
     <string name="blackmail_older_notifications">Older notifications</string>
