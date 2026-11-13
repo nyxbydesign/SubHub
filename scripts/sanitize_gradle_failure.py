@@ -569,6 +569,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/remote/RemoteEndCommands.java": "main_remote_remote_end_commands",
     b"app/src/main/java/com/subhub/app/remote/RemoteFeature.java": "main_remote_remote_feature",
     b"app/src/main/java/com/subhub/app/remote/RemoteFeaturePolicy.java": "main_remote_remote_feature_policy",
+    b"app/src/main/java/com/subhub/app/remote/GagContractFields.java": "main_remote_gag_contract_fields",
     b"app/src/main/java/com/subhub/app/remote/RemoteKeyholder.java": "main_remote_remote_keyholder",
     b"app/src/main/java/com/subhub/app/remote/RemotePage.java": "main_remote_remote_page",
     b"app/src/main/java/com/subhub/app/remote/RemotePersonRepository.java": "main_remote_remote_person_repository",
