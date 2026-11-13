@@ -472,6 +472,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private LinearLayout row() {
         LinearLayout row = new LinearLayout(keyboard.getContext());
+        row.setBaselineAligned(false);
         keyboard.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
     }
@@ -526,12 +527,12 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private InsetDrawable keyFace(int surface, int radius) {
-        int vertical = dp(compact() ? 2 : 5);
+        int vertical = dp(compact() ? 2 : 6);
         return new InsetDrawable(keyBackground(surface, radius), dp(3), vertical, dp(3), vertical);
     }
 
     private void addKeySlot(LinearLayout row, View key, float weight) {
-        row.addView(key, new LinearLayout.LayoutParams(0, dp(compact() ? 39 : 55), weight));
+        row.addView(key, new LinearLayout.LayoutParams(0, dp(compact() ? 39 : 64.3f), weight));
     }
 
     private boolean compact() {
@@ -586,7 +587,7 @@ public final class GagKeyboardService extends InputMethodService {
         }
     }
 
-    private int dp(int value) {
+    private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
