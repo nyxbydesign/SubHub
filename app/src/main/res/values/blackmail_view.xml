@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="blackmail_messages">Messages</string>
+    <string name="blackmail_screen_tile">Screen</string>
     <string name="blackmail_share_screen">Share screen</string>
     <color name="blackmail_entry_iris">#373052</color>
     <color name="blackmail_entry_rose">#452E4B</color>

@@ -142,7 +142,8 @@ final class FullAccessViewer implements AutoCloseable {
         for (int start = 0; start < SECTIONS.size(); start += 2) {
             LinearLayout row = BlackmailViews.entryRow(overview);
             for (String scope : SECTIONS.subList(start, Math.min(start + 2, SECTIONS.size()))) {
-                BlackmailViews.entry(row, displayLabel(scope), icon(scope), scope, () -> selectScope(scope, true));
+                int label = "screen".equals(scope) ? R.string.blackmail_screen_tile : displayLabel(scope);
+                BlackmailViews.entry(row, label, icon(scope), scope, () -> selectScope(scope, true));
                 LinearLayout panel = PersonUi.card(parent);
                 panel.setTag("blackmail_page:" + scope);
                 panel.setVisibility(View.GONE);
