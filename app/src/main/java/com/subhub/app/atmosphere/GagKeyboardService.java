@@ -6,13 +6,19 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.text.InputType;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
@@ -35,10 +41,11 @@ public final class GagKeyboardService extends InputMethodService {
     private static final int MAX_WORD_LENGTH = 128;
     private static final String[] LETTER_ROWS = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
     private static final String[] SYMBOL_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
-    private static final int LETTER_SURFACE = 0x66767676;
-    private static final int MODIFIER_SURFACE = 0x55191919;
-    private static final int RETURN_SURFACE = 0xff438ff0;
+    private static final int LETTER_SURFACE = 0xb36a6a6a;
+    private static final int MODIFIER_SURFACE = 0x88181818;
+    private static final int RETURN_SURFACE = 0xff5e97f6;
     private static final int LABEL_COLOR = 0xfff6f6f6;
+    private static final int REPEAT_MILLIS = 55;
 
     private final StringBuilder word = new StringBuilder();
     private final List<LetterKey> letters = new ArrayList<>();
@@ -53,9 +60,11 @@ public final class GagKeyboardService extends InputMethodService {
     private long rulesRevision = -1;
     private long editorEpoch;
     private GagRules rules;
-    private boolean shifted, symbols, literalWord;
+    private boolean shifted, capsLock, symbols, literalWord;
+    private long lastShiftTap;
     private LinearLayout keyboard;
-    private Button shiftKey;
+    private ImageButton shiftKey;
+    private KeyPress repeatingDelete;
     private TextView status;
     private boolean subWorkspace;
     private boolean enabled;
@@ -82,10 +91,13 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onStartInput(EditorInfo editor, boolean restarting) {
         super.onStartInput(editor, restarting);
+        if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         keyboardAlreadyEnabled = GagParticipation.keyboardEnabled(this);
         word.setLength(0);
         literalWord = false;
         shifted = false;
+        capsLock = false;
+        lastShiftTap = 0;
         int inputClass = editor == null ? InputType.TYPE_NULL : editor.inputType & InputType.TYPE_MASK_CLASS;
         symbols = inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE
                 || inputClass == InputType.TYPE_CLASS_DATETIME;
@@ -107,11 +119,13 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         leaveWordLiteral();
         super.onFinishInputView(finishingInput);
     }
 
     @Override public void onFinishInput() {
+        if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         word.setLength(0);
         editorAllowed = false;
         editorEpoch++;
@@ -207,7 +221,8 @@ public final class GagKeyboardService extends InputMethodService {
             completeWord(input, text);
             if (!inWord) literalWord = false;
         }
-        if (shifted && !symbols && Character.isLetter(character)) {
+        if (!symbols && Character.isLetter(character)) lastShiftTap = 0;
+        if (shifted && !capsLock && !symbols && Character.isLetter(character)) {
             shifted = false;
             renderCase();
         }
@@ -255,17 +270,51 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public View onCreateInputView() {
         Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
+        LinearLayout surface = new LinearLayout(theme);
+        surface.setOrientation(LinearLayout.VERTICAL);
+        surface.setBackgroundColor(Color.BLACK);
         keyboard = new LinearLayout(theme);
         keyboard.setOrientation(LinearLayout.VERTICAL);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        keyboard.setPadding(dp(2), dp(2), dp(2), dp(6));
+        keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 13));
         keyboard.setBackgroundResource(R.drawable.bg_gag_keyboard);
+        surface.addView(keyboard, new LinearLayout.LayoutParams(-1, -2));
+        surface.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(() -> reserveNavigationBar(view, insets));
+            return insets;
+        });
+        surface.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            WindowInsets insets = view.getRootWindowInsets();
+            if (insets != null) reserveNavigationBar(view, insets);
+        });
         refreshWorkspace();
         renderKeys();
-        return keyboard;
+        return surface;
+    }
+
+    private void reserveNavigationBar(View surface, WindowInsets insets) {
+        if (android.os.Build.VERSION.SDK_INT < 30 || !surface.isLaidOut()) return;
+        WindowManager manager = getSystemService(WindowManager.class);
+        if (manager == null) return;
+        android.graphics.Insets bars = insets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.navigationBars() | WindowInsets.Type.captionBar());
+        android.graphics.Rect display = manager.getMaximumWindowMetrics().getBounds();
+        int[] location = new int[2];
+        surface.getLocationOnScreen(location);
+        int left = Math.max(0, display.left + bars.left - location[0]);
+        int right = Math.max(0, location[0] + surface.getWidth() - (display.right - bars.right));
+        // Android can place the IME's navigation controls above a separate system navigation area.
+        View decor = getWindow().getWindow().getDecorView();
+        int[] decorLocation = new int[2];
+        decor.getLocationOnScreen(decorLocation);
+        int decorBottom = Math.min(display.bottom, decorLocation[1] + decor.getHeight());
+        int bottom = Math.max(0, location[1] + surface.getHeight() - (decorBottom - bars.bottom));
+        if (left != surface.getPaddingLeft() || right != surface.getPaddingRight()
+                || bottom != surface.getPaddingBottom()) surface.setPadding(left, 0, right, bottom);
     }
 
     private void renderKeys() {
+        if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         keyboard.removeAllViews();
         letters.clear();
         shiftKey = null;
@@ -275,39 +324,76 @@ public final class GagKeyboardService extends InputMethodService {
             LinearLayout row = row();
             if (rowIndex == 1) spacer(row, .5f);
             if (rowIndex == 2 && !symbols) {
-                shiftKey = key(row, "⇧", 1.5f, MODIFIER_SURFACE, 24, () -> {
-                    shifted = !shifted;
-                    renderCase();
-                });
-                shiftKey.setContentDescription(getString(R.string.gag_keyboard_shift));
+                shiftKey = iconKey(row, 1.5f, MODIFIER_SURFACE, R.drawable.ic_gag_shift,
+                        R.string.gag_keyboard_shift, this::shift, false);
             }
             if (rowIndex == 2 && symbols) {
                 key(row, "%", 1.5f, MODIFIER_SURFACE, 21, () -> type("%"));
             }
             for (int index = 0; index < rows[rowIndex].length(); index++) {
                 String label = rows[rowIndex].substring(index, index + 1);
-                if (symbols) key(row, label, 1, LETTER_SURFACE, 23, () -> type(label));
+                if (symbols) key(row, label, 1, LETTER_SURFACE, 26, () -> type(label));
                 else letter(row, label, SYMBOL_ROWS[rowIndex].substring(index, index + 1));
             }
             if (rowIndex == 2) {
-                Button delete = key(row, "⌫", 1.5f, MODIFIER_SURFACE, 23, this::backspace);
-                delete.setContentDescription(getString(R.string.gag_keyboard_delete));
+                iconKey(row, 1.5f, MODIFIER_SURFACE, R.drawable.ic_gag_backspace,
+                        R.string.gag_keyboard_delete, this::backspace, true);
             }
             if (rowIndex == 1) spacer(row, .5f);
         }
         LinearLayout bottom = row();
-        key(bottom, symbols ? "ABC" : "?123", 1.4f, MODIFIER_SURFACE, 16, () -> {
+        key(bottom, symbols ? "ABC" : "?123", 1.5f, MODIFIER_SURFACE, 17, () -> {
             symbols = !symbols;
-            shifted = false;
             renderKeys();
         });
-        key(bottom, ",", .9f, MODIFIER_SURFACE, 22, () -> type(","));
-        Button space = key(bottom, getString(R.string.gag_keyboard_language), 5f, LETTER_SURFACE, 14, () -> type(" "));
+        key(bottom, ",", 1f, MODIFIER_SURFACE, 24, () -> type(","));
+        Button space = key(bottom, getString(R.string.gag_keyboard_language), 5f, LETTER_SURFACE, 13, () -> type(" "));
         space.setContentDescription(getString(R.string.gag_keyboard_space));
-        key(bottom, ".", .9f, MODIFIER_SURFACE, 22, () -> type("."));
-        Button enter = key(bottom, "↵", 1.4f, RETURN_SURFACE, 24, this::enter);
-        enter.setContentDescription(getString(R.string.gag_keyboard_enter));
+        space.setOnLongClickListener(view -> { chooseKeyboard(); return true; });
+        key(bottom, ".", 1f, MODIFIER_SURFACE, 24, () -> type("."));
+        renderEnter(bottom);
         renderCase();
+    }
+
+    private void shift() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (capsLock) {
+            capsLock = false;
+            shifted = false;
+            lastShiftTap = 0;
+        } else if (shifted && lastShiftTap != 0
+                && now - lastShiftTap <= ViewConfiguration.getDoubleTapTimeout()) {
+            capsLock = true;
+            lastShiftTap = 0;
+        } else {
+            shifted = !shifted;
+            lastShiftTap = shifted ? now : 0;
+        }
+        renderCase();
+    }
+
+    private void renderEnter(LinearLayout row) {
+        EditorInfo editor = getCurrentInputEditorInfo();
+        int action = editor == null || (editor.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+                ? EditorInfo.IME_ACTION_NONE : editor.imeOptions & EditorInfo.IME_MASK_ACTION;
+        switch (action) {
+            case EditorInfo.IME_ACTION_SEARCH -> iconKey(row, 1.5f, RETURN_SURFACE,
+                    R.drawable.ic_gag_search, R.string.gag_keyboard_search, this::enter, false);
+            case EditorInfo.IME_ACTION_DONE -> iconKey(row, 1.5f, RETURN_SURFACE,
+                    R.drawable.ic_gag_done, R.string.gag_keyboard_done, this::enter, false);
+            case EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND,
+                    EditorInfo.IME_ACTION_NEXT, EditorInfo.IME_ACTION_PREVIOUS -> {
+                int label = switch (action) {
+                    case EditorInfo.IME_ACTION_GO -> R.string.gag_keyboard_go;
+                    case EditorInfo.IME_ACTION_SEND -> R.string.gag_keyboard_send;
+                    case EditorInfo.IME_ACTION_NEXT -> R.string.gag_keyboard_next;
+                    default -> R.string.gag_keyboard_previous;
+                };
+                key(row, getString(label), 1.5f, RETURN_SURFACE, 11, this::enter);
+            }
+            default -> iconKey(row, 1.5f, RETURN_SURFACE,
+                    R.drawable.ic_gag_return, R.string.gag_keyboard_enter, this::enter, false);
+        }
     }
 
     private void renderToolbar() {
@@ -315,30 +401,36 @@ public final class GagKeyboardService extends InputMethodService {
         tools.setGravity(Gravity.CENTER_VERTICAL);
         status = new TextView(tools.getContext());
         status.setTextColor(0xffc9c9c9);
-        status.setTextSize(13);
+        status.setTextSize(12);
         status.setPaddingRelative(dp(12), 0, 0, 0);
-        tools.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        toolbarAction(tools, R.drawable.ic_gag_picker, R.string.gag_choose_keyboard, this::chooseKeyboard);
+        tools.addView(status, new LinearLayout.LayoutParams(0, dp(compact() ? 25 : 43), 1));
+        status.setGravity(Gravity.CENTER_VERTICAL);
         updateStatus();
     }
 
-    private ImageButton toolbarAction(LinearLayout row, int icon, int label, Runnable action) {
+    private ImageButton iconKey(LinearLayout row, float weight, int surface, int icon, int label,
+            Runnable action, boolean repeat) {
         ImageButton button = new ImageButton(row.getContext());
         button.setImageResource(icon);
-        button.setImageTintList(ColorStateList.valueOf(0xffc9c9c9));
+        button.setImageTintList(ColorStateList.valueOf(surface == RETURN_SURFACE ? Color.WHITE : 0xffd0d0d0));
         button.setContentDescription(getString(label));
-        button.setBackground(keyBackground(Color.TRANSPARENT, 12));
-        button.setPadding(dp(12), dp(12), dp(12), dp(12));
-        button.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        button.setBackground(keyFace(surface, surface == RETURN_SURFACE ? 28 : 7));
+        button.setPadding(0, 0, 0, 0);
+        button.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        button.setStateListAnimator(null);
+        button.setHapticFeedbackEnabled(true);
         button.setOnClickListener(view -> action.run());
-        row.addView(button, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        KeyPress press = new KeyPress(repeat ? action : null);
+        if (repeat) repeatingDelete = press;
+        button.setOnTouchListener(press);
+        addKeySlot(row, button, weight);
         return button;
     }
 
     private void letter(LinearLayout row, String label, String alternate) {
         FrameLayout cap = new FrameLayout(row.getContext());
-        row.addView(cap, keySize(1));
-        Button button = makeKey(row.getContext(), label, LETTER_SURFACE, 23, () ->
+        addKeySlot(row, cap, 1);
+        Button button = makeKey(row.getContext(), label, LETTER_SURFACE, 26, () ->
                 type(shifted ? label.toUpperCase(Locale.ROOT) : label));
         button.setOnLongClickListener(view -> {
             type(alternate);
@@ -352,7 +444,7 @@ public final class GagKeyboardService extends InputMethodService {
         hint.setIncludeFontPadding(false);
         hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         FrameLayout.LayoutParams hintSize = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
-        hintSize.setMargins(0, dp(2), dp(3), 0);
+        hintSize.setMargins(0, dp(compact() ? 4 : 7), dp(5), 0);
         cap.addView(hint, hintSize);
         letters.add(new LetterKey(button, label, alternate));
     }
@@ -363,10 +455,16 @@ public final class GagKeyboardService extends InputMethodService {
             letter.button().setText(label);
             letter.button().setContentDescription(getString(R.string.gag_keyboard_symbol_hint, label, letter.alternate()));
         }
-        if (shiftKey != null) shiftKey.setSelected(shifted);
+        if (shiftKey != null) {
+            shiftKey.setImageResource(capsLock ? R.drawable.ic_gag_caps_lock
+                    : shifted ? R.drawable.ic_gag_shift_active : R.drawable.ic_gag_shift);
+            shiftKey.setContentDescription(getString(capsLock ? R.string.gag_keyboard_caps_lock
+                    : R.string.gag_keyboard_shift));
+        }
     }
 
     private void chooseKeyboard() {
+        if (word.length() != 0) literalWord = true;
         leaveWordLiteral();
         InputMethodManager manager = getSystemService(InputMethodManager.class);
         if (manager != null) manager.showInputMethodPicker();
@@ -384,12 +482,17 @@ public final class GagKeyboardService extends InputMethodService {
 
     private Button key(LinearLayout row, String label, float weight, int surface, int textSize, Runnable action) {
         Button button = makeKey(row.getContext(), label, surface, textSize, action);
-        row.addView(button, keySize(weight));
+        addKeySlot(row, button, weight);
         return button;
     }
 
     private Button makeKey(Context context, String label, int surface, int textSize, Runnable action) {
-        Button button = new Button(context);
+        Button button = new androidx.appcompat.widget.AppCompatButton(context) {
+            @Override public boolean performHapticFeedback(int feedbackConstant) {
+                return feedbackConstant != HapticFeedbackConstants.LONG_PRESS
+                        && super.performHapticFeedback(feedbackConstant);
+            }
+        };
         button.setText(label);
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
@@ -404,9 +507,11 @@ public final class GagKeyboardService extends InputMethodService {
         button.setIncludeFontPadding(false);
         button.setStateListAnimator(null);
         button.setBackgroundTintList(null);
-        button.setBackground(keyBackground(surface, surface == RETURN_SURFACE ? 24 : 8));
+        button.setBackground(keyFace(surface, surface == RETURN_SURFACE ? 28 : 7));
         button.setPadding(0, 0, 0, 0);
         button.setOnClickListener(view -> action.run());
+        button.setHapticFeedbackEnabled(true);
+        button.setOnTouchListener(new KeyPress(null));
         return button;
     }
 
@@ -420,11 +525,65 @@ public final class GagKeyboardService extends InputMethodService {
         return new RippleDrawable(ColorStateList.valueOf(0x55ffffff), face, mask);
     }
 
-    private LinearLayout.LayoutParams keySize(float weight) {
-        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, dp(landscape ? 36 : 48), weight);
-        size.setMargins(dp(2), dp(3), dp(2), dp(3));
-        return size;
+    private InsetDrawable keyFace(int surface, int radius) {
+        int vertical = dp(compact() ? 2 : 5);
+        return new InsetDrawable(keyBackground(surface, radius), dp(3), vertical, dp(3), vertical);
+    }
+
+    private void addKeySlot(LinearLayout row, View key, float weight) {
+        row.addView(key, new LinearLayout.LayoutParams(0, dp(compact() ? 39 : 55), weight));
+    }
+
+    private boolean compact() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+    }
+
+    private final class KeyPress implements View.OnTouchListener {
+        private final Runnable repeatAction;
+        private View pressed;
+        private boolean repeated;
+        private final Runnable repeat = this::repeat;
+
+        KeyPress(Runnable repeatAction) { this.repeatAction = repeatAction; }
+
+        @Override public boolean onTouch(View view, MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN -> {
+                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    repeated = false;
+                    if (repeatAction != null) {
+                        pressed = view;
+                        main.postDelayed(repeat, ViewConfiguration.getLongPressTimeout());
+                    }
+                }
+                case MotionEvent.ACTION_MOVE -> {
+                    if (pressed != null && (event.getX() < 0 || event.getY() < 0
+                            || event.getX() >= view.getWidth() || event.getY() >= view.getHeight()))
+                        cancelRepeat();
+                }
+                case MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    cancelRepeat();
+                    if (repeated) {
+                        view.setPressed(false);
+                        return true;
+                    }
+                }
+                default -> { }
+            }
+            return false;
+        }
+
+        private void repeat() {
+            if (pressed == null || !pressed.isPressed() || !pressed.isAttachedToWindow()) return;
+            repeated = true;
+            repeatAction.run();
+            main.postDelayed(repeat, REPEAT_MILLIS);
+        }
+
+        private void cancelRepeat() {
+            main.removeCallbacks(repeat);
+            pressed = null;
+        }
     }
 
     private int dp(int value) {

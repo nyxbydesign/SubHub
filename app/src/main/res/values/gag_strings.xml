@@ -18,8 +18,15 @@
     <string name="gag_choose_keyboard">Choose keyboard</string>
     <string name="gag_keyboard_shift">Shift</string>
     <string name="gag_keyboard_delete">Delete</string>
-    <string name="gag_keyboard_space">Space</string>
+    <string name="gag_keyboard_space">Space, hold to switch keyboards</string>
     <string name="gag_keyboard_enter">Enter</string>
+    <string name="gag_keyboard_caps_lock">Caps lock on</string>
+    <string name="gag_keyboard_search">Search</string>
+    <string name="gag_keyboard_done">Done</string>
+    <string name="gag_keyboard_go">Go</string>
+    <string name="gag_keyboard_send">Send</string>
+    <string name="gag_keyboard_next">Next</string>
+    <string name="gag_keyboard_previous">Previous</string>
     <string name="gag_keyboard_language">EN</string>
     <string name="gag_keyboard_active">Gag on</string>
     <string name="gag_keyboard_inactive">Gag off</string>
