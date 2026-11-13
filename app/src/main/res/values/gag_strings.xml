@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gag_title">Gag</string>
+    <string name="gag_keyboard">SubHub Gag keyboard</string>
+    <string name="gag_description">Gag replaces completed words typed with the SubHub Gag keyboard. Enable it in Android, then choose it from the keyboard picker. You can switch back to your usual keyboard at any time.</string>
+    <string name="gag_enable">Replace words</string>
+    <string name="gag_every_word">Every word</string>
+    <string name="gag_every_n_words">Every N words</string>
+    <string name="gag_specific_words">Specific words</string>
+    <string name="gag_interval">Number of words between replacements</string>
+    <string name="gag_words">Words to replace, one per line</string>
+    <string name="gag_replacements">Replacements, one per line</string>
+    <string name="gag_interval_error">Enter a number from 1 to 999.</string>
+    <string name="gag_words_error">Enter at least one word to replace.</string>
+    <string name="gag_replacements_error">Enter at least one replacement.</string>
+    <string name="gag_saved">Saved</string>
+    <string name="gag_save">Save</string>
+    <string name="gag_android_keyboard_settings">Android keyboard settings</string>
+    <string name="gag_choose_keyboard">Choose keyboard</string>
+    <string name="gag_keyboard_shift">Shift</string>
+    <string name="gag_keyboard_delete">Delete</string>
+    <string name="gag_keyboard_space">Space</string>
+    <string name="gag_keyboard_enter">Enter</string>
+</resources>

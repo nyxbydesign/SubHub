@@ -35,6 +35,8 @@ public final class AtmosphereActivity extends AppCompatActivity {
         binding.buttonWhispers.setOnClickListener(view -> open(SubliminalSettingsActivity.class));
         binding.popupStormCard.setOnClickListener(view -> open(PopupStormActivity.class));
         binding.buttonPopupStorm.setOnClickListener(view -> open(PopupStormActivity.class));
+        binding.gagCard.setOnClickListener(view -> openGag());
+        binding.buttonGag.setOnClickListener(view -> openGag());
     }
 
     @Override protected void onResume() {
@@ -53,8 +55,17 @@ public final class AtmosphereActivity extends AppCompatActivity {
         binding.buttonWhispers.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
         binding.popupStormCard.setEnabled(FeatureEditorSession.canView(this, "popup"));
         binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canView(this, "popup"));
+        binding.gagCard.setVisibility(FeatureEditorSession.remote(this) ? android.view.View.GONE : android.view.View.VISIBLE);
+        binding.gagStatus.setText(GagSettings.load(this).enabled()
+                ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
+    }
+
+    private void openGag() {
+        if (!FeatureEditorSession.remote(this) && FeatureEditorSession.canView(this, "atmosphere")) {
+            startActivity(new Intent(this, GagActivity.class));
+        }
     }
 
     private void open(Class<? extends android.app.Activity> destination) {

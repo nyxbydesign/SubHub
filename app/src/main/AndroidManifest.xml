@@ -127,6 +127,19 @@
         <activity
             android:name=".atmosphere.AtmosphereActivity"
             android:exported="false" />
+        <activity
+            android:name=".atmosphere.GagActivity"
+            android:exported="false" />
+        <service
+            android:name=".atmosphere.GagKeyboardService"
+            android:exported="true"
+            android:label="@string/gag_keyboard"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/gag_input_method" />
+        </service>
 
         <activity
             android:name=".capture.CustomImagesActivity"
