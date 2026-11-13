@@ -18,7 +18,7 @@ import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
-import android.graphics.drawable.RippleDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.text.InputType;
 import android.view.ContextThemeWrapper;
@@ -81,6 +81,7 @@ public final class GagKeyboardService extends InputMethodService {
     private ImageButton shiftKey;
     private KeyPress repeatingDelete;
     private TextView status;
+    private int statusLabel;
     private boolean subWorkspace;
     private boolean enabled;
     private boolean editorAllowed;
@@ -200,9 +201,13 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void updateStatus() {
-        if (status != null) status.setText(!subWorkspace || !editorAllowed
+        int label = !subWorkspace || !editorAllowed
                 ? R.string.gag_keyboard_excluded
-                : enabled ? R.string.gag_keyboard_active : R.string.gag_keyboard_inactive);
+                : enabled ? R.string.gag_keyboard_active : R.string.gag_keyboard_inactive;
+        if (status != null && statusLabel != label) {
+            statusLabel = label;
+            status.setText(label);
+        }
     }
 
     private void leaveWordLiteral() {
@@ -213,7 +218,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void type(String text) {
-        refreshWorkspace();
+        refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
@@ -256,7 +261,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void backspace() {
-        refreshWorkspace();
+        refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         if (word.length() > 0) {
@@ -275,12 +280,20 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void enter() {
-        refreshWorkspace();
+        refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         completeWord(input, "");
         literalWord = false;
         if (!sendDefaultEditorAction(true)) input.commitText("\n", 1);
+    }
+
+    private void refreshReplacementAuthority() {
+        // The literal path cannot replace text. Lifecycle and configuration changes still load
+        // rules, and every key that could use them rechecks the current authority.
+        RemoteFeature feature = backend;
+        if (rules != null || (feature != null && requestedRevision != feature.gagRevision()))
+            refreshWorkspace();
     }
 
     @Override public View onCreateInputView() {
@@ -290,6 +303,7 @@ public final class GagKeyboardService extends InputMethodService {
         surface.setBackgroundColor(Color.BLACK);
         keyboard = new LinearLayout(theme);
         keyboard.setOrientation(LinearLayout.VERTICAL);
+        keyboard.setMotionEventSplittingEnabled(true);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 13));
         if (backdrop == null) backdrop = BitmapFactory.decodeResource(getResources(), R.drawable.bg_gag_keyboard);
@@ -426,6 +440,7 @@ public final class GagKeyboardService extends InputMethodService {
         LinearLayout tools = row();
         tools.setGravity(Gravity.CENTER_VERTICAL);
         status = new TextView(tools.getContext());
+        statusLabel = 0;
         status.setTextColor(0xffc9c9c9);
         status.setTextSize(12);
         status.setPaddingRelative(dp(12), 0, 0, 0);
@@ -501,6 +516,7 @@ public final class GagKeyboardService extends InputMethodService {
     private LinearLayout row() {
         LinearLayout row = new LinearLayout(keyboard.getContext());
         row.setBaselineAligned(false);
+        row.setMotionEventSplittingEnabled(true);
         keyboard.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
     }
@@ -544,19 +560,20 @@ public final class GagKeyboardService extends InputMethodService {
         return button;
     }
 
-    private RippleDrawable keyBackground(int surface, int radius) {
+    private GradientDrawable keyBackground(int surface, int radius) {
         GradientDrawable face = new GradientDrawable();
         face.setColor(surface);
         face.setCornerRadius(dp(radius));
-        GradientDrawable mask = new GradientDrawable();
-        mask.setColor(Color.WHITE);
-        mask.setCornerRadius(dp(radius));
-        return new RippleDrawable(ColorStateList.valueOf(0x55ffffff), face, mask);
+        return face;
     }
 
     private InsetDrawable keyFace(int surface, int radius) {
         int vertical = dp(compact() ? 2 : 6);
-        return new InsetDrawable(keyBackground(surface, radius), dp(3), vertical, dp(3), vertical);
+        StateListDrawable states = new StateListDrawable();
+        int pressed = androidx.core.graphics.ColorUtils.compositeColors(0x35ffffff, surface);
+        states.addState(new int[]{android.R.attr.state_pressed}, keyBackground(pressed, radius));
+        states.addState(new int[0], keyBackground(surface, radius));
+        return new InsetDrawable(states, dp(3), vertical, dp(3), vertical);
     }
 
     private void addKeySlot(LinearLayout row, View key, float weight) {
