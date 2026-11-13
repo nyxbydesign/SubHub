@@ -74,6 +74,10 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean shifted, capsLock, symbols, literalWord;
     private long lastShiftTap;
     private LinearLayout keyboard;
+    private Bitmap backdrop;
+    private boolean renderedSymbols;
+    private boolean renderedShifted, renderedCapsLock;
+    private int renderedEditorAction = -1;
     private ImageButton shiftKey;
     private KeyPress repeatingDelete;
     private TextView status;
@@ -124,7 +128,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onStartInputView(EditorInfo editor, boolean restarting) {
         super.onStartInputView(editor, restarting);
         refreshWorkspace();
-        if (keyboard != null) renderKeys();
+        if (keyboard != null) renderKeysIfNeeded(editor);
     }
 
     @Override public boolean onEvaluateFullscreenMode() { return false; }
@@ -288,7 +292,7 @@ public final class GagKeyboardService extends InputMethodService {
         keyboard.setOrientation(LinearLayout.VERTICAL);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 13));
-        Bitmap backdrop = BitmapFactory.decodeResource(getResources(), R.drawable.bg_gag_keyboard);
+        if (backdrop == null) backdrop = BitmapFactory.decodeResource(getResources(), R.drawable.bg_gag_keyboard);
         keyboard.setBackground(new KeyboardBackdrop(backdrop));
         surface.addView(keyboard, new LinearLayout.LayoutParams(-1, -2));
         surface.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -300,7 +304,8 @@ public final class GagKeyboardService extends InputMethodService {
             if (insets != null) reserveNavigationBar(view, insets);
         });
         refreshWorkspace();
-        renderKeys();
+        renderedEditorAction = -1;
+        renderKeysIfNeeded(getCurrentInputEditorInfo());
         return surface;
     }
 
@@ -325,7 +330,19 @@ public final class GagKeyboardService extends InputMethodService {
                 || bottom != surface.getPaddingBottom()) surface.setPadding(left, 0, right, bottom);
     }
 
-    private void renderKeys() {
+    private void renderKeysIfNeeded(EditorInfo editor) {
+        int action = editor == null || (editor.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+                ? EditorInfo.IME_ACTION_NONE : editor.imeOptions & EditorInfo.IME_MASK_ACTION;
+        if (renderedSymbols != symbols || renderedEditorAction != action) {
+            renderedSymbols = symbols;
+            renderedEditorAction = action;
+            renderKeys(action);
+        } else if (renderedShifted != shifted || renderedCapsLock != capsLock) {
+            renderCase();
+        }
+    }
+
+    private void renderKeys(int editorAction) {
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         keyboard.removeAllViews();
         letters.clear();
@@ -356,14 +373,14 @@ public final class GagKeyboardService extends InputMethodService {
         LinearLayout bottom = row();
         key(bottom, symbols ? "ABC" : "?123", 1.5f, MODIFIER_SURFACE, 17, () -> {
             symbols = !symbols;
-            renderKeys();
+            renderKeysIfNeeded(getCurrentInputEditorInfo());
         });
         key(bottom, ",", 1f, MODIFIER_SURFACE, 24, () -> type(","));
         Button space = key(bottom, getString(R.string.gag_keyboard_language), 5f, LETTER_SURFACE, 13, () -> type(" "));
         space.setContentDescription(getString(R.string.gag_keyboard_space));
         space.setOnLongClickListener(view -> { chooseKeyboard(); return true; });
         key(bottom, ".", 1f, MODIFIER_SURFACE, 24, () -> type("."));
-        renderEnter(bottom);
+        renderEnter(bottom, editorAction);
         renderCase();
     }
 
@@ -384,10 +401,7 @@ public final class GagKeyboardService extends InputMethodService {
         renderCase();
     }
 
-    private void renderEnter(LinearLayout row) {
-        EditorInfo editor = getCurrentInputEditorInfo();
-        int action = editor == null || (editor.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
-                ? EditorInfo.IME_ACTION_NONE : editor.imeOptions & EditorInfo.IME_MASK_ACTION;
+    private void renderEnter(LinearLayout row, int action) {
         switch (action) {
             case EditorInfo.IME_ACTION_SEARCH -> iconKey(row, 1.5f, RETURN_SURFACE,
                     R.drawable.ic_gag_search, R.string.gag_keyboard_search, this::enter, false);
@@ -462,6 +476,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void renderCase() {
+        renderedShifted = shifted;
+        renderedCapsLock = capsLock;
         for (LetterKey letter : letters) {
             String label = shifted ? letter.letter().toUpperCase(Locale.ROOT) : letter.letter();
             letter.button().setText(label);
