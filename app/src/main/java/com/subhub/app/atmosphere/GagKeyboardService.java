@@ -1,7 +1,13 @@
 package com.subhub.app.atmosphere;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.text.InputType;
 import android.view.ContextThemeWrapper;
@@ -12,7 +18,11 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.Space;
+import android.widget.TextView;
 import com.subhub.app.R;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,16 +33,23 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GagKeyboardService extends InputMethodService {
     private static final int MAX_WORD_LENGTH = 128;
     private static final String[] LETTER_ROWS = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
-    private static final String[] SYMBOL_ROWS = {"1234567890", "@#$%&-+()", "*=\"':;!?"};
+    private static final String[] SYMBOL_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
+    private static final int LETTER_SURFACE = 0x66767676;
+    private static final int MODIFIER_SURFACE = 0x55191919;
+    private static final int RETURN_SURFACE = 0xff438ff0;
+    private static final int LABEL_COLOR = 0xfff6f6f6;
 
     private final StringBuilder word = new StringBuilder();
-    private final List<Button> letters = new ArrayList<>();
+    private final List<LetterKey> letters = new ArrayList<>();
     private final SharedPreferences.OnSharedPreferenceChangeListener settingsChanged =
             (prefs, key) -> reloadRules();
     private GagRules rules;
     private boolean shifted, symbols, literalWord;
     private LinearLayout keyboard;
     private Button shiftKey;
+    private TextView status;
+
+    private record LetterKey(Button button, String letter, String alternate) {}
 
     @Override public void onCreate() {
         super.onCreate();
@@ -86,8 +103,14 @@ public final class GagKeyboardService extends InputMethodService {
     private void reloadRules() {
         leaveWordLiteral();
         GagSettings settings = GagSettings.load(this);
-        rules = settings.enabled() && GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName())
-                ? settings.rules() : null;
+        boolean allowed = GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName());
+        rules = settings.enabled() && allowed ? settings.rules() : null;
+        if (status != null) updateStatus(settings.enabled(), allowed);
+    }
+
+    private void updateStatus(boolean enabled, boolean allowed) {
+        status.setText(!enabled ? R.string.gag_keyboard_inactive
+                : allowed ? R.string.gag_keyboard_active : R.string.gag_keyboard_excluded);
     }
 
     private void leaveWordLiteral() {
@@ -164,19 +187,12 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public View onCreateInputView() {
-        Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material_Light);
-        if ((getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
-            theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
-        }
+        Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
         keyboard = new LinearLayout(theme);
         keyboard.setOrientation(LinearLayout.VERTICAL);
-        keyboard.setPadding(dp(2), dp(4), dp(2), dp(4));
-        android.util.TypedValue surface = new android.util.TypedValue();
-        if (theme.getTheme().resolveAttribute(android.R.attr.colorBackground, surface, true)) {
-            if (surface.resourceId != 0) keyboard.setBackgroundResource(surface.resourceId);
-            else keyboard.setBackgroundColor(surface.data);
-        }
+        keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        keyboard.setPadding(dp(2), dp(2), dp(2), dp(6));
+        keyboard.setBackgroundResource(R.drawable.bg_gag_keyboard);
         renderKeys();
         return keyboard;
     }
@@ -185,47 +201,105 @@ public final class GagKeyboardService extends InputMethodService {
         keyboard.removeAllViews();
         letters.clear();
         shiftKey = null;
+        renderToolbar();
         String[] rows = symbols ? SYMBOL_ROWS : LETTER_ROWS;
         for (int rowIndex = 0; rowIndex < rows.length; rowIndex++) {
             LinearLayout row = row();
+            if (rowIndex == 1) spacer(row, .5f);
             if (rowIndex == 2 && !symbols) {
-                shiftKey = key(row, "⇧", 1.4f, () -> {
+                shiftKey = key(row, "⇧", 1.5f, MODIFIER_SURFACE, 24, () -> {
                     shifted = !shifted;
                     renderCase();
                 });
                 shiftKey.setContentDescription(getString(R.string.gag_keyboard_shift));
             }
-            for (char character : rows[rowIndex].toCharArray()) {
-                String label = Character.toString(character);
-                Button key = key(row, label, 1, () -> type(shifted && !symbols
-                        ? label.toUpperCase(Locale.ROOT) : label));
-                if (!symbols) letters.add(key);
+            if (rowIndex == 2 && symbols) {
+                key(row, "%", 1.5f, MODIFIER_SURFACE, 21, () -> type("%"));
+            }
+            for (int index = 0; index < rows[rowIndex].length(); index++) {
+                String label = rows[rowIndex].substring(index, index + 1);
+                if (symbols) key(row, label, 1, LETTER_SURFACE, 23, () -> type(label));
+                else letter(row, label, SYMBOL_ROWS[rowIndex].substring(index, index + 1));
             }
             if (rowIndex == 2) {
-                Button delete = key(row, "⌫", 1.4f, this::backspace);
+                Button delete = key(row, "⌫", 1.5f, MODIFIER_SURFACE, 23, this::backspace);
                 delete.setContentDescription(getString(R.string.gag_keyboard_delete));
             }
+            if (rowIndex == 1) spacer(row, .5f);
         }
         LinearLayout bottom = row();
-        key(bottom, symbols ? "ABC" : "?123", 1.4f, () -> {
+        key(bottom, symbols ? "ABC" : "?123", 1.4f, MODIFIER_SURFACE, 16, () -> {
             symbols = !symbols;
             shifted = false;
             renderKeys();
         });
-        Button picker = key(bottom, "⌨", 1, this::chooseKeyboard);
-        picker.setContentDescription(getString(R.string.gag_choose_keyboard));
-        key(bottom, ",", .8f, () -> type(","));
-        key(bottom, getString(R.string.gag_keyboard_space), 3.4f, () -> type(" "));
-        key(bottom, ".", .8f, () -> type("."));
-        Button enter = key(bottom, "↵", 1.3f, this::enter);
+        key(bottom, ",", .9f, MODIFIER_SURFACE, 22, () -> type(","));
+        Button space = key(bottom, getString(R.string.gag_keyboard_language), 5f, LETTER_SURFACE, 14, () -> type(" "));
+        space.setContentDescription(getString(R.string.gag_keyboard_space));
+        key(bottom, ".", .9f, MODIFIER_SURFACE, 22, () -> type("."));
+        Button enter = key(bottom, "↵", 1.4f, RETURN_SURFACE, 24, this::enter);
         enter.setContentDescription(getString(R.string.gag_keyboard_enter));
         renderCase();
     }
 
+    private void renderToolbar() {
+        LinearLayout tools = row();
+        tools.setGravity(Gravity.CENTER_VERTICAL);
+        status = new TextView(tools.getContext());
+        status.setTextColor(0xffc9c9c9);
+        status.setTextSize(13);
+        status.setPaddingRelative(dp(12), 0, 0, 0);
+        tools.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        updateStatus(GagSettings.enabled(this),
+                GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName()));
+        toolbarAction(tools, R.drawable.ic_overview_settings, R.string.gag_keyboard_configure, this::configure);
+        toolbarAction(tools, R.drawable.ic_gag_picker, R.string.gag_choose_keyboard, this::chooseKeyboard);
+    }
+
+    private void toolbarAction(LinearLayout row, int icon, int label, Runnable action) {
+        ImageButton button = new ImageButton(row.getContext());
+        button.setImageResource(icon);
+        button.setImageTintList(ColorStateList.valueOf(0xffc9c9c9));
+        button.setContentDescription(getString(label));
+        button.setBackground(keyBackground(Color.TRANSPARENT, 12));
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
+        button.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        button.setOnClickListener(view -> action.run());
+        row.addView(button, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    }
+
+    private void configure() {
+        leaveWordLiteral();
+        startActivity(new Intent(this, GagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
+    private void letter(LinearLayout row, String label, String alternate) {
+        FrameLayout cap = new FrameLayout(row.getContext());
+        row.addView(cap, keySize(1));
+        Button button = makeKey(row.getContext(), label, LETTER_SURFACE, 23, () ->
+                type(shifted ? label.toUpperCase(Locale.ROOT) : label));
+        button.setOnLongClickListener(view -> {
+            type(alternate);
+            return true;
+        });
+        cap.addView(button, new FrameLayout.LayoutParams(-1, -1));
+        TextView hint = new TextView(row.getContext());
+        hint.setText(alternate);
+        hint.setTextColor(0xffdadada);
+        hint.setTextSize(10);
+        hint.setIncludeFontPadding(false);
+        hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        FrameLayout.LayoutParams hintSize = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        hintSize.setMargins(0, dp(2), dp(3), 0);
+        cap.addView(hint, hintSize);
+        letters.add(new LetterKey(button, label, alternate));
+    }
+
     private void renderCase() {
-        for (Button letter : letters) {
-            String label = letter.getText().toString();
-            letter.setText(shifted ? label.toUpperCase(Locale.ROOT) : label.toLowerCase(Locale.ROOT));
+        for (LetterKey letter : letters) {
+            String label = shifted ? letter.letter().toUpperCase(Locale.ROOT) : letter.letter();
+            letter.button().setText(label);
+            letter.button().setContentDescription(getString(R.string.gag_keyboard_symbol_hint, label, letter.alternate()));
         }
         if (shiftKey != null) shiftKey.setSelected(shifted);
     }
@@ -242,17 +316,53 @@ public final class GagKeyboardService extends InputMethodService {
         return row;
     }
 
-    private Button key(LinearLayout row, String label, float weight, Runnable action) {
-        Button button = new Button(row.getContext());
+    private void spacer(LinearLayout row, float weight) {
+        row.addView(new Space(row.getContext()), new LinearLayout.LayoutParams(0, 0, weight));
+    }
+
+    private Button key(LinearLayout row, String label, float weight, int surface, int textSize, Runnable action) {
+        Button button = makeKey(row.getContext(), label, surface, textSize, action);
+        row.addView(button, keySize(weight));
+        return button;
+    }
+
+    private Button makeKey(Context context, String label, int surface, int textSize, Runnable action) {
+        Button button = new Button(context);
         button.setText(label);
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
+        button.setSingleLine(true);
+        button.setTextColor(LABEL_COLOR);
+        button.setTextSize(textSize);
+        button.setTypeface(android.graphics.Typeface.DEFAULT);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setIncludeFontPadding(false);
+        button.setStateListAnimator(null);
+        button.setBackgroundTintList(null);
+        button.setBackground(keyBackground(surface, surface == RETURN_SURFACE ? 24 : 8));
         button.setPadding(0, 0, 0, 0);
         button.setOnClickListener(view -> action.run());
-        row.addView(button, new LinearLayout.LayoutParams(0, dp(48), weight));
         return button;
+    }
+
+    private RippleDrawable keyBackground(int surface, int radius) {
+        GradientDrawable face = new GradientDrawable();
+        face.setColor(surface);
+        face.setCornerRadius(dp(radius));
+        GradientDrawable mask = new GradientDrawable();
+        mask.setColor(Color.WHITE);
+        mask.setCornerRadius(dp(radius));
+        return new RippleDrawable(ColorStateList.valueOf(0x55ffffff), face, mask);
+    }
+
+    private LinearLayout.LayoutParams keySize(float weight) {
+        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, dp(landscape ? 36 : 48), weight);
+        size.setMargins(dp(2), dp(3), dp(2), dp(3));
+        return size;
     }
 
     private int dp(int value) {

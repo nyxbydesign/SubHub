@@ -15,6 +15,12 @@ record GagSettings(boolean enabled, GagRules.Mode mode, int interval, String wor
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    static boolean enabled(Context context) { return preferences(context).getBoolean("enabled", false); }
+
+    static void setEnabled(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean("enabled", enabled).apply();
+    }
+
     static GagSettings load(Context context) {
         SharedPreferences prefs = preferences(context);
         GagRules.Mode mode;
