@@ -3,6 +3,7 @@ package com.subhub.app.security;
 import android.app.Activity;
 import android.widget.LinearLayout;
 import com.subhub.app.R;
+import com.subhub.app.atmosphere.GagActivity;
 import com.subhub.app.fullaccess.FullAccessGrant;
 import com.subhub.app.people.FeatureConsentView;
 import com.subhub.app.people.PersonUi;
@@ -11,9 +12,15 @@ import com.subhub.app.util.AsyncUiScope;
 /** A Sub can change participation locally even when configuration belongs to a paired Dom. */
 public final class SubFeatureControls {
     private SubFeatureControls() { }
-    private static final String[] KEYS = {"censor", "limits", "wallet", "subliminal", "popup", "tasks"};
+    private static final String GAG = "gag";
+    private static final String[] KEYS = {"censor", "limits", "wallet", "subliminal", "popup", "tasks", GAG};
     private static final int[] LABELS = {R.string.sub_censor_title, R.string.sub_limits_title,
-            R.string.sub_wallet_title, R.string.sub_feature_whispers, R.string.popup_title, R.string.tasks_title};
+            R.string.sub_wallet_title, R.string.sub_feature_whispers, R.string.popup_title, R.string.tasks_title,
+            R.string.gag_title};
+
+    private static boolean chosen(android.content.Context context, String key) {
+        return GAG.equals(key) ? GagActivity.isEnabled(context) : SubFeaturePolicy.chosen(context, key);
+    }
 
     public static void bindReadOnly(Activity activity, LinearLayout parent) {
         bindChoices(activity, parent, null);
@@ -33,7 +40,7 @@ public final class SubFeatureControls {
         parent.addView(grid, new LinearLayout.LayoutParams(-1, -2));
         for (int index = 0; index < KEYS.length; index++) {
             String key = KEYS[index];
-            if (draft == null) grid.readOnly(key, LABELS[index], SubFeaturePolicy.chosen(activity, key));
+            if (draft == null) grid.readOnly(key, LABELS[index], chosen(activity, key));
             else {
                 android.widget.CompoundButton control = grid.editable(key, LABELS[index], draft.values.get(key));
                 control.setOnCheckedChangeListener((view, checked) -> draft.values.put(key, checked));
@@ -58,7 +65,7 @@ public final class SubFeatureControls {
         private final java.util.Map<String, Boolean> values = new java.util.LinkedHashMap<>();
         public Draft(android.content.Context context, android.os.Bundle state) {
             for (String key : KEYS) {
-                boolean chosen = SubFeaturePolicy.chosen(context, key);
+                boolean chosen = chosen(context, key);
                 original.put(key, state == null ? chosen : state.getBoolean("feature_original:" + key, chosen));
                 values.put(key, state == null ? chosen : state.getBoolean("feature_draft:" + key, chosen));
             }
@@ -77,7 +84,10 @@ public final class SubFeatureControls {
                     boolean value = values.get(key);
                     if (value == original.get(key)) continue;
                     if (!com.subhub.app.people.ProfileStore.mayEdit(activity, false)) return false;
-                    if (SubFeaturePolicy.chosen(activity, key) != value) {
+                    if (GAG.equals(key)) {
+                        if (GagActivity.isEnabled(activity) != value && !GagActivity.setSubEnabled(activity, value))
+                            return false;
+                    } else if (chosen(activity, key) != value) {
                         if ("tasks".equals(key)) new com.subhub.app.tasks.TaskRepository(activity,
                                 com.subhub.app.people.PersonId.LOCAL).setAllowed(value);
                         else {

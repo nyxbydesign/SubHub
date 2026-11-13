@@ -10,6 +10,8 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
+import com.subhub.app.people.ProfileStore;
+import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.util.InputFocusPolicy;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.StateToggle;
@@ -21,6 +23,16 @@ public final class GagActivity extends AppCompatActivity {
     private EditText interval;
     private EditText words;
     private EditText replacements;
+
+    /** Shared local participation controls. This preference is never added to paired contracts. */
+    public static boolean isEnabled(android.content.Context context) { return GagSettings.enabled(context); }
+
+    public static boolean setSubEnabled(android.app.Activity activity, boolean value) {
+        if (!DeviceRolePreferences.supportsSub(activity) || DeviceRolePreferences.isDomWorkspace(activity)
+                || !ProfileStore.mayEdit(activity, false)) return false;
+        GagSettings.setEnabled(activity, value);
+        return true;
+    }
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
