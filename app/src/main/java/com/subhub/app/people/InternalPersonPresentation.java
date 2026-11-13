@@ -127,18 +127,18 @@ public final class InternalPersonPresentation {
             if (value instanceof Boolean) shown = effectState(context, (Boolean) value);
             else if (value instanceof Set<?>) {
                 List<String> labels = new ArrayList<>();
-                for (Object item : (Set<?>) value) labels.add(choice(context, field, item.toString()));
+                for (Object item : (Set<?>) value) labels.add(displayValue(context, field, item.toString()));
                 shown = labels.isEmpty() ? context.getString(R.string.arrangement_none_selected) : String.join(", ", labels);
-            } else if (value != null) shown = choice(context, field, value.toString());
+            } else if (value != null) shown = displayValue(context, field, value.toString());
             else continue;
             rows.add(context.getString(R.string.arrangement_detail_line, context.getString(field.label), shown));
         }
         return String.join("\n\n", rows);
     }
 
-    private static String choice(Context context, ConfigurationSettingCatalog.Field field, String value) {
-        int label = ConfigurationSettingCatalog.choiceLabel(field, value);
-        return label == 0 ? value : context.getString(label);
+    private static String displayValue(Context context, ConfigurationSettingCatalog.Field field, String value) {
+        if (!field.choices.contains(value)) return value;
+        return context.getString(ConfigurationSettingCatalog.choiceLabel(field, value));
     }
     private static String appLabel(Context context, String name) {
         try { return context.getPackageManager().getApplicationLabel(context.getPackageManager().getApplicationInfo(name, 0)).toString(); }

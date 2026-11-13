@@ -451,7 +451,30 @@ public final class DummySubPreviewAndroidTest {
         });
         PersonSnapshot first = data.loadPresentation(context, before);
         instrumentation.runOnMainSync(() -> assertSame(first, data.peekPresentation()));
-        com.subhub.app.internal.InternalSubRecord after = data.store.saveProfile(before,
+        String defaultDetails = sectionDetails(first, "censor");
+        assertTrue(defaultDetails.contains(context.getString(com.subhub.app.R.string.arrangement_detail_line,
+                context.getString(com.subhub.app.R.string.pack_field_confidence_threshold_percent), "25")));
+        assertTrue(defaultDetails.contains(context.getString(com.subhub.app.R.string.pack_choice_detection_preset_medium)));
+
+        var draft = data.configuration.edit(before);
+        draft.preferences(SettingsRepository.PREFERENCES_NAME).edit()
+                .putInt("detection_confidence_percent", 37)
+                .putString("detection_quality", "high")
+                .putString("error_popup_title", "Synthetic title")
+                .putStringSet("custom_phrases", Set.of("Synthetic phrase"))
+                .apply();
+        var prepared = data.configuration.prepare(draft);
+        var customized = data.ownerData().submitEditor(before.generation, ControllerPinManager.domWorkspaceRevision(), access -> {
+            assertEquals(before, access.record());
+            return data.configuration.flushPrepared(prepared);
+        }).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        String customizedDetails = sectionDetails(data.loadPresentation(context, customized), "censor");
+        assertTrue(customizedDetails.contains(context.getString(com.subhub.app.R.string.arrangement_detail_line,
+                context.getString(com.subhub.app.R.string.pack_field_confidence_threshold_percent), "37")));
+        assertTrue(customizedDetails.contains(context.getString(com.subhub.app.R.string.pack_choice_detection_preset_high)));
+        assertTrue(customizedDetails.contains("Synthetic title"));
+        assertTrue(customizedDetails.contains("Synthetic phrase"));
+        com.subhub.app.internal.InternalSubRecord after = data.store.saveProfile(customized,
                 new com.subhub.app.internal.InternalProfile("Updated internal", "", "", "", 0));
         instrumentation.runOnMainSync(() -> assertNull(data.peekPresentation()));
         data.loadPresentation(context, before); // An older worker result cannot become current again.
@@ -464,19 +487,38 @@ public final class DummySubPreviewAndroidTest {
         assertTrue(ControllerPinManager.verify(context, "2468"));
     }
 
+    private static String sectionDetails(PersonSnapshot snapshot, String key) {
+        for (PersonSnapshot.Section section : snapshot.sections) if (section.key.equals(key)) return section.details;
+        throw new AssertionError("Missing contract section: " + key);
+    }
+
     @Test public void internalFavoriteAndTasksOverviewRetainIdentityAcrossRecreation() throws Exception {
         assertTrue(DummySubPreview.toggle(context));
+        var ownedRecord = InternalSubData.get(context).acknowledged();
+        Map<String, List<String>> rows = endpoint.snapshot();
+        history.capture(true);
+        previewTransportBaseline = endpoint.transportCalls();
         Map<String, ?> favoriteBefore = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
         try {
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), Collections.emptyMap());
             try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
                 AtomicReference<PeopleActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
                 await(() -> tagged(page.get(), "person:dummy_sub_preview") != null);
+                Map<String, Map<String, ?>> realBefore = realPreferences();
                 onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
                         androidx.test.espresso.action.ViewActions.longClick());
                 await(() -> FavoriteSubStore.identity(DummySubPreview.ID).equals(new FavoriteSubStore(context).identity()));
                 scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
                 await(() -> tagged(page.get(), "people_favorite:dummy_sub_preview") != null);
+                onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.longClick());
+                await(() -> new FavoriteSubStore(context).identity().isEmpty()
+                        && tagged(page.get(), "people_favorite:dummy_sub_preview") == null);
+                assertEquals(ownedRecord, InternalSubData.get(context).acknowledged());
+                assertStateAfterNormalRosterReturn(realBefore, rows);
+                onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.longClick());
+                await(() -> FavoriteSubStore.identity(DummySubPreview.ID).equals(new FavoriteSubStore(context).identity()));
             }
             try (ActivityScenario<com.subhub.app.MainActivity> scenario = ActivityScenario.launch(com.subhub.app.MainActivity.class)) {
                 AtomicReference<com.subhub.app.MainActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
