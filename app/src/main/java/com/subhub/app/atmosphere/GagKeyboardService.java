@@ -5,6 +5,17 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.Shader;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.RippleDrawable;
@@ -277,7 +288,8 @@ public final class GagKeyboardService extends InputMethodService {
         keyboard.setOrientation(LinearLayout.VERTICAL);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 13));
-        keyboard.setBackgroundResource(R.drawable.bg_gag_keyboard);
+        Bitmap backdrop = BitmapFactory.decodeResource(getResources(), R.drawable.bg_gag_keyboard);
+        keyboard.setBackground(new KeyboardBackdrop(backdrop));
         surface.addView(keyboard, new LinearLayout.LayoutParams(-1, -2));
         surface.setOnApplyWindowInsetsListener((view, insets) -> {
             view.post(() -> reserveNavigationBar(view, insets));
@@ -589,5 +601,44 @@ public final class GagKeyboardService extends InputMethodService {
 
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /** Keep the supplied four-repeat artwork at the same scale in both axes. */
+    private static final class KeyboardBackdrop extends Drawable {
+        // Match the reference's dim artwork while retaining contrast with the translucent key faces.
+        private static final int ARTWORK_ALPHA = 74;
+        private static final float VERTICAL_PHASE = 0.042f;
+        private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
+        private final BitmapShader shader;
+        private final int imageWidth;
+        private final Matrix transform = new Matrix();
+
+        KeyboardBackdrop(Bitmap bitmap) {
+            imageWidth = bitmap.getWidth();
+            shader = new BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.REPEAT);
+            paint.setShader(shader);
+            paint.setAlpha(ARTWORK_ALPHA);
+        }
+
+        @Override protected void onBoundsChange(Rect bounds) {
+            float scale = (float) bounds.width() / imageWidth;
+            transform.setScale(scale, scale);
+            transform.postTranslate(bounds.left, bounds.top - bounds.width() * VERTICAL_PHASE);
+            shader.setLocalMatrix(transform);
+        }
+
+        @Override public void draw(Canvas canvas) { canvas.drawRect(getBounds(), paint); }
+
+        @Override public void setAlpha(int alpha) {
+            paint.setAlpha(Math.round(alpha * ARTWORK_ALPHA / 255f));
+            invalidateSelf();
+        }
+
+        @Override public void setColorFilter(ColorFilter filter) {
+            paint.setColorFilter(filter);
+            invalidateSelf();
+        }
+
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 }
