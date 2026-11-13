@@ -417,6 +417,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation",
         "subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal",
         "gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace",
+        "gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup",
         "nativeRoleSwitchesKeepDomAndSubIdentitySeparate",
         "returningToProfileAfterAnotherWorkspaceChangeUsesTheCurrentRoleOnFirstResume",
         "domOnlyOwnProfileStaysEditableWhileStatisticsRequireTheExistingPin",
