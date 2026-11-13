@@ -211,14 +211,15 @@ public final class DummySubPreviewAndroidTest {
                 assertScopedControls(profile.findViewById(android.R.id.content));
                 nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
                 tapTag("person_tab:contracts");
+                await(() -> tagged(profile, "contract_section:duration") != null);
+                assertNotNull(tagged(profile, "person_contract_identity"));
+                assertNotNull(tagged(profile, "person_contract_scope"));
+                assertNotNull(tagged(profile, "person_contract_features"));
                 for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
                     Class<? extends Activity> expected = PersonRoutes.sectionActivity(section);
                     Instrumentation.ActivityMonitor pageMonitor = instrumentation.addMonitor(expected.getName(), null, false);
                     try {
-                        if ("duration".equals(section)) {
-                            nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
-                        }
-                        tapTag(sectionTag(section));
+                        openContractEditor(profile, section);
                         Activity page = instrumentation.waitForMonitorWithTimeout(pageMonitor, 5000);
                         assertNotNull("Native section did not open: " + section, page);
                         assertEquals(expected, page.getClass()); await(() -> resumed(page));
@@ -716,7 +717,8 @@ public final class DummySubPreviewAndroidTest {
             if (!"duration".equals(section)) tapTag("person_tab:contracts");
             Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(PersonRoutes.sectionActivity(section).getName(), null, false);
             try {
-                tapTag(sectionTag(section));
+                if ("duration".equals(section)) tapTag("person_duration");
+                else openContractEditor(host.get(), section);
                 Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
                 assertNotNull(page); await(() -> resumed(page));
                 Intent route = new Intent(page.getIntent());
@@ -733,8 +735,11 @@ public final class DummySubPreviewAndroidTest {
             assertEquals("Untrusted preview route must finish", androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.getState());
         }
     }
-    private static String sectionTag(String section) {
-        return "apps".equals(section) ? "person_apps" : "duration".equals(section) ? "person_duration" : "person_section:" + section;
+    private void openContractEditor(Activity profile, String section) {
+        await(() -> tagged(profile, "contract_details:" + section) != null);
+        View detail = tagged(profile, "contract_details:" + section);
+        if (detail == null || detail.getVisibility() != View.VISIBLE) tapTag("contract_section:" + section);
+        tapTag("contract_edit:" + section);
     }
     private void tapTag(String value) {
         onView(tag(value)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
