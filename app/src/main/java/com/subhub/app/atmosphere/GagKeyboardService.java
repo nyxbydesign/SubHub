@@ -1,6 +1,7 @@
 package com.subhub.app.atmosphere;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -44,6 +45,10 @@ public final class GagKeyboardService extends InputMethodService {
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private RemoteFeature backend;
     private AutoCloseable configurationObserver;
+    private SharedPreferences participation;
+    private boolean keyboardAlreadyEnabled;
+    private final SharedPreferences.OnSharedPreferenceChangeListener participationChanged =
+            (preferences, key) -> refreshWorkspace();
     private long requestedRevision = -1;
     private long rulesRevision = -1;
     private long editorEpoch;
@@ -62,10 +67,13 @@ public final class GagKeyboardService extends InputMethodService {
         super.onCreate();
         backend = RemoteFeature.get(this);
         configurationObserver = RemoteUi.observeConfiguration(this::refreshWorkspace);
+        participation = GagParticipation.preferences(this);
+        participation.registerOnSharedPreferenceChangeListener(participationChanged);
     }
 
     @Override public void onDestroy() {
         if (configurationObserver != null) try { configurationObserver.close(); } catch (Exception ignored) { }
+        participation.unregisterOnSharedPreferenceChangeListener(participationChanged);
         main.removeCallbacksAndMessages(null);
         backend = null;
         word.setLength(0);
@@ -74,6 +82,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onStartInput(EditorInfo editor, boolean restarting) {
         super.onStartInput(editor, restarting);
+        keyboardAlreadyEnabled = GagParticipation.keyboardEnabled(this);
         word.setLength(0);
         literalWord = false;
         shifted = false;
@@ -126,7 +135,8 @@ public final class GagKeyboardService extends InputMethodService {
         if (feature == null) return;
         subWorkspace = GagActivity.canSetUp(this);
         long revision = feature.gagRevision();
-        if (!subWorkspace || !editorAllowed || rulesRevision != revision) {
+        boolean allowed = subWorkspace && GagParticipation.allowed(participation, keyboardAlreadyEnabled);
+        if (!allowed || !editorAllowed || rulesRevision != revision) {
             if (word.length() != 0) {
                 leaveWordLiteral();
                 literalWord = true;
@@ -135,13 +145,15 @@ public final class GagKeyboardService extends InputMethodService {
             rules = null;
             rulesRevision = -1;
         }
-        if (!subWorkspace || !editorAllowed) {
+        if (!allowed || !editorAllowed) {
+            if (requestedRevision != -1) editorEpoch++;
             requestedRevision = -1;
         } else if (requestedRevision != revision) {
             requestedRevision = revision;
             long requestEpoch = editorEpoch;
             feature.readAppliedGag().whenComplete((value, failure) -> main.post(() -> {
                 if (backend != feature || !editorAllowed || !GagActivity.canSetUp(this)
+                        || !GagParticipation.allowed(participation, keyboardAlreadyEnabled)
                         || editorEpoch != requestEpoch || requestedRevision != revision
                         || revision != feature.gagRevision()) return;
                 rulesRevision = revision;

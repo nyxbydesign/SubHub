@@ -23,6 +23,8 @@ import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.atmosphere.GagActivity;
+import com.subhub.app.atmosphere.GagParticipation;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -53,7 +55,8 @@ public final class ProfileAndroidTest {
 
     @Before public void prepare() {
         assertFalse(com.subhub.app.people.LocalSessionControls.isActive(context));
-        for (String store : new String[]{"subhub_profile_names", SubFeaturePolicy.STORE, "betablocker_achievements"})
+        for (String store : new String[]{"subhub_profile_names", SubFeaturePolicy.STORE,
+                GagParticipation.STORE, "betablocker_achievements"})
             before.put(store, new LinkedHashMap<>(context.getSharedPreferences(store, 0).getAll()));
         new SettingsRepository(context).preferences().edit().putString(DeviceRolePreferences.KEY_MODE,
                 DeviceRolePreferences.Mode.BOTH.name()).commit();
@@ -287,8 +290,8 @@ public final class ProfileAndroidTest {
                 assertTrue(hero.indexOfChild(preview) < hero.indexOfChild(features));
                 assertTrue(hero.indexOfChild(features) < hero.indexOfChild(journal));
                 assertReadOnly(features);
-                assertEquals(6, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
-                assertNull(root.findViewWithTag("person_allowance:gag"));
+                assertEquals(7, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+                assertNotNull(root.findViewWithTag("person_allowance:gag"));
                 assertNull(root.findViewWithTag("profile_gag_setup"));
             });
             onView(tag("person_allowance:censor")).perform(revealAboveNavigation()); capture(scenario,"profile-readonly-choices").recycle();
@@ -317,6 +320,37 @@ public final class ProfileAndroidTest {
         }
     }
 
+    @Test public void gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup() {
+        assertTrue(context.getSharedPreferences(GagParticipation.STORE, 0).edit()
+                .putBoolean("enabled", false).putString("replacements", "old local rule").commit());
+        assertFalse(GagParticipation.allowed(context));
+        try (ActivityScenario<ProfileActivity> profile = ActivityScenario.launch(ProfileActivity.class)) {
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            resumed(ProfileEditorActivity.class);
+            onView(tag("sub_feature:gag")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isNotChecked()));
+            onView(tag("sub_feature:gag")).perform(revealAboveNavigation(), click());
+            assertFalse(GagParticipation.allowed(context));
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            GagActivity setup = resumed(GagActivity.class);
+            assertTrue(GagParticipation.allowed(context));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertTrue(setup.findViewById(R.id.gag_keyboard_settings).isClickable());
+                assertNull(setup.findViewById(R.id.gag_modes));
+                assertNull(setup.findViewById(R.id.gag_replacements));
+                setup.finish();
+            });
+            resumed(ProfileActivity.class);
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            resumed(ProfileEditorActivity.class);
+            onView(tag("sub_feature:gag")).perform(revealAboveNavigation(), click());
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            resumed(ProfileActivity.class);
+            assertFalse(GagParticipation.allowed(context));
+            assertEquals("old local rule", context.getSharedPreferences(GagParticipation.STORE, 0)
+                    .getString("replacements", ""));
+        }
+    }
+
     @Test public void gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace() {
         try (ActivityScenario<com.subhub.app.atmosphere.GagActivity> setup =
                      ActivityScenario.launch(com.subhub.app.atmosphere.GagActivity.class)) {
@@ -328,6 +362,9 @@ public final class ProfileAndroidTest {
             });
         }
         ControllerPinManager.enterDomMode();
+        boolean prior = GagParticipation.allowed(context);
+        assertFalse(GagParticipation.setAllowed(context, !prior));
+        assertEquals(prior, GagParticipation.allowed(context));
         try (ActivityScenario<com.subhub.app.atmosphere.GagActivity> denied =
                      ActivityScenario.launch(com.subhub.app.atmosphere.GagActivity.class)) {
             assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, denied.getState());
@@ -739,8 +776,9 @@ public final class ProfileAndroidTest {
                 card.getLocationOnScreen(cardPoint); grid.getLocationOnScreen(gridPoint);
                 assertTrue(gridPoint[0] >= cardPoint[0] + card.getPaddingLeft());
                 assertTrue(gridPoint[0] + grid.getWidth() <= cardPoint[0] + card.getWidth() - card.getPaddingRight());
-                assertEquals(6, grid.getChildCount());
-                assertNull(root.findViewWithTag("sub_feature:gag"));
+                assertEquals(7, grid.getChildCount());
+                assertEquals(GagParticipation.allowed(context),
+                        ((CompoundButton) root.findViewWithTag("sub_feature:gag")).isChecked());
                 for (String key : SubFeaturePolicy.FEATURES) {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
                     assertNotNull(choice); assertTrue(choice.getHeight() >= PersonUi.dp(a, 48));
