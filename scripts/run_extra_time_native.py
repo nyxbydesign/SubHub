@@ -349,6 +349,10 @@ DEVICE_PASS_NATIVE = {
 }
 DEVICE_PASS_SOURCE_ONLY = {
     **BATTERY_SOURCE_ONLY,
+    # This regression needs an explicitly owned paired fixture, with its opt-in runner argument.
+    "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
+        "subContractOmitsDisabledDetailsAndKeepsEnabledSiblings",
+    ],
     "com.subhub.app.appmode.LimitsUiAndroidTest": [
         "recordedUsageAndDistinctAllowancesHaveReadableGeometry",
         "invalidDraftSurvivesTicksAndRecreationThenPersistsWhenValid",
