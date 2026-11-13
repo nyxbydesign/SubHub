@@ -23,6 +23,14 @@
             android:text="@string/gag_description"
             android:textColor="@color/text_secondary" />
 
+        <TextView
+            android:id="@+id/gag_keyboard_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_control"
+            android:accessibilityLiveRegion="polite"
+            android:textColor="@color/accent_text" />
+
         <include
             android:id="@+id/gag_keyboard_settings"
             layout="@layout/view_ux_action"

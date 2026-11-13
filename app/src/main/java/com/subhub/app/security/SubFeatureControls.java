@@ -46,6 +46,13 @@ public final class SubFeatureControls {
                 control.setOnCheckedChangeListener((view, checked) -> draft.values.put(key, checked));
             }
         }
+        if (draft == null) {
+            PersonUi.action(parent, R.string.gag_keyboard_setup, () -> {
+                if (GagActivity.canConfigure(activity)) {
+                    activity.startActivity(new android.content.Intent(activity, GagActivity.class));
+                }
+            }, false).setTag("profile_gag_setup");
+        }
         if (draft == null && new HardcoreModeManager(activity).isEnabled()) {
             android.content.Context app = activity.getApplicationContext();
             AsyncUiScope.forContext(activity).load("self-profile-blackmail", () -> FullAccessGrant.isLocallyEnabled(app),
@@ -76,6 +83,10 @@ public final class SubFeatureControls {
                 state.putBoolean("feature_draft:" + key, values.get(key));
             }
         }
+        public boolean enablesGag() {
+            return Boolean.TRUE.equals(values.get(GAG)) && !Boolean.TRUE.equals(original.get(GAG));
+        }
+
         public boolean apply(Activity activity) {
             if (!com.subhub.app.people.ProfileStore.mayEdit(activity, false)) return false;
             boolean changed = false, effectsChanged = false;

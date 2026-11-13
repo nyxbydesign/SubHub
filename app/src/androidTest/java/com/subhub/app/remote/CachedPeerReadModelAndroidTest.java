@@ -163,7 +163,7 @@ public final class CachedPeerReadModelAndroidTest {
         PersonSnapshot saved = repository.load(selected);
         PersonSnapshot.Section atmosphere = atmosphere(saved);
         assertEquals(PersonSnapshot.Freshness.CURRENT, saved.sync.contract);
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", atmosphere.summary);
         assertTrue(atmosphere.details.contains("Categories: Findom\nIntensity: Custom"));
         assertTrue(atmosphere.details.contains("Consent: Unknown"));
         assertFalse(atmosphere.details.contains("Never expose"));
@@ -174,10 +174,10 @@ public final class CachedPeerReadModelAndroidTest {
         assertTrue(RemoteTelemetry.validRuntime(runtime));
         mirror(RemoteProtocol.Stream.RUNTIME, "current", runtime);
         store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now));
-        assertEquals("Whispers Disabled by Sub\nPopup Storm On", atmosphere(repository.load(selected)).summary);
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGag Unknown", atmosphere(repository.load(selected)).summary);
         store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now - 120_000));
         atmosphere = atmosphere(repository.load(selected));
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", atmosphere.summary);
         assertTrue(atmosphere.details.contains("Consent: Last observed disabled by Sub"));
         store.putMetadata(SUB, generation, "confirmed_BASELINE", Long.toString(now - 40 * 60_000L));
         saved = repository.load(selected);

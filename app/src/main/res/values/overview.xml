@@ -36,5 +36,5 @@
     <string name="overview_wallet">Wallet</string>
     <string name="overview_atmosphere_states">Whispers %1$s · Popup Storm %2$s</string>
     <string name="overview_whispers">Whispers</string>
-    <string name="contract_atmosphere_states">Whispers %1$s\nPopup Storm %2$s</string>
+    <string name="contract_atmosphere_states">Whispers %1$s\nPopup Storm %2$s\nGag %3$s</string>
 </resources>
