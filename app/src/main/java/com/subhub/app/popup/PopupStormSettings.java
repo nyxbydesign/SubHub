@@ -80,14 +80,14 @@ public final class PopupStormSettings {
     private final String detectionMode;
     private final int avoidPadding;
 
-    private PopupStormSettings(SharedPreferences preferences, boolean allowed) {
+    private PopupStormSettings(SharedPreferences preferences, boolean allowed, boolean localArtwork) {
         enabled = allowed && preferences.getBoolean(K_ENABLED, false);
         acknowledged = preferences.getBoolean(K_ACK, false);
-        Set<String> stored = preferences.getStringSet(K_FOLDERS, Collections.emptySet());
+        Set<String> stored = localArtwork ? preferences.getStringSet(K_FOLDERS, Collections.emptySet()) : null;
         folders = Collections.unmodifiableList(new ArrayList<>(stored == null
                 ? Collections.emptySet() : new LinkedHashSet<>(stored)));
-        packImageDir = preferences.getString(K_PACK_DIR,
-                preferences.getString(CustomImageManager.PACK_DIR_KEY, ""));
+        packImageDir = localArtwork ? preferences.getString(K_PACK_DIR,
+                preferences.getString(CustomImageManager.PACK_DIR_KEY, "")) : "";
         spawnRate = clamp(preferences.getFloat(K_SPAWN_RATE, 2f), 0f, MAX_SPAWN_RATE);
         displayDuration = clamp(preferences.getFloat(K_DISPLAY_DURATION, 1f), .2f, 8f);
         maxSimultaneous = clamp(preferences.getInt(K_MAX_SIMULTANEOUS, 8), 1, MAX_SIMULTANEOUS);
@@ -125,13 +125,14 @@ public final class PopupStormSettings {
 
     public static PopupStormSettings load(Context context) {
         boolean internalEditor = com.subhub.app.configuration.FeatureEditorSession.internal(context.getApplicationContext());
-        return new PopupStormSettings(preferences(context), internalEditor
-                || com.subhub.app.security.SubFeaturePolicy.allowed(context, "popup"));
+        if (internalEditor) return forPreferences(preferences(context));
+        return new PopupStormSettings(preferences(context),
+                com.subhub.app.security.SubFeaturePolicy.allowed(context, "popup"), true);
     }
 
     /** Immutable configuration only. This does not grant window, consent or runtime authority. */
     public static PopupStormSettings forPreferences(SharedPreferences configuration) {
-        return new PopupStormSettings(java.util.Objects.requireNonNull(configuration), true);
+        return new PopupStormSettings(java.util.Objects.requireNonNull(configuration), true, false);
     }
 
     public boolean isEnabled() { return enabled; }

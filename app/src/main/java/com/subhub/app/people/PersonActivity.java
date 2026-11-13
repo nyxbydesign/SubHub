@@ -26,7 +26,6 @@ public final class PersonActivity extends RolePage {
     private long renderedInternalRevision = -1;
     private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
-    private String expandedDemoContractSection = "";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
     private final java.util.Map<String, LinearLayout> panels = new java.util.LinkedHashMap<>();
@@ -336,7 +335,6 @@ public final class PersonActivity extends RolePage {
         section = state == null ? getIntent().getStringExtra("person_section")
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
-        if (state != null && internal) expandedDemoContractSection = state.getString("demo_contract_expanded", "");
         if (state != null) for (String key : java.util.List.of("profile", "contracts", "connection"))
             positions.put(key, state.getInt("person_position:" + key));
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
@@ -359,7 +357,6 @@ public final class PersonActivity extends RolePage {
         FeatureEditorSession.saveState(this, state);
         if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
         state.putString("person_section", section);
-        if (internal) state.putString("demo_contract_expanded", expandedDemoContractSection);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
@@ -514,16 +511,6 @@ public final class PersonActivity extends RolePage {
                         internal ? null : com.subhub.app.relationships.RelationshipUi.provider(),
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
-                    if (internal) {
-                        LinearLayout identity = OverviewUi.card(parent);
-                        identity.setTag("person_contract_identity");
-                        OverviewUi.identity(identity, person.profile, false, "demo_contract_identity");
-                        new ContractActivity.ContractSections(parent, person, null, () -> getString(R.string.role_unknown_data),
-                                () -> expandedDemoContractSection, value -> expandedDemoContractSection = value,
-                                person.can(PersonSnapshot.Capability.EDIT_CONTRACT) && FeatureEditorSession.canEdit(this, "apps")
-                                        ? key -> editSection(person, key) : null);
-                        return;
-                    }
                     PersonUi.text(parent, person.name, true);
                     ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
@@ -682,11 +669,9 @@ public final class PersonActivity extends RolePage {
         freshness(scope, person.sync.contract);
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable && !internal) appsTitle.setTag("person_apps");
+        if (!editable) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
         if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, internal || person.id.isLocal());
-        if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
-                getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
         LinearLayout features = null;
@@ -710,7 +695,7 @@ public final class PersonActivity extends RolePage {
             PersonSnapshot.Section value, boolean editable) {
         int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
                 : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
-        boolean allowed = internal || (person.id.isLocal()
+        boolean allowed = internal ? FeatureEditorSession.canEdit(this, value.key) : (person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
@@ -718,7 +703,7 @@ public final class PersonActivity extends RolePage {
         LinearLayout row = PersonUi.row(parent, icon, value.title,
                 atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
                         : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                (internal || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
+                editable && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
         if (atmosphere && known) {
@@ -734,7 +719,11 @@ public final class PersonActivity extends RolePage {
 
     private void editSection(PersonSnapshot person, String section) {
         if (!guardTarget() || !personId.equals(person.id)) return;
-        if (internal) { startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section))); return; }
+        if (internal) {
+            if (FeatureEditorSession.canEdit(this, section))
+                startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section)));
+            return;
+        }
         if (person.id.isLocal()) {
             PersonRoutes.editSection(this, person.id, section);
             return;

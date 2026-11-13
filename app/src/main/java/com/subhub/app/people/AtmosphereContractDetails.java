@@ -74,6 +74,20 @@ public final class AtmosphereContractDetails {
                 gagStatus(context, sections.optJSONObject(GagContractFields.SECTION)));
     }
 
+    static AtmosphereContractDetails internal(Context context, Map<String, Map<String, Object>> configuration) {
+        try {
+            JSONObject sections = new JSONObject()
+                    .put("modules", new JSONObject(configuration.get("modules")))
+                    .put("subliminal", new JSONObject(configuration.get("subliminal")))
+                    .put("popup", new JSONObject(configuration.get("popup")));
+            Map<String, Object> gag = configuration.get(GagContractFields.SECTION);
+            sections.put(GagContractFields.SECTION, gag == null ? GagContractFields.defaults() : new JSONObject(gag));
+            return remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN);
+        } catch (JSONException invalid) {
+            throw new IllegalArgumentException("Incomplete internal Atmosphere configuration", invalid);
+        }
+    }
+
     private static String gagStatus(Context context, JSONObject gag) {
         return context.getString(gag == null ? R.string.gag_status_unknown
                 : gag.optBoolean("enabled") ? R.string.arrangement_configured_on : R.string.control_state_off);

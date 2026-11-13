@@ -3,6 +3,7 @@ package com.subhub.app.internal;
 import android.content.SharedPreferences;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.people.PersonId;
+import com.subhub.app.remote.GagContractFields;
 import com.subhub.app.runtime.ActiveRuntimeCoordinator;
 import com.subhub.app.runtime.RuntimeAdmissionAuthority;
 import com.subhub.app.runtime.RuntimeConfiguration;
@@ -46,6 +47,27 @@ public final class InternalConfigurationTest {
         assertFalse(draft.hasUnflushedChanges());
     }
 
+    @Test public void legacyConfigurationCanPersistOnlyValidatedGagRules() throws Exception {
+        Fixture f = new Fixture();
+        InternalSubRecord legacy = f.config.read();
+        InternalConfigurationStore.EditorDraft draft = f.config.edit(legacy);
+        assertFalse(legacy.configuration().containsKey(GagContractFields.SECTION));
+        assertFalse(draft.gagRules().getBoolean("enabled"));
+        assertFalse(draft.hasUnflushedChanges());
+        assertThrows(IllegalArgumentException.class,
+                () -> draft.editGagRules(GagContractFields.defaults().put("keyboard_selected", true)));
+        assertFalse(draft.hasUnflushedChanges());
+
+        draft.editGagRules(GagContractFields.defaults().put("enabled", true).put("replacements", "fixture"));
+        assertTrue(draft.hasUnflushedChanges());
+        assertEquals(legacy, f.config.read());
+        InternalSubRecord saved = f.config.flush(draft);
+        assertEquals(legacy.configurationRevision + 1, saved.configurationRevision);
+        assertEquals("fixture", f.config.edit(f.config.read()).gagRules().getString("replacements"));
+        assertFalse(f.config.edit(saved).preferences(SettingsRepository.PREFERENCES_NAME).getAll().containsKey("replacements"));
+        assertFalse(draft.hasUnflushedChanges());
+    }
+
     @Test public void immutableRuntimeViewDoesNotBorrowLaterDraftOrDeviceState() {
         Fixture f = new Fixture(); InternalSubRecord initial = f.config.read();
         SharedPreferences frozen = f.config.snapshotPreferences(initial, SettingsRepository.PREFERENCES_NAME);
@@ -56,6 +78,8 @@ public final class InternalConfigurationTest {
         var popup = com.subhub.app.popup.PopupStormSettings.forPreferences(frozen);
         assertTrue(popup.getFolders().isEmpty());
         assertEquals("", popup.getPackImageDir());
+        assertTrue(com.subhub.app.popup.PopupStormSettings.forPreferences(draft.preferences(
+                SettingsRepository.PREFERENCES_NAME)).getFolders().isEmpty());
         assertFalse(frozen.contains("controller_pin_hash"));
         assertEquals("fallback", frozen.getString("controller_pin_hash", "fallback"));
         assertThrows(UnsupportedOperationException.class, frozen::edit);

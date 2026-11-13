@@ -239,24 +239,35 @@ public final class FeatureEditorSession {
 
     public static boolean canEditGag(AppCompatActivity activity) {
         FeatureEditorSession scope=scope(activity);
-        return scope!=null&&!scope.internal&&scope.controllerRevision==ControllerPinManager.domWorkspaceRevision()
+        return scope!=null&&scope.controllerRevision==ControllerPinManager.domWorkspaceRevision()
                 &&canEdit(activity,GagContractFields.SECTION);
     }
 
     public static JSONObject gagRules(AppCompatActivity activity) throws Exception {
         if(!canEditGag(activity))throw new SecurityException("Gag editor unavailable");
-        JSONObject rules=GagContractFields.section(scope(activity).document);
+        FeatureEditorSession scope = scope(activity);
+        if (scope.internal) return scope.internalDraft.gagRules();
+        JSONObject rules=GagContractFields.section(scope.document);
         return rules==null?GagContractFields.defaults():new JSONObject(rules.toString());
     }
 
     public static void editGagRules(AppCompatActivity activity, JSONObject rules) throws JSONException {
         if(!canEditGag(activity))throw new SecurityException("Gag editor unavailable");
-        scope(activity).document.getJSONObject("contract").getJSONObject("sections")
+        FeatureEditorSession scope = scope(activity);
+        if (scope.internal) {
+            scope.internalDraft.editGagRules(rules);
+            return;
+        }
+        scope.document.getJSONObject("contract").getJSONObject("sections")
                 .put(GagContractFields.SECTION,GagContractFields.validate(rules));
     }
 
     public static void gagRulesChanged(AppCompatActivity activity) {
-        if(canEditGag(activity))scope(activity).markDraftChanged();
+        if (canEditGag(activity)) {
+            FeatureEditorSession scope = scope(activity);
+            if (scope.internal) scope.internalEditEpoch.incrementAndGet();
+            scope.markDraftChanged();
+        }
     }
     private void requireAuthority(){
         if(internal){if(invalidated||!DummySubPreview.current(physical,internalGeneration,controllerRevision))throw new SecurityException("Internal Sub unavailable");return;}

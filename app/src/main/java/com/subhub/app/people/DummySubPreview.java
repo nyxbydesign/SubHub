@@ -87,6 +87,7 @@ public final class DummySubPreview {
                 || destination == com.subhub.app.tasks.TasksActivity.class
                 || destination == com.subhub.app.stats.StatsActivity.class) return "";
         if (destination == com.subhub.app.settings.CensorPresetsActivity.class) return "censor";
+        if (destination == com.subhub.app.atmosphere.GagActivity.class) return "gag";
         if (destination == com.subhub.app.subliminal.SubliminalSettingsActivity.class) return "subliminal";
         if (destination == com.subhub.app.popup.PopupStormActivity.class) return "popup";
         for (String section : SECTIONS) if (PersonRoutes.sectionActivity(section) == destination) return section;

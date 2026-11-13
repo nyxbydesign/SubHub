@@ -2,7 +2,6 @@ package com.subhub.app.remote;
 
 import android.content.Context;
 import com.subhub.app.R;
-import com.subhub.app.configuration.ConfigurationSettingCatalog;
 import com.subhub.app.people.*;
 import org.json.*;
 import java.util.*;
@@ -114,22 +113,13 @@ public final class RemotePersonRepository implements PersonRepository {
     }
     private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration,JSONObject runtime,PersonSnapshot.Freshness runtimeFreshness) throws Exception {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
-        for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
-            if ("atmosphere".equals(group)) {
-                if (!GagContractFields.supported(store, peer)) sections.remove(GagContractFields.SECTION);
-                AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
-                        RemoteProfiles.allowances(runtime), runtimeFreshness);
-                result.add(new PersonSnapshot.Section(group, context.getString(R.string.atmosphere_title),
-                        atmosphere.summary, atmosphere.details));
-                continue;
-            }
-            List<String> parts=new ArrayList<>();String[] names="atmosphere".equals(group)?new String[]{"subliminal","popup"}:new String[]{group};
-            for(String section:names)for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)) {
-                Object value=sections.getJSONObject(section).get(field.key);parts.add(context.getString(field.label)+": "+display(field,value));
-            }
-            int title="censor".equals(group)?R.string.sub_censor_title:"limits".equals(group)?R.string.sub_limits_title:"wallet".equals(group)?R.string.sub_wallet_title:R.string.atmosphere_title;
-            result.add(new PersonSnapshot.Section(group,context.getString(title),"",String.join("\n",parts)));
-        }
+        for (String group : List.of("censor", "limits", "wallet"))
+            result.add(ContractFeatureDetails.section(context, group, sections.getJSONObject(group)));
+        if (!GagContractFields.supported(store, peer)) sections.remove(GagContractFields.SECTION);
+        AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
+                RemoteProfiles.allowances(runtime), runtimeFreshness);
+        result.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
+                atmosphere.summary, atmosphere.details));
         JSONObject appDoc=configuration.getJSONObject("apps"),service=configuration.getJSONObject("service");
         List<String> names=new ArrayList<>();List<PersonSnapshot.App> appRows=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
             JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);String label=app==null?id:app.optString("label",id);names.add(label);appRows.add(new PersonSnapshot.App(id,label,feature.appIcons.identity(peer.identity,peer.generation,id)));
@@ -174,10 +164,4 @@ public final class RemotePersonRepository implements PersonRepository {
         return PersonSnapshot.Allowance.ordered(result);
     }
     private static long knownUsage(JSONObject values,String name){try{long value=RemoteProtocol.integer(values,name);return value<0?-1:value;}catch(Exception invalid){return -1;}}
-    private String display(ConfigurationSettingCatalog.Field field,Object value) {
-        if(value instanceof Boolean)return context.getString((Boolean)value?R.string.role_enabled:R.string.role_disabled);
-        if(value instanceof JSONArray){JSONArray rows=(JSONArray)value;List<String> items=new ArrayList<>();for(int i=0;i<rows.length();i++){String item=rows.optString(i);items.add(field.choices.isEmpty()?item:context.getString(ConfigurationSettingCatalog.choiceLabel(field,item)));}return String.join(", ",items);}
-        if(field.kind==ConfigurationSettingCatalog.Kind.CHOICE)return context.getString(ConfigurationSettingCatalog.choiceLabel(field,String.valueOf(value)));
-        return field.displayText(value);
-    }
 }

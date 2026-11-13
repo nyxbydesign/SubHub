@@ -444,6 +444,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/people/ConnectionUi.java": "main_people_connection_ui",
     b"app/src/main/java/com/subhub/app/people/ContractActivity.java": "main_people_contract_activity",
     b"app/src/main/java/com/subhub/app/people/ContractAppList.java": "main_people_contract_app_list",
+    b"app/src/main/java/com/subhub/app/people/ContractFeatureDetails.java": "main_people_contract_feature_details",
     b"app/src/main/java/com/subhub/app/people/ContractHeader.java": "main_people_contract_header",
     b"app/src/main/java/com/subhub/app/people/DummySubPreview.java": "main_people_dummy_sub_preview",
     b"app/src/main/java/com/subhub/app/people/FavoriteSubStore.java": "main_people_favorite_sub_store",

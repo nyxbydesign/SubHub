@@ -114,31 +114,27 @@ public final class ContractActivity extends RolePage {
         ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
         sections = new ContractSections(body, person, atmosphereSummary,
                 () -> ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive()),
-                () -> expandedSection, value -> expandedSection = value, null);
+                () -> expandedSection, value -> expandedSection = value);
     }
 
-    /** Shared contract cards. The caller supplies an already scoped snapshot and edit action. */
-    static final class ContractSections {
+    private static final class ContractSections {
         private final android.content.Context context;
         private final boolean contractUnknown;
         private final String atmosphereSummary;
         private final java.util.function.Supplier<String> expanded;
         private final java.util.function.Consumer<String> expand;
-        private final java.util.function.Consumer<String> edit;
         private final Map<String, View> details = new LinkedHashMap<>();
         private final Map<String, ImageView> indicators = new LinkedHashMap<>();
         private final Map<String, View> headers = new LinkedHashMap<>();
 
         ContractSections(LinearLayout body, PersonSnapshot person, String atmosphereSummary,
                 java.util.function.Supplier<String> durationFallback,
-                java.util.function.Supplier<String> expanded, java.util.function.Consumer<String> expand,
-                java.util.function.Consumer<String> edit) {
+                java.util.function.Supplier<String> expanded, java.util.function.Consumer<String> expand) {
             this.context = body.getContext();
             this.contractUnknown = person.sync.contract == PersonSnapshot.Freshness.UNKNOWN;
             this.atmosphereSummary = atmosphereSummary;
             this.expanded = expanded;
             this.expand = expand;
-            this.edit = edit;
             LinearLayout scope = OverviewUi.card(body);
             scope.setTag("person_contract_scope");
             OverviewUi.heading(scope, R.string.overview_apps_duration, 0, null);
@@ -188,9 +184,8 @@ public final class ContractActivity extends RolePage {
                         && (count > 0 || value.summary.equals(context.getResources().getQuantityString(R.plurals.apps_included_count, 0, 0))))
                     summary = context.getResources().getQuantityString(R.plurals.overview_apps_selected, count, count);
             }
-            boolean canEdit = edit != null && !contractUnknown;
             boolean hasDetails = !value.details.isEmpty() || !value.apps.isEmpty();
-            Runnable toggle = !hasDetails && !canEdit ? null : () -> {
+            Runnable toggle = !hasDetails ? null : () -> {
                 expand.accept(value.key.equals(expanded.get()) ? "" : value.key);
                 updateDetails();
             };
@@ -215,8 +210,6 @@ public final class ContractActivity extends RolePage {
                 if (firstLine > 0) copyText.setSpan(new StyleSpan(Typeface.BOLD), 0, firstLine, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                 PersonUi.text(detail, copyText, false);
             }
-            if (canEdit) PersonUi.action(detail, R.string.role_edit_contract, () -> edit.accept(value.key), false)
-                    .setTag("contract_edit:" + value.key);
             parent.addView(detail, new LinearLayout.LayoutParams(-1, -2));
             details.put(value.key, detail); indicators.put(value.key, indicator); headers.put(value.key, header);
         }

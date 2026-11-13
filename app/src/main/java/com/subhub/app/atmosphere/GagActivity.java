@@ -103,6 +103,11 @@ public final class GagActivity extends AppCompatActivity {
         super.onSaveInstanceState(state);
     }
 
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+            super.onRestoreInstanceState(state);
+    }
+
     private void refreshKeyboardStatus() {
         InputMethodManager manager = getSystemService(InputMethodManager.class);
         keyboardAvailable = false;
