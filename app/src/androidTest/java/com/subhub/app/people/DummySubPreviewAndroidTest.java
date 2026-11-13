@@ -215,6 +215,13 @@ public final class DummySubPreviewAndroidTest {
                 assertNotNull(tagged(profile, "person_contract_identity"));
                 assertNotNull(tagged(profile, "person_contract_scope"));
                 assertNotNull(tagged(profile, "person_contract_features"));
+                instrumentation.runOnMainSync(() -> {
+                    View details = tagged(profile, "contract_details:atmosphere");
+                    assertNotNull(details);
+                    assertTrue(hasText(details, context.getString(com.subhub.app.R.string.arrangement_detail_line,
+                            context.getString(com.subhub.app.R.string.gag_title),
+                            context.getString(com.subhub.app.R.string.gag_status_unknown))));
+                });
                 for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
                     Class<? extends Activity> expected = PersonRoutes.sectionActivity(section);
                     Instrumentation.ActivityMonitor pageMonitor = instrumentation.addMonitor(expected.getName(), null, false);

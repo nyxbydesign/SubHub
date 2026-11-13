@@ -57,10 +57,12 @@ public final class InternalPersonPresentation {
                 details(context, config, "wallet")));
         String whispers = effectState(context, enabled(config, "modules", "module_subliminal_enabled"));
         String popup = effectState(context, enabled(config, "popup", "popup_storm_enabled"));
+        String gag = context.getString(R.string.gag_status_unknown);
         sections.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
-                context.getString(R.string.contract_atmosphere_states, whispers, popup),
+                context.getString(R.string.contract_atmosphere_states, whispers, popup, gag),
                 context.getString(R.string.arrangement_detail_line, context.getString(R.string.overview_whispers), whispers)
-                        + "\n\n" + context.getString(R.string.arrangement_detail_line, context.getString(R.string.popup_title), popup)));
+                        + "\n\n" + context.getString(R.string.arrangement_detail_line, context.getString(R.string.popup_title), popup)
+                        + "\n\n" + context.getString(R.string.arrangement_detail_line, context.getString(R.string.gag_title), gag)));
         ProfileData profile = InternalProfileAdapter.toProfileData(record.profile);
         PersonSnapshot.SyncState sync = new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
                 observed == null ? PersonSnapshot.Freshness.UNKNOWN : PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.UNKNOWN,
