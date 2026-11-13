@@ -1,5 +1,7 @@
 package com.subhub.app.people;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.text.SpannableString;
@@ -11,8 +13,13 @@ import android.widget.LinearLayout;
 import androidx.core.view.ViewCompat;
 import androidx.lifecycle.Lifecycle;
 import com.subhub.app.R;
+import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.SubFeaturePolicy;
+import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.util.SubHubNavigation;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -21,7 +28,6 @@ import java.util.Map;
 public final class ContractActivity extends RolePage {
     private String expandedSection = "";
     private boolean expandedAbout;
-    private String atmosphereSummary;
     private ContractSections sections;
     private java.util.List<Object> renderedContract;
     private AutoCloseable presenceObserver, configurationObserver;
@@ -88,31 +94,65 @@ public final class ContractActivity extends RolePage {
         android.content.Context application = getApplicationContext();
         data.load("contract", () -> {
             PersonSnapshot person = repository.load(PersonId.LOCAL);
-            String atmosphere = null;
-            if (person.sync.contract == PersonSnapshot.Freshness.CURRENT) {
-                atmosphere = AtmosphereContractDetails.local(application).summary;
-            }
-            return new ContractData(person, atmosphere);
+            return new ContractData(person, subFeatureSections(application, person));
         }, value -> {
-            atmosphereSummary = value.atmosphere;
             java.util.List<Object> signature = PersonPresentation.contract(value.person);
             java.util.Collections.addAll(signature, value.person.contractDom, value.person.contractDomId,
-                    value.person.contractDomContact, atmosphereSummary,
+                    value.person.contractDomContact,
                     People.keyholder(), com.subhub.app.relationships.RelationshipUi.provider(),
                     ControllerPinManager.domWorkspaceRevision());
+            for (PersonSnapshot.Section section : value.featureSections.values())
+                java.util.Collections.addAll(signature, section.key, section.summary, section.details);
             if (signature.equals(renderedContract)) return;
             renderedContract = signature;
-            renderPage(() -> render(value.person));
+            renderPage(() -> render(value));
         }, failure -> { renderedContract = null; unavailable(); });
     }
 
-    private void render(PersonSnapshot person) {
+    private static Map<String, PersonSnapshot.Section> subFeatureSections(Context context, PersonSnapshot person) {
+        if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) return java.util.Collections.emptyMap();
+        SharedPreferences settings = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        Map<String, PersonSnapshot.Section> result = new LinkedHashMap<>();
+        for (PersonSnapshot.Section section : person.sections) {
+            boolean enabled;
+            switch (section.key) {
+                case "censor":
+                    enabled = SubFeaturePolicy.allowed(context, "censor")
+                            && settings.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true);
+                    break;
+                case "limits":
+                    enabled = SubFeaturePolicy.allowed(context, "limits")
+                            && settings.getBoolean(FeatureModuleManager.KEY_LIMITS_ENABLED, true)
+                            && (settings.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
+                            || settings.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false));
+                    if (enabled) result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
+                            section.summary, new LocalContractDetails(context).subLimitsDetails()));
+                    break;
+                case "wallet":
+                    enabled = PenanceManager.observedEnabled(context);
+                    break;
+                case "atmosphere":
+                    AtmosphereContractDetails atmosphere = AtmosphereContractDetails.subContract(context);
+                    result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
+                            atmosphere.summary, atmosphere.details));
+                    continue;
+                default:
+                    continue;
+            }
+            if (!enabled) result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
+                    context.getString(R.string.role_disabled), ""));
+        }
+        return result;
+    }
+
+    private void render(ContractData contract) {
+        PersonSnapshot person = contract.person;
         body.removeAllViews();
         LinearLayout identity = OverviewUi.card(body);
         OverviewUi.heading(identity, R.string.overview_your_dom, 0, null);
         identity.setTag("person_contract_identity");
         ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
-        sections = new ContractSections(body, person, atmosphereSummary,
+        sections = new ContractSections(body, person, contract.featureSections,
                 () -> ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive()),
                 () -> expandedSection, value -> expandedSection = value);
     }
@@ -120,19 +160,17 @@ public final class ContractActivity extends RolePage {
     private static final class ContractSections {
         private final android.content.Context context;
         private final boolean contractUnknown;
-        private final String atmosphereSummary;
         private final java.util.function.Supplier<String> expanded;
         private final java.util.function.Consumer<String> expand;
         private final Map<String, View> details = new LinkedHashMap<>();
         private final Map<String, ImageView> indicators = new LinkedHashMap<>();
         private final Map<String, View> headers = new LinkedHashMap<>();
 
-        ContractSections(LinearLayout body, PersonSnapshot person, String atmosphereSummary,
+        ContractSections(LinearLayout body, PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections,
                 java.util.function.Supplier<String> durationFallback,
                 java.util.function.Supplier<String> expanded, java.util.function.Consumer<String> expand) {
             this.context = body.getContext();
             this.contractUnknown = person.sync.contract == PersonSnapshot.Freshness.UNKNOWN;
-            this.atmosphereSummary = atmosphereSummary;
             this.expanded = expanded;
             this.expand = expand;
             LinearLayout scope = OverviewUi.card(body);
@@ -159,7 +197,8 @@ public final class ContractActivity extends RolePage {
                     features.setTag("person_contract_features");
                     OverviewUi.heading(features, R.string.overview_features, 0, null);
                 }
-                section(features, value, PersonUi.icon(value.key), features.getChildCount() > 1);
+                section(features, featureSections.getOrDefault(value.key, value),
+                        PersonUi.icon(value.key), features.getChildCount() > 1);
             }
             updateDetails();
         }
@@ -175,7 +214,7 @@ public final class ContractActivity extends RolePage {
             PersonSnapshot.Section value = contractUnknown ? new PersonSnapshot.Section(source.key, source.title,
                     getString(R.string.overview_unknown), "") : source;
             if (separator) OverviewUi.divider(parent);
-            String summary = "atmosphere".equals(value.key) && atmosphereSummary != null ? atmosphereSummary : value.summary;
+            String summary = value.summary;
             if ("apps".equals(value.key) && !contractUnknown) {
                 int count = value.apps.size();
                 if (count == 0 && !value.details.isEmpty())
@@ -228,7 +267,10 @@ public final class ContractActivity extends RolePage {
 
     private static final class ContractData {
         final PersonSnapshot person;
-        final String atmosphere;
-        ContractData(PersonSnapshot person, String atmosphere) { this.person = person; this.atmosphere = atmosphere; }
+        final Map<String, PersonSnapshot.Section> featureSections;
+        ContractData(PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections) {
+            this.person = person;
+            this.featureSections = featureSections;
+        }
     }
 }

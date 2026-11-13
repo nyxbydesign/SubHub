@@ -28,11 +28,19 @@ public final class LocalContractDetails extends ContextWrapper {
         List<ArrangementDetail> rows;
         switch (section) {
             case "censor": rows = censorArrangementRows(); break;
-            case "limits": rows = limitsArrangementDetails(); break;
+            case "limits": rows = limitsArrangementDetails(false); break;
             case "wallet": rows = walletArrangementDetails(); break;
             case "atmosphere": return AtmosphereContractDetails.local(this).details;
             default: throw new IllegalArgumentException("Unknown contract section");
         }
+        return format(rows);
+    }
+
+    String subLimitsDetails() {
+        return format(limitsArrangementDetails(true));
+    }
+
+    private String format(List<ArrangementDetail> rows) {
         List<String> values = new ArrayList<>();
         for (ArrangementDetail row : rows) values.add(getString(
                 R.string.arrangement_detail_line, getString(row.label), row.value));
@@ -90,8 +98,10 @@ public final class LocalContractDetails extends ContextWrapper {
         return lines;
     }
 
-    private List<ArrangementDetail> limitsArrangementDetails() {
-        AppTimerManager timers = new AppTimerManager(this);
+    private List<ArrangementDetail> limitsArrangementDetails(boolean hideInactiveAllowances) {
+        AppTimerManager timers = hideInactiveAllowances
+                ? AppTimerManager.forConfiguration(getSharedPreferences(SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE))
+                : new AppTimerManager(this);
         AppTimerManager.Settings settings = timers.loadSettings();
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
@@ -102,14 +112,17 @@ public final class LocalContractDetails extends ContextWrapper {
                                 : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_limits_individual,
                 getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
-                        + "\n" + appAllowances(timers)));
+                        + (settings.perAppEnabled || !hideInactiveAllowances
+                        ? "\n" + appAllowances(timers, hideInactiveAllowances) : "")));
         return lines;
     }
 
-    private String appAllowances(AppTimerManager timers) {
+    private String appAllowances(AppTimerManager timers, boolean observeOnly) {
         List<String> apps = new ArrayList<>();
         android.content.pm.PackageManager packages = getPackageManager();
-        for (String name : new AppModeManager(this).getIncludedPackages()) {
+        Set<String> included = observeOnly ? AppModeManager.observedIncludedPackages(this)
+                : new AppModeManager(this).getIncludedPackages();
+        for (String name : included) {
             String label = name;
             try { label = packages.getApplicationLabel(packages.getApplicationInfo(name, 0)).toString(); }
             catch (android.content.pm.PackageManager.NameNotFoundException absent) { /* Keep saved assignments. */ }

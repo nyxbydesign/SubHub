@@ -20,9 +20,14 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.NativeUiActions;
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.popup.PopupStormSettings;
+import com.subhub.app.remote.RemoteExtraTimeUiFixture;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderPresentationAndroidTest;
@@ -151,6 +156,90 @@ public final class AtmosphereContractDetailsAndroidTest {
             onView(withTagValue(is("contract_section:atmosphere"))).perform(NativeUiActions.revealAboveNavigation(), click());
             page.onActivity(a -> assertEquals(View.GONE, tagged(a, "contract_details:atmosphere").getVisibility()));
         }
+    }
+
+    @Test public void subContractOmitsDisabledDetailsAndKeepsEnabledSiblings() throws Exception {
+        readyUi(false);
+        assertTrue(preferences.edit()
+                .putBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, false)
+                .putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
+                .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true)
+                .putInt(AppTimerManager.KEY_TOTAL_MINUTES, 79)
+                .putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings"))
+                .commit());
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", true).putBoolean("wallet", false)
+                .putBoolean("subliminal", false).commit());
+        String savedAllowance = context.getString(R.string.arrangement_app_allowance,
+                context.getPackageManager().getApplicationLabel(
+                        context.getPackageManager().getApplicationInfo("com.android.settings", 0)),
+                new AppTimerManager(context).allowanceMinutes("com.android.settings"));
+        assertTrue(new LocalContractDetails(context).forSection("limits").contains(savedAllowance));
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            await(page, a -> tagged(a, "contract_section:wallet") != null);
+            page.onActivity(a -> {
+                assertDisabledSection(a, "censor");
+                assertDisabledSection(a, "wallet");
+                View limits = tagged(a, "contract_details:limits");
+                assertNotNull(limits);
+                String limitCopy = text(limits);
+                assertTrue(limitCopy.contains(context.getString(R.string.arrangement_minutes, 79)));
+                assertFalse(limitCopy.contains(savedAllowance));
+            });
+            onView(withTagValue(is("contract_section:atmosphere")))
+                    .perform(NativeUiActions.revealAboveNavigation(), click());
+            await(page, a -> detailsReady(tagged(a, "contract_details:atmosphere")));
+            page.onActivity(a -> {
+                String copy = text(tagged(a, "contract_details:atmosphere"));
+                assertTrue(copy.contains("Whispers\nDisabled by Sub"));
+                assertFalse(copy.contains("Categories:"));
+                assertFalse(copy.contains("Intensity:"));
+                assertTrue(copy.contains("Placement: Center"));
+                assertTrue(copy.contains("Gag\nUnknown"));
+            });
+        }
+        assertTrue(preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).commit());
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", false).commit());
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            await(page, a -> tagged(a, "contract_section:atmosphere") != null);
+            page.onActivity(a -> {
+                assertDisabledSection(a, "limits");
+                View atmosphere = tagged(a, "contract_section:atmosphere");
+                assertFalse(atmosphere.isClickable());
+                assertTrue(text(atmosphere).contains("Whispers Disabled by Sub"));
+                assertTrue(text(atmosphere).contains("Popup Storm Off"));
+                assertTrue(text(atmosphere).contains("Gag Unknown"));
+                assertNull(tagged(a, "contract_details:atmosphere"));
+            });
+        }
+        try (RemoteExtraTimeUiFixture paired = RemoteExtraTimeUiFixture.setupSub(context)) {
+            assertTrue(context.getSharedPreferences("subhub_onboarding", 0).edit()
+                    .putBoolean("completed", true).commit());
+            RemotePersonRepository projection = new RemotePersonRepository(context, RemoteFeature.get(context));
+            People.installLocalProjection(projection::localProjection);
+            PersonSnapshot managed = People.repository(context).load(PersonId.LOCAL);
+            assertFalse(managed.can(PersonSnapshot.Capability.EDIT_CONTRACT));
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                    .putBoolean("censor", false).putBoolean("limits", false).putBoolean("wallet", false).commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> {
+                    assertDisabledSection(a, "censor");
+                    assertDisabledSection(a, "limits");
+                    assertDisabledSection(a, "wallet");
+                });
+            }
+        }
+    }
+
+    private void assertDisabledSection(ContractActivity activity, String feature) {
+        View header = tagged(activity, "contract_section:" + feature);
+        assertNotNull(header);
+        assertTrue(text(header).contains(context.getString(R.string.role_disabled)));
+        assertFalse(header.isClickable());
+        assertNull(tagged(activity, "contract_details:" + feature));
     }
 
     @Test public void domContractShowsDetailsWhileKeepingItsExistingEditRoute() throws Exception {
