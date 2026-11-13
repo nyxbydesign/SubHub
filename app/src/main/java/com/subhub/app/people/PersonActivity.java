@@ -26,6 +26,7 @@ public final class PersonActivity extends RolePage {
     private long renderedInternalRevision = -1;
     private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
+    private String expandedDemoContractSection = "";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
     private final java.util.Map<String, LinearLayout> panels = new java.util.LinkedHashMap<>();
@@ -335,6 +336,7 @@ public final class PersonActivity extends RolePage {
         section = state == null ? getIntent().getStringExtra("person_section")
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
+        if (state != null && internal) expandedDemoContractSection = state.getString("demo_contract_expanded", "");
         if (state != null) for (String key : java.util.List.of("profile", "contracts", "connection"))
             positions.put(key, state.getInt("person_position:" + key));
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
@@ -357,6 +359,7 @@ public final class PersonActivity extends RolePage {
         FeatureEditorSession.saveState(this, state);
         if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
         state.putString("person_section", section);
+        if (internal) state.putString("demo_contract_expanded", expandedDemoContractSection);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
@@ -511,8 +514,18 @@ public final class PersonActivity extends RolePage {
                         internal ? null : com.subhub.app.relationships.RelationshipUi.provider(),
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
+                    if (internal) {
+                        LinearLayout identity = OverviewUi.card(parent);
+                        identity.setTag("person_contract_identity");
+                        OverviewUi.identity(identity, person.profile, false, "demo_contract_identity");
+                        new ContractActivity.ContractSections(parent, person, null, () -> getString(R.string.role_unknown_data),
+                                () -> expandedDemoContractSection, value -> expandedDemoContractSection = value,
+                                person.can(PersonSnapshot.Capability.EDIT_CONTRACT) && FeatureEditorSession.canEdit(this, "apps")
+                                        ? key -> editSection(person, key) : null);
+                        return;
+                    }
                     PersonUi.text(parent, person.name, true);
-                    if (!internal) ProfileViews.allowedFeatures(parent, person);
+                    ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
