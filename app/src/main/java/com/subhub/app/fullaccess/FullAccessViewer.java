@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -13,6 +14,8 @@ import android.text.format.DateUtils;
 import android.text.format.Formatter;
 import android.util.Base64;
 import android.util.LruCache;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -1102,7 +1105,10 @@ final class FullAccessViewer implements AutoCloseable {
         }, frame -> {
             if (!current(session)) return;
             session.connected = true;
-            if ("streaming".equals(frame.state)) {
+            if ("video_ready".equals(frame.state) && session.channel != null && session.channel.supportsScreenVideo()) {
+                startVideo(session);
+                return;
+            } else if ("streaming".equals(frame.state)) {
                 if (session.image == null) {
                     session.panel.removeAllViews();
                     TextView live = PersonUi.text(session.panel, activity.getText(R.string.blackmail_live_screen), false);
@@ -1124,6 +1130,83 @@ final class FullAccessViewer implements AutoCloseable {
             long interval = "streaming".equals(frame.state) ? FRAME_MILLIS : 1_000;
             main.postDelayed(() -> pollScreen(session), Math.max(0, interval - (SystemClock.elapsedRealtime() - started)));
         }, failure -> { if (current(session)) stopWith(session, R.string.full_access_unavailable); });
+    }
+
+    private void startVideo(Section session) {
+        session.panel.removeAllViews();
+        TextView live = PersonUi.text(session.panel, activity.getText(R.string.blackmail_live_screen), false);
+        live.setTextColor(activity.getColor(R.color.accent_text));
+
+        FrameLayout screen = new FrameLayout(activity);
+        screen.setMinimumHeight(Math.round(activity.getResources().getDisplayMetrics().density * 180));
+        screen.setContentDescription(activity.getString(R.string.full_access_screen_image));
+        TextureView video = new TextureView(activity);
+        video.setAlpha(0f);
+        screen.addView(video, new FrameLayout.LayoutParams(-1, -1));
+        FullAccessChannel channel = session.channel;
+        video.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            private boolean opened;
+
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+                if (!current(session) || opened) return;
+                opened = true;
+                // Codec output goes directly to this surface. Coalesce UI changes to actual visibility edges.
+                AtomicBoolean visible = new AtomicBoolean();
+                worker.load(workKey(session, "video"), () -> {
+                    Surface surface = new Surface(texture);
+                    try (FullAccessVideoDecoder decoder = new FullAccessVideoDecoder(surface,
+                            () -> session.live.get() && channel.isCurrent(),
+                            () -> {
+                                if (visible.compareAndSet(true, false)) main.post(() -> {
+                                    if (current(session)) video.setAlpha(0f);
+                                });
+                            },
+                            () -> {
+                                if (visible.compareAndSet(false, true)) main.post(() -> {
+                                    if (current(session)) video.setAlpha(1f);
+                                });
+                            })) {
+                        channel.streamScreen(packet -> {
+                            if (packet.kind() == FullAccessVideo.CONFIG) main.post(() -> {
+                                if (!current(session)) return;
+                                FullAccessVideo.Size size = packet.size();
+                                int maxHeight = activity.getResources().getDisplayMetrics().heightPixels * 3 / 5;
+                                int availableWidth = Math.max(1, screen.getWidth());
+                                int fittedHeight = Math.min(maxHeight,
+                                        Math.round((float) availableWidth * size.height() / size.width()));
+                                screen.getLayoutParams().height = fittedHeight;
+                                screen.requestLayout();
+                                float fit = Math.min((float) availableWidth / size.width(),
+                                        (float) fittedHeight / size.height());
+                                FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                                        Math.max(1, Math.round(size.width() * fit)),
+                                        Math.max(1, Math.round(size.height() * fit)), android.view.Gravity.CENTER);
+                                video.setLayoutParams(params);
+                            });
+                            decoder.accept(packet);
+                        });
+                    } finally {
+                        surface.release();
+                    }
+                    return null;
+                }, ignored -> {
+                    if (current(session)) stopWith(session, R.string.full_access_unavailable);
+                }, failure -> {
+                    if (current(session)) stopWith(session, R.string.full_access_unavailable);
+                });
+            }
+
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) { }
+
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+                if (opened) channel.close();
+                return true;
+            }
+
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture texture) { }
+        });
+        session.panel.addView(screen, new LinearLayout.LayoutParams(-1, -2));
+        addClose(session);
     }
 
     private ImageView frameView(int description) {

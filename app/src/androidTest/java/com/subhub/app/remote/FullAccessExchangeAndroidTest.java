@@ -5,10 +5,13 @@ import static org.junit.Assert.assertFalse;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.os.Build;
 import android.os.SystemClock;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+
+import com.subhub.app.fullaccess.FullAccessVideo;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -25,11 +28,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RunWith(AndroidJUnit4.class)
 public final class FullAccessExchangeAndroidTest {
     @Test public void deniedScreenReturnsOnlyStatusOverAuthenticatedTransport() throws Exception {
-        openScreen(false, "disabled");
+        openScreen(false, true, "disabled");
     }
 
     @Test public void authorizedHandshakeDoesNotStartScreenConsentBeforeFrameRequest() throws Exception {
-        openScreen(true, "ready");
+        openScreen(true, false, "ready");
+    }
+
+    @Test public void negotiatedAvcStillWaitsForConsentRequest() throws Exception {
+        openScreen(true, true, "ready");
     }
 
     @Test public void authenticatedScreenRequestReportsBlockedDeliveryBeforeAnyFrame() throws Exception {
@@ -78,7 +85,7 @@ public final class FullAccessExchangeAndroidTest {
         }
     }
 
-    private void openScreen(boolean granted, String expectedStatus) throws Exception {
+    private void openScreen(boolean granted, boolean videoRequested, String expectedStatus) throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         ExecutorService server = Executors.newSingleThreadExecutor();
         AtomicBoolean openedSource = new AtomicBoolean();
@@ -88,7 +95,7 @@ public final class FullAccessExchangeAndroidTest {
                 try (PeerTransport.Connection connection = sub.accept(10_000)) {
                     assertEquals(dom.localIdentity(), connection.authenticatedPeerIdentity());
                     connection.setReadTimeoutMillis(8_000);
-                    FullAccessExchange.serve(context, connection, "screen", () -> granted, () -> false, false,
+                    FullAccessExchange.serve(context, connection, "screen", () -> granted, () -> false, false, videoRequested,
                             source -> openedSource.set(true));
                 } catch (IOException closedByViewer) {
                     // The authenticated viewer closes without requesting a frame.
@@ -102,6 +109,8 @@ public final class FullAccessExchangeAndroidTest {
                 JSONObject opened = RemoteProtocol.read(connection.input());
                 FullAccessChannel.require(opened, FullAccessChannel.OPENED);
                 assertEquals(expectedStatus, opened.getString("status"));
+                assertEquals(granted && videoRequested && Build.VERSION.SDK_INT >= 29,
+                        opened.optBoolean(FullAccessVideo.CAPABILITY));
                 assertFalse(opened.has("image"));
             }
             served.get(10, TimeUnit.SECONDS);

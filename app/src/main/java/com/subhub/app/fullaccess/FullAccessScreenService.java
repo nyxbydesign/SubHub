@@ -55,6 +55,10 @@ public final class FullAccessScreenService extends Service {
     private MediaProjection projection;
     private VirtualDisplay display;
     private ImageReader reader;
+    private FullAccessVideoEncoder videoEncoder;
+    private boolean videoSelected;
+    private int captureWidth;
+    private int captureHeight;
     private Bitmap bitmap;
     private ByteBuffer packedRows;
     private final ByteArrayOutputStream jpegBytes = new ByteArrayOutputStream();
@@ -78,6 +82,11 @@ public final class FullAccessScreenService extends Service {
         @Override public void onCapturedContentVisibilityChanged(boolean visible) {
             contentVisible = visible;
             if (!visible) owner.frames.clear();
+            if (!videoSelected || !owner.captureAllowed()) return;
+            try {
+                if (!visible) pauseVideo();
+                else if (videoEncoder == null) restartVideo();
+            } catch (RuntimeException unavailable) { owner.close(); }
         }
     };
 
@@ -168,10 +177,19 @@ public final class FullAccessScreenService extends Service {
             projection.registerCallback(projectionEvents, worker);
             int[] size = displaySize();
             densityDpi = getResources().getDisplayMetrics().densityDpi;
-            reader = createReader(size[0], size[1]);
-            display = projection.createVirtualDisplay("SubHub screen share", reader.getWidth(), reader.getHeight(),
-                    densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, worker);
-            if (display == null || !owner.revalidate() || !owner.startStreaming() || !owner.captureAllowed()) {
+            captureWidth = size[0];
+            captureHeight = size[1];
+            if (Build.VERSION.SDK_INT >= 29 && owner.video != null) {
+                videoEncoder = newVideoEncoder();
+                videoSelected = videoEncoder != null;
+            }
+            if (!videoSelected) reader = createReader(size[0], size[1]);
+            int width = videoSelected ? videoEncoder.size.width() : reader.getWidth();
+            int height = videoSelected ? videoEncoder.size.height() : reader.getHeight();
+            display = projection.createVirtualDisplay("SubHub screen share", width, height, densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    videoSelected ? videoEncoder.surface : reader.getSurface(), null, worker);
+            if (display == null || !owner.revalidate() || !owner.startStreaming(videoSelected) || !owner.captureAllowed()) {
                 owner.close();
                 return;
             }
@@ -210,6 +228,14 @@ public final class FullAccessScreenService extends Service {
 
     private void resize(int width, int height) {
         if (width <= 0 || height <= 0) return;
+        if (videoSelected) {
+            if (captureWidth == width && captureHeight == height) return;
+            captureWidth = width;
+            captureHeight = height;
+            pauseVideo();
+            if (contentVisible) restartVideo();
+            return;
+        }
         double scale = Math.min(1d, (double) MAX_EDGE / Math.max(width, height));
         if (reader.getWidth() == Math.max(1, (int) (width * scale))
                 && reader.getHeight() == Math.max(1, (int) (height * scale))) return;
@@ -225,6 +251,30 @@ public final class FullAccessScreenService extends Service {
         ImageReader previous = reader;
         reader = replacement;
         previous.close();
+    }
+
+    private FullAccessVideoEncoder newVideoEncoder() {
+        return FullAccessVideoEncoder.open(captureWidth, captureHeight, worker, owner.video,
+                () -> contentVisible && owner.videoCanSample(), owner::close);
+    }
+
+    private void pauseVideo() {
+        owner.video.hide();
+        display.setSurface(null);
+        if (videoEncoder != null) {
+            videoEncoder.close();
+            videoEncoder = null;
+        }
+    }
+
+    private void restartVideo() {
+        videoEncoder = newVideoEncoder();
+        if (videoEncoder == null) {
+            owner.close();
+            return;
+        }
+        display.resize(videoEncoder.size.width(), videoEncoder.size.height(), densityDpi);
+        display.setSurface(videoEncoder.surface);
     }
 
     private void captureFrame(ImageReader images) {
@@ -306,6 +356,10 @@ public final class FullAccessScreenService extends Service {
             if (display != null) {
                 released = release(display::release);
                 display = null;
+            }
+            if (videoEncoder != null) {
+                released &= release(videoEncoder::close);
+                videoEncoder = null;
             }
             if (reader != null) {
                 released &= release(reader::close);

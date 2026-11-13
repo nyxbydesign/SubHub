@@ -1041,7 +1041,8 @@ public final class RemoteFeature {
             connection.setReadTimeoutMillis(8_000);
             RemoteProtocol.write(connection.output(), FullAccessChannel.frame(FullAccessChannel.OPEN)
                     .put("generation", peer.generation).put("scope", scope)
-                    .put("screenRequestStates", "screen".equals(scope)));
+                    .put("screenRequestStates", "screen".equals(scope))
+                    .put(com.subhub.app.fullaccess.FullAccessVideo.CAPABILITY, "screen".equals(scope)));
             JSONObject response = RemoteProtocol.read(connection.input());
             FullAccessChannel.require(response, FullAccessChannel.OPENED);
             String status = response.getString("status");
@@ -1139,7 +1140,9 @@ public final class RemoteFeature {
                         if (share.closed.get()) watch.cancel(false);
                     }
                     FullAccessExchange.serve(context, connection, scope, share::current, appPresence::foreground,
-                            first.optBoolean("screenRequestStates"), share::attach);
+                            first.optBoolean("screenRequestStates"),
+                            Boolean.TRUE.equals(first.opt(com.subhub.app.fullaccess.FullAccessVideo.CAPABILITY)),
+                            share::attach);
                 } catch (Exception unavailable) {
                     if (!share.closed.get() && !(unavailable instanceof java.io.EOFException))
                         logSessionFailure("blackmail-" + scope + "-read", unavailable);

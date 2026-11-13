@@ -1,6 +1,7 @@
 package com.subhub.app.remote;
 
 import com.subhub.app.fullaccess.FullAccessDataSources;
+import com.subhub.app.fullaccess.FullAccessVideo;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -56,6 +57,37 @@ public final class FullAccessChannel implements AutoCloseable {
     public boolean isOpen() { return !closed.get(); }
     public boolean supportsLazyContactPhotos() { return opened.optBoolean("lazyContactPhotos"); }
     public boolean supportsLazyAppUsage() { return opened.optBoolean("lazyAppUsage"); }
+
+    public boolean supportsScreenVideo() {
+        return "screen".equals(scope) && Boolean.TRUE.equals(opened.opt(FullAccessVideo.CAPABILITY));
+    }
+
+    @FunctionalInterface public interface VideoConsumer {
+        void accept(FullAccessVideo.Packet packet) throws IOException;
+    }
+
+    /** Transfers the opted-in screen channel from request/reply to a bounded packet stream. */
+    public void streamScreen(VideoConsumer consumer) throws IOException {
+        io.lock();
+        try {
+            requireCurrent();
+            if (!supportsScreenVideo() || !"ready".equals(opened.optString("status")))
+                throw new IOException("Screen video unavailable");
+            JSONObject response = exchange("video", "", "");
+            if (!"video".equals(response.optString("status"))) throw new IOException("Screen video declined");
+            DataInputStream wire = new DataInputStream(connection.input());
+            while (!closed.get()) {
+                connection.setReadTimeoutMillis(FullAccessVideo.TIMEOUT_MS);
+                FullAccessVideo.Packet packet = FullAccessVideo.read(wire);
+                requireCurrent();
+                if (packet.kind() == FullAccessVideo.END) return;
+                consumer.accept(packet);
+            }
+        } finally {
+            io.unlock();
+            close();
+        }
+    }
 
     /** Worker-only check for publication after the transfer's terminal marker. */
     public boolean isCurrent() { return !closed.get() && current.getAsBoolean(); }

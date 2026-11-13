@@ -45,7 +45,12 @@ public final class FullAccessScreen {
     }
 
     public static Session open(Context context, BooleanSupplier grantCurrent, BooleanSupplier appForeground) {
-        Session session = new Session(context.getApplicationContext(), grantCurrent);
+        return open(context, grantCurrent, appForeground, false);
+    }
+
+    public static Session open(Context context, BooleanSupplier grantCurrent, BooleanSupplier appForeground,
+            boolean videoRequested) {
+        Session session = new Session(context.getApplicationContext(), grantCurrent, videoRequested);
         if (!session.revalidate()) return session;
         synchronized (LOCK) {
             if (active != null || MediaProjectionLeaseRegistry.owner() != null) {
@@ -60,7 +65,7 @@ public final class FullAccessScreen {
 
     /** Use the Android approval returned to the local viewer without sending a peer request. */
     static Session startLocal(android.app.Activity host, Intent approval, BooleanSupplier grantCurrent) {
-        Session session = new Session(host.getApplicationContext(), grantCurrent);
+        Session session = new Session(host.getApplicationContext(), grantCurrent, false);
         if (!session.revalidate() || !session.claimPrompt(null) || !session.acceptApproval(approval)) {
             session.close();
             return session;
@@ -151,6 +156,8 @@ public final class FullAccessScreen {
         final Context context;
         final String id = UUID.randomUUID().toString();
         final FullAccessScreenFrames frames = new FullAccessScreenFrames();
+        final FullAccessVideo.Queue video;
+        private volatile boolean videoStarted;
         private final BooleanSupplier grantCurrent;
         private volatile String phase = AWAITING;
         private volatile boolean requestIssued;
@@ -161,8 +168,9 @@ public final class FullAccessScreen {
         private final Runnable expire = this::expireConsent;
         private final Runnable notifyIfPending = this::postRequestNotification;
 
-        private Session(Context context, BooleanSupplier grantCurrent) {
+        private Session(Context context, BooleanSupplier grantCurrent, boolean videoRequested) {
             this.context = context;
+            video = videoRequested ? new FullAccessVideo.Queue() : null;
             this.grantCurrent = Objects.requireNonNull(grantCurrent);
         }
 
@@ -206,6 +214,15 @@ public final class FullAccessScreen {
             return STREAMING.equals(phase);
         }
 
+        public boolean videoReady() { return videoStarted && captureAllowed(); }
+
+        boolean videoCanSample() { return STREAMING.equals(phase) && displayAvailable(context); }
+
+        public FullAccessVideo.Packet nextVideoPacket() throws InterruptedException {
+            FullAccessVideo.Packet packet = video.next();
+            return videoReady() ? packet : FullAccessVideo.signal(FullAccessVideo.END);
+        }
+
         private boolean isLive() { return AWAITING.equals(phase) || STREAMING.equals(phase); }
 
         synchronized boolean claimPrompt(Runnable cancel) {
@@ -230,8 +247,9 @@ public final class FullAccessScreen {
             return result;
         }
 
-        synchronized boolean startStreaming() {
+        synchronized boolean startStreaming(boolean videoStarted) {
             if (!AWAITING.equals(phase)) return false;
+            this.videoStarted = videoStarted;
             phase = STREAMING;
             MAIN.removeCallbacks(expire);
             return true;
@@ -311,6 +329,7 @@ public final class FullAccessScreen {
                 phase = status;
                 approval = null;
                 frames.close();
+                if (video != null) video.close();
                 callback = onEnd;
                 onEnd = null;
             }

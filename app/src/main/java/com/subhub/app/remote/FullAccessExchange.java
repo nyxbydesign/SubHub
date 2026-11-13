@@ -1,13 +1,16 @@
 package com.subhub.app.remote;
 
 import android.content.Context;
+import android.os.Build;
 
 import com.subhub.app.fullaccess.FullAccessDataSources;
 import com.subhub.app.fullaccess.FullAccessFiles;
 import com.subhub.app.fullaccess.FullAccessScreen;
+import com.subhub.app.fullaccess.FullAccessVideo;
 
 import org.json.JSONObject;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Base64;
 import java.util.Set;
@@ -25,6 +28,12 @@ final class FullAccessExchange {
 
     static void serve(Context context, PeerTransport.Connection connection, String scope, BooleanSupplier current,
             BooleanSupplier foreground, boolean screenRequestStates, Consumer<AutoCloseable> ownSource) throws Exception {
+        serve(context, connection, scope, current, foreground, screenRequestStates, false, ownSource);
+    }
+
+    static void serve(Context context, PeerTransport.Connection connection, String scope, BooleanSupplier current,
+            BooleanSupplier foreground, boolean screenRequestStates, boolean screenVideoRequested,
+            Consumer<AutoCloseable> ownSource) throws Exception {
         if (!current.getAsBoolean()) {
             RemoteProtocol.write(connection.output(), FullAccessChannel.frame(FullAccessChannel.OPENED)
                     .put("status", "disabled"));
@@ -32,6 +41,7 @@ final class FullAccessExchange {
             RemoteProtocol.read(connection.input());
             return;
         }
+        boolean video = "screen".equals(scope) && screenVideoRequested && Build.VERSION.SDK_INT >= 29;
         FullAccessDataSources.ReadSession pages = new FullAccessDataSources.ReadSession();
         FullAccessFiles.Session files = null;
         FullAccessScreen.Session screen = null;
@@ -42,6 +52,7 @@ final class FullAccessExchange {
             }
             write(connection, FullAccessChannel.frame(FullAccessChannel.OPENED).put("status", "ready")
                     .put("detailVersion", FullAccessChannel.DETAIL_VERSION)
+                    .put(FullAccessVideo.CAPABILITY, video)
                     .put("lazyContactPhotos", "contacts".equals(scope)).put("lazyAppUsage", "apps".equals(scope)), current);
             while (current.getAsBoolean()) {
                 connection.setReadTimeoutMillis("screen".equals(scope) ? 4_000 : 12_000);
@@ -59,12 +70,17 @@ final class FullAccessExchange {
                     } else {
                         throw new IOException("Invalid file operation");
                     }
+                } else if (video && screen != null && "video".equals(operation) && screen.videoReady()) {
+                    respond(connection, new JSONObject().put("status", "video"), current);
+                    streamVideo(connection, screen);
+                    return;
                 } else if ("screen".equals(scope) && "frame".equals(operation)) {
                     if (screen == null) {
-                        screen = FullAccessScreen.open(context, current, foreground);
+                        screen = FullAccessScreen.open(context, current, foreground, video);
                         ownSource.accept(screen);
                     }
                     JSONObject response = new JSONObject().put("status", screen.statusForViewer(screenRequestStates));
+                    if (video && screen.videoReady()) response.put("status", "video_ready");
                     byte[] image = screen.takeLatest();
                     if (image != null && image.length > 0 && image.length <= MAX_JPEG)
                         response.put("image", Base64.getEncoder().encodeToString(image));
@@ -80,6 +96,17 @@ final class FullAccessExchange {
         } finally {
             if (screen != null) screen.close();
             if (files != null) files.close();
+        }
+    }
+
+    private static void streamVideo(PeerTransport.Connection connection, FullAccessScreen.Session screen) throws Exception {
+        DataOutputStream wire = new DataOutputStream(connection.output());
+        while (true) {
+            // nextVideoPacket checks the exact grant after waiting for a packet and returns only END on loss.
+            FullAccessVideo.Packet packet = screen.nextVideoPacket();
+            connection.setReadTimeoutMillis(FullAccessVideo.TIMEOUT_MS);
+            FullAccessVideo.write(wire, packet);
+            if (packet.kind() == FullAccessVideo.END) return;
         }
     }
 
