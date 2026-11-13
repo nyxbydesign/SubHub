@@ -58,7 +58,7 @@ public final class GagActivity extends AppCompatActivity {
             keyboardAction = findViewById(R.id.gag_keyboard_settings);
             keyboardAction.setOnClickListener(view -> openKeyboardSetup());
         } else {
-            bindEditor(content);
+            bindEditor(findViewById(android.R.id.content));
         }
         InputFocusPolicy.openActivityForReading(this);
     }

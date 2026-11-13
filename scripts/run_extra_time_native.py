@@ -196,6 +196,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
@@ -726,6 +727,7 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "automaticSaveRetainsTheFocusedEditorAndCursor",
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
