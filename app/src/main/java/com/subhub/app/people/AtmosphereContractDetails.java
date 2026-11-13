@@ -2,7 +2,8 @@ package com.subhub.app.people;
 
 import android.content.Context;
 import com.subhub.app.R;
-import com.subhub.app.atmosphere.GagActivity;
+import com.subhub.app.remote.GagContractFields;
+import com.subhub.app.remote.RemoteFeature;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.FeatureModuleManager;
@@ -38,14 +39,16 @@ public final class AtmosphereContractDetails {
         String whispersState = state(context, new FeatureModuleManager(context).isSubliminalEnabled(),
                 SubFeaturePolicy.allowed(context, "subliminal"), true);
         String popupState = state(context, popup.isEnabled(), SubFeaturePolicy.allowed(context, "popup"), true);
+        JSONObject gag;
+        try { gag = RemoteFeature.get(context).appliedGag(); }
+        catch (RuntimeException unavailable) { gag = null; }
         return new AtmosphereContractDetails(context, whispersState, popupState,
                 whispers(context, whispersState, new ArrayList<>(whispers.getEnabledPacks()),
                         whispers.getPreset().name(), whispers.isAdvanced()),
                 popup(context, popupState, popup.getPositionMode(), popup.getDetectionMode(),
                         popup.isBurstEnabled(), popup.isBouncing(), popup.isRandomRotation(),
                         popup.getDenialChance() > 0, popup.getDenialStyle()),
-                context.getString(GagActivity.isEnabled(context)
-                        ? R.string.control_state_on : R.string.control_state_off));
+                gagStatus(context, gag));
     }
 
     /** Sections have already passed RemoteConfiguration validation; consent has its own freshness. */
@@ -68,7 +71,12 @@ public final class AtmosphereContractDetails {
                         popup.getBoolean(PopupStormSettings.K_BOUNCING), popup.getBoolean(PopupStormSettings.K_RANDOM_ROT),
                         popup.getInt(PopupStormSettings.K_DENIAL_CHANCE) > 0, popup.getString(PopupStormSettings.K_DENIAL_STYLE))
                         + consentNote(context, consent.get("popup"), freshness),
-                context.getString(R.string.gag_status_unknown));
+                gagStatus(context, sections.optJSONObject(GagContractFields.SECTION)));
+    }
+
+    private static String gagStatus(Context context, JSONObject gag) {
+        return context.getString(gag == null ? R.string.gag_status_unknown
+                : gag.optBoolean("enabled") ? R.string.arrangement_configured_on : R.string.control_state_off);
     }
 
     private static String state(Context context, boolean enabled, Boolean allowed, boolean current) {

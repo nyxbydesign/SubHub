@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_main"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:id="@id/gag_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="@dimen/page_margin"
+        android:paddingTop="@dimen/primary_header_top"
+        android:paddingBottom="@dimen/page_margin">
+
+        <include layout="@layout/view_primary_header" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_group"
+            android:text="@string/gag_description"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/gag_keyboard_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_control"
+            android:accessibilityLiveRegion="polite"
+            android:textColor="@color/accent_text" />
+
+        <include
+            android:id="@+id/gag_keyboard_settings"
+            layout="@layout/view_ux_action"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_control" />
+    </LinearLayout>
+</ScrollView>

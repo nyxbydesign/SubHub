@@ -165,7 +165,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         action(localPermissions, R.string.settings_battery,
                 () -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
         gagSetup = action(localPermissions, R.string.gag_keyboard_setup, () -> {
-            if (GagActivity.canConfigure(this)) startActivity(new Intent(this, GagActivity.class));
+            if (GagActivity.canSetUp(this)) startActivity(new Intent(this, GagActivity.class));
         });
         gagSetup.setTag("settings_gag_setup");
 
@@ -290,7 +290,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         permissionsHeading.setVisibility(local ? View.VISIBLE : View.GONE);
         permissions.setVisibility(local ? View.VISIBLE : View.GONE);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
-        gagSetup.setVisibility(GagActivity.canConfigure(this) ? View.VISIBLE : View.GONE);
+        gagSetup.setVisibility(GagActivity.canSetUp(this) ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);
         if (local && !DeviceRolePreferences.isDomWorkspace(this)) {
             int position = binding.settingsSections.indexOfChild(privacy) + 1;

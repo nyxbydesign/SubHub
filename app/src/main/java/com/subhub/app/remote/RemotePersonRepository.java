@@ -116,6 +116,7 @@ public final class RemotePersonRepository implements PersonRepository {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
         for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
             if ("atmosphere".equals(group)) {
+                if (!GagContractFields.supported(store, peer)) sections.remove(GagContractFields.SECTION);
                 AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
                         RemoteProfiles.allowances(runtime), runtimeFreshness);
                 result.add(new PersonSnapshot.Section(group, context.getString(R.string.atmosphere_title),

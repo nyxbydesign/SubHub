@@ -2,7 +2,6 @@ package com.subhub.app.atmosphere;
 
 import com.subhub.app.configuration.FeatureEditorSession;
 
-import android.content.Intent;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
@@ -11,7 +10,6 @@ import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.popup.PopupStormActivity;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.ControllerEditMode;
-import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import com.subhub.app.util.PrimaryHeader;
@@ -55,22 +53,17 @@ public final class AtmosphereActivity extends AppCompatActivity {
         binding.buttonWhispers.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
         binding.popupStormCard.setEnabled(FeatureEditorSession.canView(this, "popup"));
         binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canView(this, "popup"));
-        boolean gagVisible = showsGag();
+        boolean gagVisible = FeatureEditorSession.canEditGag(this);
         binding.gagCard.setVisibility(gagVisible ? android.view.View.VISIBLE : android.view.View.GONE);
-        if (gagVisible) binding.gagStatus.setText(GagSettings.enabled(this)
-                ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
+        if (gagVisible) binding.gagStatus.setText(R.string.gag_dom_description);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
     }
 
     private void openGag() {
-        if (showsGag() && FeatureEditorSession.canView(this, "atmosphere")) {
-            startActivity(new Intent(this, GagActivity.class));
+        if (FeatureEditorSession.canEditGag(this)) {
+            startActivity(GagActivity.editorIntent(this));
         }
-    }
-
-    private boolean showsGag() {
-        return !FeatureEditorSession.remote(this) && GagActivity.canConfigure(this);
     }
 
     private void open(Class<? extends android.app.Activity> destination) {

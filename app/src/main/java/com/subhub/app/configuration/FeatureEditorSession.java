@@ -81,6 +81,7 @@ public final class FeatureEditorSession {
             return;
         }else{
         feature=RemoteFeature.get(app);
+        controllerRevision=ControllerPinManager.domWorkspaceRevision();
         person=PersonRoutes.requireId(activity.getIntent());
         peer=new RemotePersonRepository(app,feature).peer(person);
         String requestedToken=saved!=null?saved.getString(TOKEN):activity.getIntent().getStringExtra(TOKEN);
@@ -235,6 +236,28 @@ public final class FeatureEditorSession {
         return PersonRoutes.isLocalTarget(activity.getIntent())&&ControllerPinManager.canEditConfiguration()
                 &&(!SubFeaturePolicy.FEATURES.contains(section)||SubFeaturePolicy.allowed(activity,section));
     }
+
+    public static boolean canEditGag(AppCompatActivity activity) {
+        FeatureEditorSession scope=scope(activity);
+        return scope!=null&&!scope.internal&&scope.controllerRevision==ControllerPinManager.domWorkspaceRevision()
+                &&canEdit(activity,GagContractFields.SECTION);
+    }
+
+    public static JSONObject gagRules(AppCompatActivity activity) throws Exception {
+        if(!canEditGag(activity))throw new SecurityException("Gag editor unavailable");
+        JSONObject rules=GagContractFields.section(scope(activity).document);
+        return rules==null?GagContractFields.defaults():new JSONObject(rules.toString());
+    }
+
+    public static void editGagRules(AppCompatActivity activity, JSONObject rules) throws JSONException {
+        if(!canEditGag(activity))throw new SecurityException("Gag editor unavailable");
+        scope(activity).document.getJSONObject("contract").getJSONObject("sections")
+                .put(GagContractFields.SECTION,GagContractFields.validate(rules));
+    }
+
+    public static void gagRulesChanged(AppCompatActivity activity) {
+        if(canEditGag(activity))scope(activity).markDraftChanged();
+    }
     private void requireAuthority(){
         if(internal){if(invalidated||!DummySubPreview.current(physical,internalGeneration,controllerRevision))throw new SecurityException("Internal Sub unavailable");return;}
         if(invalidated)throw new SecurityException("Editor was reloaded");
@@ -297,7 +320,8 @@ public final class FeatureEditorSession {
                 scope.watchText(root,binding);binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
             }
             binding.autosave=new RemoteConfigurationAutosave(activity,body,scope.feature,scope.peer,scope.editBase,()->{
-                if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
+                if(!(GagContractFields.SECTION.equals(section)?canEditGag(activity):canEdit(activity,section)))
+                    throw new SecurityException("Editor unavailable");
                 scope.flushing=true;
                 try{if(!flush.getAsBoolean())throw new IllegalArgumentException("Check the edited fields");return scope.snapshot();}
                 finally{scope.flushing=false;}

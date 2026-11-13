@@ -161,14 +161,10 @@ public final class ProfileEditorActivity extends PreferencePage {
                 gender.getText().toString(), enteredAge)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
-        boolean openGag = features != null && features.enablesGag();
         if (features != null && !features.apply(this)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
         com.subhub.app.remote.RemoteFeature.get(this).changed();
-        if (openGag && com.subhub.app.atmosphere.GagActivity.canConfigure(this)) {
-            startActivity(new android.content.Intent(this, com.subhub.app.atmosphere.GagActivity.class));
-        }
         finish();
     }
 

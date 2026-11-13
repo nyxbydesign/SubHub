@@ -89,10 +89,7 @@ public final class AtmosphereContractDetailsAndroidTest {
         assertFalse(details.matches("(?s).*\\d.*"));
         assertFalse(details.contains("Private fixture"));
         assertFalse(details.contains("spawn"));
-        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag On"));
-        assertTrue(context.getSharedPreferences("atmosphere_gag", 0).edit().putBoolean("enabled", false).commit());
-        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag Off"));
-        assertTrue(AtmosphereContractDetails.local(context).details.endsWith("\n\nGag\nOff"));
+        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag Unknown"));
     }
 
     @Test public void disabledEmptyAndCustomSettingsRemainExplicitWithoutInventedSelections() {
@@ -116,6 +113,9 @@ public final class AtmosphereContractDetailsAndroidTest {
                 .putString(PopupStormSettings.K_POSITION_MODE, "random").commit());
         assertEquals(expectedAtmosphere() + "\n\nGag\nUnknown", AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", true, "popup", true), PersonSnapshot.Freshness.CURRENT).details);
+        sections.put("gag", com.subhub.app.remote.GagContractFields.defaults().put("enabled", true));
+        assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT)
+                .summary.endsWith("\nGag Configured on"));
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
                 .details.contains("Categories: Findom"));
@@ -208,7 +208,7 @@ public final class AtmosphereContractDetailsAndroidTest {
     }
 
     private String expected() {
-        return expectedAtmosphere() + "\n\nGag\nOn";
+        return expectedAtmosphere() + "\n\nGag\nUnknown";
     }
 
     private String expectedAtmosphere() {

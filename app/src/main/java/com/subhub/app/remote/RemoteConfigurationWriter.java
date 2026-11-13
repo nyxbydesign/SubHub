@@ -23,12 +23,21 @@ public final class RemoteConfigurationWriter {
     private final AtomicFile journal;
     private final File root;
     private final Committer committer;
+    private final Runnable gagChanged;
 
     public RemoteConfigurationWriter(Context context,RemoteStore store) {
         this(context,store,(name,editor)->editor.commit(),new File(context.getNoBackupFilesDir(),"remote-configuration"));
     }
+    RemoteConfigurationWriter(Context context,RemoteStore store,Runnable gagChanged) {
+        this(context,store,(name,editor)->editor.commit(),
+                new File(context.getNoBackupFilesDir(),"remote-configuration"),gagChanged);
+    }
     RemoteConfigurationWriter(Context context,RemoteStore store,Committer committer,File root) {
+        this(context,store,committer,root,()->{});
+    }
+    private RemoteConfigurationWriter(Context context,RemoteStore store,Committer committer,File root,Runnable gagChanged) {
         this.context=context.getApplicationContext();this.store=store;this.committer=committer;this.root=root;
+        this.gagChanged=gagChanged;
         journal=new AtomicFile(new File(root,"journal.json"));
     }
 
@@ -72,10 +81,16 @@ public final class RemoteConfigurationWriter {
                     throw new SecurityException("Pairing is no longer authorized");
                 RemoteStore.Command latest=store.command(peer.identity,peer.generation,command.id);
                 if(latest==null || !latest.pending())return true;
+                if(GagContractFields.section(doc)!=null && !GagContractFields.supported(store,current)) {
+                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Gag is unsupported by the pairing");
+                    return true;
+                }
                 long applied=Long.parseLong(store.metadata(peer.identity,peer.generation,"applied_revision","0"));
                 if(body.getLong("base")!=applied || command.revision<=applied) {
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.CONFLICT,null,"Configuration changed; reload before saving");return true;
                 }
+                JSONObject priorGag=GagContractFields.applied(store,current);
+                boolean gagRulesChanged=!RemoteConfigurationEdits.same(priorGag,GagContractFields.section(doc));
                 Set<String> previous=new LinkedHashSet<>(preferences(SettingsRepository.PREFERENCES_NAME)
                         .getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES,Collections.emptySet()));
                 for(String name:RemoteConfiguration.selected(doc))if(!previous.contains(name) && !selectable.contains(name)) {
@@ -100,6 +115,7 @@ public final class RemoteConfigurationWriter {
                         if(!committer.commit(entry.getKey(),editor))throw new IOException("Could not save configuration");
                     }
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.APPLIED,doc,"");
+                    if(gagRulesChanged)gagChanged.run();
                     journal.delete();
                     if (!prior.isEmpty()) RemoteAppliedNotifications.configuration(context, current,
                             command.revision, prior, doc);

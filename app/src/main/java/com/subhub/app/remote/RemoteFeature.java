@@ -11,6 +11,7 @@ import com.subhub.app.fullaccess.FullAccessFiles;
 import com.subhub.app.security.DeviceRolePreferences;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.SocketTimeoutException;
@@ -110,6 +111,7 @@ public final class RemoteFeature {
     private final Object pairingTimerLock=new Object();
     private boolean installed;
     private volatile boolean stopped;
+    private final java.util.concurrent.atomic.AtomicLong gagRevision = new java.util.concurrent.atomic.AtomicLong();
     private Application lifecycleApplication;
     private Application.ActivityLifecycleCallbacks lifecycleCallbacks;
     private RemoteConnectivityWake connectivityWake;
@@ -169,10 +171,10 @@ public final class RemoteFeature {
             PairingOperationLease lease=pairingDeadlineOwners.get(approved.direction);
             return lease!=null&&lease.matches(approved)?lease.stageApproval(approved,sampled):()->{};
         });
-        store.onRevoked((identity,generation)->{retireFullAccessPairing(identity, generation);invalidateAttempts();retirePresence(identity+":"+generation);appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));scheduleConnectedSync(0);});
-        store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();requestConnectedServiceStart();scheduleConnectedSync(0);});
+        store.onRevoked((identity,generation)->{RemoteStore.Peer revoked=store.peer(identity,generation);if(revoked!=null&&revoked.localRole==RemoteProtocol.Role.SUB){invalidateGag();RemoteUi.configurationChanged();}retireFullAccessPairing(identity, generation);invalidateAttempts();retirePresence(identity+":"+generation);appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(revoked);scheduleConnectedSync(0);});
+        store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB){invalidateGag();ControllerPinManager.lockNow();RemoteUi.configurationChanged();}activity.refreshSource();requestConnectedServiceStart();scheduleConnectedSync(0);});
         endCommands=new RemoteEndCommands(this.context,store);
-        writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
+        writer=new RemoteConfigurationWriter(this.context,store,this::invalidateGag);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
         sessions.allowCoreThreadTimeOut(true);operations.allowCoreThreadTimeOut(true);incomingSessions.allowCoreThreadTimeOut(true);
         try{writer.recover();writer.prunePrepared();if(com.subhub.app.configuration.LegacyPackMigration.isReady(this.context)){store.retireLibraries();librariesRetired=true;}for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){cleanupRevokedSecrets(old.identity,old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
     }
@@ -186,6 +188,26 @@ public final class RemoteFeature {
     }
     public boolean recoveryReady(){return recovered&&com.subhub.app.configuration.LegacyPackMigration.isReady(context);}
     public boolean controlsLocal(){try{return !recoveryReady()||store.authorityObservation(store::isRemotelyControlled);}catch(RuntimeException unavailable){return true;}}
+
+    private void invalidateGag() { gagRevision.incrementAndGet(); }
+    public long gagRevision() { return gagRevision.get(); }
+
+    public CompletableFuture<JSONObject> readAppliedGag() {
+        return submit(() -> com.subhub.app.people.ProfileStore.mayEdit(context,false) ? observedGag() : null);
+    }
+
+    /** Called by the contract projection on its background reader. */
+    public JSONObject appliedGag() {
+        return store.authorityObservation(this::observedGag);
+    }
+
+    private JSONObject observedGag() throws JSONException {
+        if (stopped || !recoveryReady() || !DeviceRolePreferences.supportsSub(context)) return null;
+        synchronized (store) {
+            RemoteStore.Peer peer=uniqueActiveSubPeer();
+            return peer==null?null:GagContractFields.applied(store,peer);
+        }
+    }
 
     public synchronized void installLifecycle(Application app) {
         if(installed||stopped)return;installed=true;
@@ -958,15 +980,17 @@ public final class RemoteFeature {
     /** Returns only the current, uniquely paired Dom on the Sub's device. */
     public RemoteStore.Peer fullAccessSubPeer() {
         if (stopped || !DeviceRolePreferences.supportsSub(context)) return null;
-        return store.authorityObservation(() -> {
-            RemoteStore.Peer found = null;
-            for (RemoteStore.Peer peer : store.peers(false)) {
-                if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.SUB) continue;
-                if (found != null) return null;
-                found = peer;
-            }
-            return found;
-        });
+        return store.authorityObservation(this::uniqueActiveSubPeer);
+    }
+
+    private RemoteStore.Peer uniqueActiveSubPeer() {
+        RemoteStore.Peer found = null;
+        for (RemoteStore.Peer peer : store.peers(false)) {
+            if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.SUB) continue;
+            if (found != null) return null;
+            found = peer;
+        }
+        return found;
     }
 
     public CompletableFuture<JSONObject> requestFullAccess(RemoteStore.Peer peer, String scope, JSONObject request) {
@@ -1316,6 +1340,10 @@ public final class RemoteFeature {
             }
             @Override public int tasksVersion() { return 1; }
             @Override public int extraTimeVersion() { return ExtraTimePeer.VERSION; }
+            @Override public boolean gagRulesSupported() { return true; }
+            @Override public void gagCapabilityChanged(RemoteStore.Peer peer) {
+                if (peer.localRole == RemoteProtocol.Role.SUB) invalidateGag();
+            }
             @Override public void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);
                 ExtraTimePeer.exchange(context, store, active.localIdentity(), connection, peer, deadline);

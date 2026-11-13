@@ -37,6 +37,8 @@ public final class RemoteSession {
         default JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception { return profile(peer, details); }
         default int tasksVersion() { return 0; }
         default int extraTimeVersion() { return 0; }
+        default boolean gagRulesSupported() { return false; }
+        default void gagCapabilityChanged(RemoteStore.Peer peer) { }
         default void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
@@ -92,6 +94,7 @@ public final class RemoteSession {
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
+        if (hooks.gagRulesSupported()) hello.put("gagVersion", 1);
         String retainedProfile = "";
         if (hooks.profileVersion() == 1) {
             hello.put("profileVersion", 1);
@@ -116,6 +119,7 @@ public final class RemoteSession {
         rememberFullAccess(peer, response);
         boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
+        rememberGag(peer, response);
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
         boolean priority = phasePlanVersion(response) == 1 && controls;
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");
@@ -170,6 +174,7 @@ public final class RemoteSession {
         boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         if (extraTime) ready.put("extraTimeVersion", 1);
+        if (rememberGag(peer, hello)) ready.put("gagVersion", 1);
         if (priority) ready.put("phasePlanVersion",1);
         boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
         if (appIcons) ready.put("appIconsVersion",1);
@@ -349,6 +354,18 @@ public final class RemoteSession {
         return value;
     }
 
+    private boolean rememberGag(RemoteStore.Peer peer, JSONObject frame) throws JSONException {
+        boolean supported = hooks.gagRulesSupported() && frame.has("gagVersion")
+                && RemoteProtocol.integer(frame, "gagVersion") == 1;
+        String value = supported ? "1" : "0";
+        if (!value.equals(store.metadata(peer.identity, peer.generation, GagContractFields.VERSION, "0"))) {
+            store.putMetadata(peer.identity, peer.generation, GagContractFields.VERSION, value);
+            hooks.gagCapabilityChanged(peer);
+            RemoteUi.configurationChanged();
+        }
+        return supported;
+    }
+
     private static long appIconsVersion(JSONObject frame) throws JSONException {
         if (!frame.has("appIconsVersion")) return 0;
         long value=RemoteProtocol.integer(frame,"appIconsVersion");
@@ -477,6 +494,8 @@ public final class RemoteSession {
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
                 boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
+                if (sectionCandidate && !GagContractFields.supported(store, peer)
+                        && GagContractFields.containsRules(batch)) sectionCandidate=false;
                 RemoteSectionTransfer.EncodedOffer encoded=sectionCandidate?RemoteSectionTransfer.encodeOffer(batch,sectionBasis(peer,true)):null;
                 JSONObject offered=encoded==null?batch.json():encoded.frame;
                 if(encoded==null)send(connection,offered,deadline);else sendEncoded(connection,encoded.encoded,deadline);

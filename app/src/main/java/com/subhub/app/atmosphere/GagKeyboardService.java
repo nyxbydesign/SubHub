@@ -1,8 +1,6 @@
 package com.subhub.app.atmosphere;
 
 import android.content.Context;
-import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -24,6 +22,8 @@ import android.widget.LinearLayout;
 import android.widget.Space;
 import android.widget.TextView;
 import com.subhub.app.R;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.remote.RemoteUi;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -41,14 +41,17 @@ public final class GagKeyboardService extends InputMethodService {
 
     private final StringBuilder word = new StringBuilder();
     private final List<LetterKey> letters = new ArrayList<>();
-    private final SharedPreferences.OnSharedPreferenceChangeListener settingsChanged =
-            (prefs, key) -> reloadRules();
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private RemoteFeature backend;
+    private AutoCloseable configurationObserver;
+    private long requestedRevision = -1;
+    private long rulesRevision = -1;
+    private long editorEpoch;
     private GagRules rules;
     private boolean shifted, symbols, literalWord;
     private LinearLayout keyboard;
     private Button shiftKey;
     private TextView status;
-    private ImageButton settingsButton;
     private boolean subWorkspace;
     private boolean enabled;
     private boolean editorAllowed;
@@ -57,11 +60,14 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onCreate() {
         super.onCreate();
-        GagSettings.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged);
+        backend = RemoteFeature.get(this);
+        configurationObserver = RemoteUi.observeConfiguration(this::refreshWorkspace);
     }
 
     @Override public void onDestroy() {
-        GagSettings.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged);
+        if (configurationObserver != null) try { configurationObserver.close(); } catch (Exception ignored) { }
+        main.removeCallbacksAndMessages(null);
+        backend = null;
         word.setLength(0);
         super.onDestroy();
     }
@@ -74,7 +80,13 @@ public final class GagKeyboardService extends InputMethodService {
         int inputClass = editor == null ? InputType.TYPE_NULL : editor.inputType & InputType.TYPE_MASK_CLASS;
         symbols = inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE
                 || inputClass == InputType.TYPE_CLASS_DATETIME;
-        reloadRules();
+        editorAllowed = GagEditorPolicy.allowsReplacement(editor, getPackageName());
+        editorEpoch++;
+        requestedRevision = -1;
+        rulesRevision = -1;
+        rules = null;
+        enabled = false;
+        refreshWorkspace();
     }
 
     @Override public void onStartInputView(EditorInfo editor, boolean restarting) {
@@ -92,6 +104,10 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onFinishInput() {
         word.setLength(0);
+        editorAllowed = false;
+        editorEpoch++;
+        requestedRevision = -1;
+        rulesRevision = -1;
         rules = null;
         super.onFinishInput();
     }
@@ -105,32 +121,47 @@ public final class GagKeyboardService extends InputMethodService {
         }
     }
 
-    private void reloadRules() {
-        leaveWordLiteral();
-        GagSettings settings = GagSettings.load(this);
-        subWorkspace = GagActivity.canConfigure(this);
-        enabled = settings.enabled();
-        editorAllowed = GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName());
-        rules = enabled && editorAllowed ? settings.rules() : null;
-        updateStatus();
-    }
-
     private void refreshWorkspace() {
-        boolean allowed = GagActivity.canConfigure(this);
-        if (subWorkspace == allowed) return;
-        if (!allowed && word.length() != 0) {
-            leaveWordLiteral();
-            literalWord = true;
+        RemoteFeature feature = backend;
+        if (feature == null) return;
+        subWorkspace = GagActivity.canSetUp(this);
+        long revision = feature.gagRevision();
+        if (!subWorkspace || !editorAllowed || rulesRevision != revision) {
+            if (word.length() != 0) {
+                leaveWordLiteral();
+                literalWord = true;
+            }
+            enabled = false;
+            rules = null;
+            rulesRevision = -1;
         }
-        subWorkspace = allowed;
+        if (!subWorkspace || !editorAllowed) {
+            requestedRevision = -1;
+        } else if (requestedRevision != revision) {
+            requestedRevision = revision;
+            long requestEpoch = editorEpoch;
+            feature.readAppliedGag().whenComplete((value, failure) -> main.post(() -> {
+                if (backend != feature || !editorAllowed || !GagActivity.canSetUp(this)
+                        || editorEpoch != requestEpoch || requestedRevision != revision
+                        || revision != feature.gagRevision()) return;
+                rulesRevision = revision;
+                if (failure == null && value != null) {
+                    try {
+                        GagSettings settings = GagSettings.from(value);
+                        enabled = settings.enabled();
+                        rules = enabled ? settings.rules() : null;
+                    } catch (org.json.JSONException | IllegalArgumentException ignored) { }
+                }
+                updateStatus();
+            }));
+        }
         updateStatus();
     }
 
     private void updateStatus() {
-        if (status != null) status.setText(!subWorkspace || (enabled && !editorAllowed)
+        if (status != null) status.setText(!subWorkspace || !editorAllowed
                 ? R.string.gag_keyboard_excluded
                 : enabled ? R.string.gag_keyboard_active : R.string.gag_keyboard_inactive);
-        if (settingsButton != null) settingsButton.setVisibility(subWorkspace ? View.VISIBLE : View.GONE);
     }
 
     private void leaveWordLiteral() {
@@ -275,8 +306,6 @@ public final class GagKeyboardService extends InputMethodService {
         status.setTextSize(13);
         status.setPaddingRelative(dp(12), 0, 0, 0);
         tools.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        settingsButton = toolbarAction(tools, R.drawable.ic_overview_settings,
-                R.string.gag_keyboard_configure, this::configure);
         toolbarAction(tools, R.drawable.ic_gag_picker, R.string.gag_choose_keyboard, this::chooseKeyboard);
         updateStatus();
     }
@@ -292,13 +321,6 @@ public final class GagKeyboardService extends InputMethodService {
         button.setOnClickListener(view -> action.run());
         row.addView(button, new LinearLayout.LayoutParams(dp(48), dp(48)));
         return button;
-    }
-
-    private void configure() {
-        refreshWorkspace();
-        if (!subWorkspace) return;
-        leaveWordLiteral();
-        startActivity(new Intent(this, GagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
 
     private void letter(LinearLayout row, String label, String alternate) {
