@@ -2,6 +2,7 @@ package com.subhub.app.people;
 
 import android.content.Context;
 import com.subhub.app.R;
+import com.subhub.app.atmosphere.GagActivity;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.FeatureModuleManager;
@@ -21,12 +22,14 @@ public final class AtmosphereContractDetails {
     public final String details;
 
     private AtmosphereContractDetails(Context context, String whispersState, String popupState,
-            String whispers, String popup) {
-        summary = context.getString(R.string.contract_atmosphere_states, whispersState, popupState);
+            String whispers, String popup, String gagState) {
+        summary = context.getString(R.string.contract_atmosphere_states, whispersState, popupState, gagState);
         details = context.getString(R.string.arrangement_detail_line,
                 context.getString(R.string.overview_whispers), whispers) + "\n\n"
                 + context.getString(R.string.arrangement_detail_line,
-                        context.getString(R.string.popup_title), popup);
+                        context.getString(R.string.popup_title), popup) + "\n\n"
+                + context.getString(R.string.arrangement_detail_line,
+                        context.getString(R.string.gag_title), gagState);
     }
 
     public static AtmosphereContractDetails local(Context context) {
@@ -40,7 +43,9 @@ public final class AtmosphereContractDetails {
                         whispers.getPreset().name(), whispers.isAdvanced()),
                 popup(context, popupState, popup.getPositionMode(), popup.getDetectionMode(),
                         popup.isBurstEnabled(), popup.isBouncing(), popup.isRandomRotation(),
-                        popup.getDenialChance() > 0, popup.getDenialStyle()));
+                        popup.getDenialChance() > 0, popup.getDenialStyle()),
+                context.getString(GagActivity.isEnabled(context)
+                        ? R.string.control_state_on : R.string.control_state_off));
     }
 
     /** Sections have already passed RemoteConfiguration validation; consent has its own freshness. */
@@ -62,7 +67,8 @@ public final class AtmosphereContractDetails {
                         popup.getString(PopupStormSettings.K_DETECTION_MODE), popup.getBoolean(PopupStormSettings.K_BURST_ENABLED),
                         popup.getBoolean(PopupStormSettings.K_BOUNCING), popup.getBoolean(PopupStormSettings.K_RANDOM_ROT),
                         popup.getInt(PopupStormSettings.K_DENIAL_CHANCE) > 0, popup.getString(PopupStormSettings.K_DENIAL_STYLE))
-                        + consentNote(context, consent.get("popup"), freshness));
+                        + consentNote(context, consent.get("popup"), freshness),
+                context.getString(R.string.gag_status_unknown));
     }
 
     private static String state(Context context, boolean enabled, Boolean allowed, boolean current) {

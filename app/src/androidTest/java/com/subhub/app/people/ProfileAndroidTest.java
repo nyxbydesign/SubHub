@@ -287,7 +287,9 @@ public final class ProfileAndroidTest {
                 assertTrue(hero.indexOfChild(preview) < hero.indexOfChild(features));
                 assertTrue(hero.indexOfChild(features) < hero.indexOfChild(journal));
                 assertReadOnly(features);
-                assertEquals(6, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+                assertEquals(7, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+                assertNotNull(root.findViewWithTag("person_allowance:gag"));
+                assertTrue(root.findViewWithTag("profile_gag_setup").isClickable());
             });
             onView(tag("person_allowance:censor")).perform(revealAboveNavigation()); capture(scenario,"profile-readonly-choices").recycle();
             onView(tag("profile_edit")).perform(revealAboveNavigation(), click()); resumed(ProfileEditorActivity.class);
@@ -718,7 +720,9 @@ public final class ProfileAndroidTest {
                 card.getLocationOnScreen(cardPoint); grid.getLocationOnScreen(gridPoint);
                 assertTrue(gridPoint[0] >= cardPoint[0] + card.getPaddingLeft());
                 assertTrue(gridPoint[0] + grid.getWidth() <= cardPoint[0] + card.getWidth() - card.getPaddingRight());
-                assertEquals(6, grid.getChildCount());
+                assertEquals(7, grid.getChildCount());
+                assertEquals(com.subhub.app.atmosphere.GagActivity.isEnabled(context),
+                        ((CompoundButton) root.findViewWithTag("sub_feature:gag")).isChecked());
                 for (String key : SubFeaturePolicy.FEATURES) {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
                     assertNotNull(choice); assertTrue(choice.getHeight() >= PersonUi.dp(a, 48));

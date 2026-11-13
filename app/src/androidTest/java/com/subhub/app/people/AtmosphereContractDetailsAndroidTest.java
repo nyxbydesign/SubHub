@@ -50,10 +50,14 @@ public final class AtmosphereContractDetailsAndroidTest {
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private Map<String, ?> originalConsent;
+    private Map<String, ?> originalGag;
     private SharedPreferences preferences;
 
     @Before public void prepare() {
         originalConsent = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+        SharedPreferences gag = context.getSharedPreferences("atmosphere_gag", 0);
+        originalGag = new LinkedHashMap<>(gag.getAll());
+        assertTrue(gag.edit().putBoolean("enabled", true).commit());
         assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
                 .putBoolean("subliminal", true).putBoolean("popup", true).commit());
         preferences = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
@@ -75,6 +79,7 @@ public final class AtmosphereContractDetailsAndroidTest {
 
     @After public void restore() {
         SharedPreferenceTestRestore.restore(context.getSharedPreferences(SubFeaturePolicy.STORE, 0), originalConsent);
+        SharedPreferenceTestRestore.restore(context.getSharedPreferences("atmosphere_gag", 0), originalGag);
     }
 
     @Test public void localSummaryListsSelectedCategoriesAndQualitativePopupDetails() {
@@ -84,6 +89,10 @@ public final class AtmosphereContractDetailsAndroidTest {
         assertFalse(details.matches("(?s).*\\d.*"));
         assertFalse(details.contains("Private fixture"));
         assertFalse(details.contains("spawn"));
+        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag On"));
+        assertTrue(context.getSharedPreferences("atmosphere_gag", 0).edit().putBoolean("enabled", false).commit());
+        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag Off"));
+        assertTrue(AtmosphereContractDetails.local(context).details.endsWith("\n\nGag\nOff"));
     }
 
     @Test public void disabledEmptyAndCustomSettingsRemainExplicitWithoutInventedSelections() {
@@ -105,7 +114,7 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         assertTrue(preferences.edit().putStringSet(SubliminalSettingsRepository.KEY_PACKS, Set.of("beta"))
                 .putString(PopupStormSettings.K_POSITION_MODE, "random").commit());
-        assertEquals(expected(), AtmosphereContractDetails.remote(context, sections,
+        assertEquals(expectedAtmosphere() + "\n\nGag\nUnknown", AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", true, "popup", true), PersonSnapshot.Freshness.CURRENT).details);
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
@@ -116,15 +125,15 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         AtmosphereContractDetails blocked = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.CURRENT);
-        assertEquals("Whispers Disabled by Sub\nPopup Storm On", blocked.summary);
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGag Unknown", blocked.summary);
         for (PersonSnapshot.Freshness freshness : PersonSnapshot.Freshness.values()) {
             AtmosphereContractDetails missing = AtmosphereContractDetails.remote(context, sections, Map.of(), freshness);
-            assertEquals("Whispers Configured on\nPopup Storm Configured on", missing.summary);
+            assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", missing.summary);
             assertTrue(missing.details.contains("Consent: Unknown"));
         }
         AtmosphereContractDetails stale = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.STALE);
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", stale.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", stale.summary);
         assertTrue(stale.details.contains("Consent: Last observed disabled by Sub"));
         assertTrue(stale.details.contains("Consent: Last observed allowed"));
     }
@@ -199,6 +208,10 @@ public final class AtmosphereContractDetailsAndroidTest {
     }
 
     private String expected() {
+        return expectedAtmosphere() + "\n\nGag\nOn";
+    }
+
+    private String expectedAtmosphere() {
         return "Whispers\nOn\nCategories: Custom, Focus, Obedience\nIntensity: Strict\n\n"
                 + "Popup Storm\nOn\nPlacement: Center · Avoid detections\nEffects: Bursts, Bouncing, Tease (Blur)";
     }
@@ -216,7 +229,7 @@ public final class AtmosphereContractDetailsAndroidTest {
     private static boolean detailsReady(View value) {
         if (!(value instanceof ViewGroup) || !value.isShown()) return false;
         ViewGroup group = (ViewGroup) value;
-        if (group.getChildCount() != 2) return false;
+        if (group.getChildCount() != 3) return false;
         for (int index = 0; index < group.getChildCount(); index++) {
             View child = group.getChildAt(index);
             if (!(child instanceof TextView) || ((TextView) child).getLayout() == null
@@ -227,7 +240,7 @@ public final class AtmosphereContractDetailsAndroidTest {
 
     private void assertDetails(View value) {
         ViewGroup group = (ViewGroup) value;
-        assertEquals(2, group.getChildCount());
+        assertEquals(3, group.getChildCount());
         assertEquals(expected(), text(group));
         for (int index = 0; index < group.getChildCount(); index++) {
             TextView row = (TextView) group.getChildAt(index);

@@ -48,6 +48,10 @@ public final class GagKeyboardService extends InputMethodService {
     private LinearLayout keyboard;
     private Button shiftKey;
     private TextView status;
+    private ImageButton settingsButton;
+    private boolean subWorkspace;
+    private boolean enabled;
+    private boolean editorAllowed;
 
     private record LetterKey(Button button, String letter, String alternate) {}
 
@@ -75,6 +79,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onStartInputView(EditorInfo editor, boolean restarting) {
         super.onStartInputView(editor, restarting);
+        refreshWorkspace();
         if (keyboard != null) renderKeys();
     }
 
@@ -103,14 +108,29 @@ public final class GagKeyboardService extends InputMethodService {
     private void reloadRules() {
         leaveWordLiteral();
         GagSettings settings = GagSettings.load(this);
-        boolean allowed = GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName());
-        rules = settings.enabled() && allowed ? settings.rules() : null;
-        if (status != null) updateStatus(settings.enabled(), allowed);
+        subWorkspace = GagActivity.canConfigure(this);
+        enabled = settings.enabled();
+        editorAllowed = GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName());
+        rules = enabled && editorAllowed ? settings.rules() : null;
+        updateStatus();
     }
 
-    private void updateStatus(boolean enabled, boolean allowed) {
-        status.setText(!enabled ? R.string.gag_keyboard_inactive
-                : allowed ? R.string.gag_keyboard_active : R.string.gag_keyboard_excluded);
+    private void refreshWorkspace() {
+        boolean allowed = GagActivity.canConfigure(this);
+        if (subWorkspace == allowed) return;
+        if (!allowed && word.length() != 0) {
+            leaveWordLiteral();
+            literalWord = true;
+        }
+        subWorkspace = allowed;
+        updateStatus();
+    }
+
+    private void updateStatus() {
+        if (status != null) status.setText(!subWorkspace || (enabled && !editorAllowed)
+                ? R.string.gag_keyboard_excluded
+                : enabled ? R.string.gag_keyboard_active : R.string.gag_keyboard_inactive);
+        if (settingsButton != null) settingsButton.setVisibility(subWorkspace ? View.VISIBLE : View.GONE);
     }
 
     private void leaveWordLiteral() {
@@ -121,12 +141,13 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void type(String text) {
+        refreshWorkspace();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
         boolean inWord = GagRules.wordCharacter(character)
                 || (word.length() > 0 || literalWord) && GagRules.apostrophe(character);
-        if (rules != null && inWord && !literalWord) {
+        if (subWorkspace && rules != null && inWord && !literalWord) {
             if (word.length() + text.length() <= MAX_WORD_LENGTH) {
                 word.append(text);
                 if (!input.setComposingText(word.toString(), 1)) {
@@ -156,11 +177,13 @@ public final class GagKeyboardService extends InputMethodService {
         }
         String completed = word.toString();
         word.setLength(0);
-        if (rules != null) completed = rules.complete(completed, bound -> ThreadLocalRandom.current().nextInt(bound));
+        if (subWorkspace && rules != null)
+            completed = rules.complete(completed, bound -> ThreadLocalRandom.current().nextInt(bound));
         input.commitText(completed + suffix, 1);
     }
 
     private void backspace() {
+        refreshWorkspace();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         if (word.length() > 0) {
@@ -179,6 +202,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void enter() {
+        refreshWorkspace();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         completeWord(input, "");
@@ -193,6 +217,7 @@ public final class GagKeyboardService extends InputMethodService {
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         keyboard.setPadding(dp(2), dp(2), dp(2), dp(6));
         keyboard.setBackgroundResource(R.drawable.bg_gag_keyboard);
+        refreshWorkspace();
         renderKeys();
         return keyboard;
     }
@@ -250,13 +275,13 @@ public final class GagKeyboardService extends InputMethodService {
         status.setTextSize(13);
         status.setPaddingRelative(dp(12), 0, 0, 0);
         tools.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        updateStatus(GagSettings.enabled(this),
-                GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName()));
-        toolbarAction(tools, R.drawable.ic_overview_settings, R.string.gag_keyboard_configure, this::configure);
+        settingsButton = toolbarAction(tools, R.drawable.ic_overview_settings,
+                R.string.gag_keyboard_configure, this::configure);
         toolbarAction(tools, R.drawable.ic_gag_picker, R.string.gag_choose_keyboard, this::chooseKeyboard);
+        updateStatus();
     }
 
-    private void toolbarAction(LinearLayout row, int icon, int label, Runnable action) {
+    private ImageButton toolbarAction(LinearLayout row, int icon, int label, Runnable action) {
         ImageButton button = new ImageButton(row.getContext());
         button.setImageResource(icon);
         button.setImageTintList(ColorStateList.valueOf(0xffc9c9c9));
@@ -266,9 +291,12 @@ public final class GagKeyboardService extends InputMethodService {
         button.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
         button.setOnClickListener(view -> action.run());
         row.addView(button, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        return button;
     }
 
     private void configure() {
+        refreshWorkspace();
+        if (!subWorkspace) return;
         leaveWordLiteral();
         startActivity(new Intent(this, GagActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
