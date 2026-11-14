@@ -50,54 +50,13 @@ public final class CompactChoiceGroup extends RadioGroup {
                         ? Math.min(preferredColumns, count)
                         : count == 4 ? 2 : Math.min(3, count);
         columns = Math.max(1, Math.min(desired, available / Math.max(1, minimum)));
-        rowHeights = new int[(count + columns - 1) / columns];
-        int cell = available / columns;
-        int visible = 0;
-        for (int i = 0; i < getChildCount(); i++) {
-            View child = getChildAt(i);
-            if (child.getVisibility() == GONE) continue;
-            LayoutParams params = (LayoutParams) child.getLayoutParams();
-            int childWidth = Math.max(0, cell - params.leftMargin - params.rightMargin);
-            child.measure(MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
-                    getChildMeasureSpec(MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
-                            0, params.height));
-            int row = visible++ / columns;
-            rowHeights[row] = Math.max(rowHeights[row],
-                    child.getMeasuredHeight() + params.topMargin + params.bottomMargin);
-        }
-        // A multiline subtitle can make one choice taller. Stretch its row siblings
-        // after natural measurement rather than only reserving an invisible tall row.
-        visible = 0;
-        for (int i = 0; i < getChildCount(); i++) {
-            View child = getChildAt(i);
-            if (child.getVisibility() == GONE) continue;
-            LayoutParams params = (LayoutParams) child.getLayoutParams();
-            int row = visible++ / columns;
-            child.measure(MeasureSpec.makeMeasureSpec(child.getMeasuredWidth(), MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(Math.max(0,
-                            rowHeights[row] - params.topMargin - params.bottomMargin), MeasureSpec.EXACTLY));
-        }
+        rowHeights = ChoiceGridLayout.measureRows(this, available, count, columns);
         int height = getPaddingTop() + getPaddingBottom();
         for (int row : rowHeights) height += row;
         setMeasuredDimension(resolveSize(width, widthSpec), resolveSize(height, heightSpec));
     }
 
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        int cell = Math.max(0, right - left - getPaddingLeft() - getPaddingRight()) / columns;
-        int y = getPaddingTop();
-        int visible = 0;
-        for (int i = 0; i < getChildCount(); i++) {
-            View child = getChildAt(i);
-            if (child.getVisibility() == GONE) continue;
-            int row = visible / columns;
-            int column = visible % columns;
-            if (column == 0 && row > 0) y += rowHeights[row - 1];
-            if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) column = columns - 1 - column;
-            LayoutParams params = (LayoutParams) child.getLayoutParams();
-            int x = getPaddingLeft() + column * cell + params.leftMargin;
-            int childY = y + params.topMargin;
-            child.layout(x, childY, x + child.getMeasuredWidth(), childY + child.getMeasuredHeight());
-            visible++;
-        }
+        ChoiceGridLayout.layout(this, right - left, columns, rowHeights);
     }
 }

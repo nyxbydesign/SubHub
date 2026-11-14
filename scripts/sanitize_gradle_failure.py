@@ -864,6 +864,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/util/AsyncUiScope.java": "main_util_async_ui_scope",
     b"app/src/main/java/com/subhub/app/util/BoundedCopy.java": "main_util_bounded_copy",
     b"app/src/main/java/com/subhub/app/util/ColorPickerDialog.java": "main_util_color_picker_dialog",
+    b"app/src/main/java/com/subhub/app/util/ChoiceGridLayout.java": "main_util_choice_grid_layout",
     b"app/src/main/java/com/subhub/app/util/CompactChoiceGroup.java": "main_util_compact_choice_group",
     b"app/src/main/java/com/subhub/app/util/FiveSecondBackGesture.java": "main_util_five_second_back_gesture",
     b"app/src/main/java/com/subhub/app/util/FormRow.java": "main_util_form_row",
