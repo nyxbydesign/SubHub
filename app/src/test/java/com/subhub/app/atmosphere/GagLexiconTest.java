@@ -33,6 +33,17 @@ public final class GagLexiconTest {
         assertTrue(words.suggestions("a".repeat(25)).isEmpty());
     }
 
+    @Test public void committedBackspacePrefixesRequireAWholeCurrentToken() {
+        String prefix = GagLexicon.cursorPrefix("another wor", "");
+        assertEquals("wor", prefix);
+        assertEquals(List.of("plan", "play"),
+                words.suggestions(GagLexicon.cursorPrefix("another pla", " ")));
+        assertEquals("", GagLexicon.cursorPrefix("another pla", "n"));
+        assertEquals("", GagLexicon.cursorPrefix("another ", ""));
+        assertEquals("", GagLexicon.cursorPrefix("a".repeat(GagLexicon.cursorPrefixLimit()), ""));
+        assertEquals("", GagLexicon.cursorPrefix("pla", null));
+    }
+
     @Test public void oneAndTwoLetterPrefixesConsiderTheWholeMatchRange() {
         Map<String, Integer> counts = new HashMap<>();
         for (char first = 'a'; first <= 'z'; first++)

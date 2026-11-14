@@ -374,14 +374,34 @@ public final class ProfileAndroidTest {
     }
 
     @Test public void gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace() {
+        var dictionary = new com.subhub.app.atmosphere.GagPersonalDictionary(context);
+        boolean priorLearning = dictionary.isLearningEnabled();
+        String word = "fixture" + java.util.UUID.randomUUID().toString().substring(0, 8)
+                .chars().mapToObj(digit -> Character.toString('a' + Character.digit(digit, 16)))
+                .collect(java.util.stream.Collectors.joining());
         try (ActivityScenario<com.subhub.app.atmosphere.GagActivity> setup =
                      ActivityScenario.launch(com.subhub.app.atmosphere.GagActivity.class)) {
             setup.onActivity(activity -> {
                 assertTrue(activity.findViewById(R.id.gag_keyboard_settings).isClickable());
+                assertFalse(activity.findViewById(R.id.gag_dictionary_content).isShown());
                 assertNull(activity.findViewById(R.id.gag_enabled));
                 assertNull(activity.findViewById(R.id.gag_modes));
                 assertNull(activity.findViewById(R.id.gag_replacements));
             });
+            onView(withId(R.id.gag_personal_dictionary)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_custom_word)).perform(revealAboveNavigation(), replaceText(word));
+            onView(withId(R.id.gag_add_custom_word)).perform(revealAboveNavigation(), click());
+            assertTrue(dictionary.customWords().contains(word));
+            onView(withId(R.id.gag_learning_enabled)).perform(revealAboveNavigation(), click());
+            assertEquals(!priorLearning, dictionary.isLearningEnabled());
+            setup.recreate();
+            onView(withId(R.id.gag_clear_learned)).perform(revealAboveNavigation());
+            onView(withContentDescription(context.getString(R.string.gag_remove_custom_word, word)))
+                    .perform(revealAboveNavigation(), click());
+            assertFalse(dictionary.customWords().contains(word));
+        } finally {
+            dictionary.removeCustomWord(word);
+            if (dictionary.isLearningEnabled() != priorLearning) dictionary.setLearningEnabled(priorLearning);
         }
         ControllerPinManager.enterDomMode();
         boolean prior = GagParticipation.allowed(context);

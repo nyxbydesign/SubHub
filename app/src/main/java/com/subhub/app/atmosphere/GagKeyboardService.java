@@ -58,9 +58,12 @@ public final class GagKeyboardService extends InputMethodService {
     private static final int MODIFIER_SURFACE = 0x88181818;
     private static final int RETURN_SURFACE = 0xff5e97f6;
     private static final int LABEL_COLOR = 0xfff6f6f6;
-    private static final int REPEAT_MILLIS = 55;
 
     private final StringBuilder word = new StringBuilder();
+    private final StringBuilder sentenceOpening = new StringBuilder();
+    private boolean collectOpening;
+    private int openingWords;
+    private GagPersonalDictionary personalDictionary;
     private final List<LetterKey> letters = new ArrayList<>();
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService spelling = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -69,6 +72,10 @@ public final class GagKeyboardService extends InputMethodService {
     private GagLexicon lexicon;
     private boolean loadingLexicon;
     private long suggestionGeneration;
+    private boolean awaitingDeleteSelection;
+    private int committedCursor = -1;
+    private char pendingPunctuation;
+    private int punctuationCursor = -1;
     private LinearLayout suggestionStrip;
     private final List<TextView> suggestionViews = new ArrayList<>(3);
     private RemoteFeature backend;
@@ -92,7 +99,7 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean renderedShifted, renderedCapsLock;
     private int renderedEditorAction = -1;
     private ImageButton shiftKey;
-    private KeyPress repeatingDelete;
+    private GagKeyPress repeatingDelete;
     private TextView status;
     private int statusLabel;
     private boolean subWorkspace;
@@ -128,6 +135,7 @@ public final class GagKeyboardService extends InputMethodService {
         word.setLength(0);
         clearSuggestions();
         literalWord = false;
+        clearPendingSpace();
         shifted = false;
         capsLock = false;
         lastShiftTap = 0;
@@ -135,6 +143,7 @@ public final class GagKeyboardService extends InputMethodService {
         page = numberEditor() ? Page.NUMBERS : Page.LETTERS;
         editorAllowed = GagEditorPolicy.allowsReplacement(editor, getPackageName());
         if (editorAllowed) loadLexicon();
+        resetOpening(false);
         editorEpoch++;
         requestedRevision = -1;
         rulesRevision = -1;
@@ -147,11 +156,17 @@ public final class GagKeyboardService extends InputMethodService {
         super.onStartInputView(editor, restarting);
         refreshWorkspace();
         if (keyboard != null) renderKeysIfNeeded(editor);
+        if (!restarting && editorAllowed) {
+            resetOpening(isEmptyEditor(getCurrentInputConnection()));
+            scheduleSuggestions();
+        }
     }
 
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        clearPendingSpace();
+        resetOpening(false);
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         leaveWordLiteral();
         super.onFinishInputView(finishingInput);
@@ -160,6 +175,8 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onFinishInput() {
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         word.setLength(0);
+        clearPendingSpace();
+        resetOpening(false);
         clearSuggestions();
         editorAllowed = false;
         editorEpoch++;
@@ -175,6 +192,21 @@ public final class GagKeyboardService extends InputMethodService {
         if (word.length() > 0 && (composingStart < 0 || newStart != newEnd || newEnd != composingEnd)) {
             leaveWordLiteral();
             literalWord = true;
+            resetOpening(false);
+        }
+        if (newStart == oldStart && newEnd == oldEnd) return;
+        if (pendingPunctuation != 0) {
+            if (newStart != newEnd || (punctuationCursor != -1 && newEnd != punctuationCursor))
+                clearPendingSpace();
+            else punctuationCursor = newEnd;
+        }
+        if (newStart != newEnd || newEnd < oldEnd) resetOpening(false);
+        if (awaitingDeleteSelection) {
+            if (newStart == 0 && newEnd == 0 && isEmptyEditor(getCurrentInputConnection()))
+                resetOpening(true);
+            scheduleSuggestions(newStart == newEnd && composingStart < 0 ? newEnd : -1);
+        } else if (committedCursor != -1 && (newStart != committedCursor || newEnd != committedCursor)) {
+            clearSuggestions();
         }
     }
 
@@ -188,6 +220,7 @@ public final class GagKeyboardService extends InputMethodService {
             if (rules != null && word.length() != 0) {
                 leaveWordLiteral();
                 literalWord = true;
+                resetOpening(false);
             }
             enabled = false;
             rules = null;
@@ -212,6 +245,7 @@ public final class GagKeyboardService extends InputMethodService {
                         if (enabled && word.length() != 0) {
                             leaveWordLiteral();
                             literalWord = true;
+                            resetOpening(false);
                         }
                         rules = enabled ? settings.rules() : null;
                     } catch (org.json.JSONException | IllegalArgumentException ignored) { }
@@ -245,23 +279,33 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
+        insertPendingSpace(input, character);
         boolean inWord = (page == Page.LETTERS && GagRules.wordCharacter(character))
                 || ((word.length() > 0 || literalWord) && GagRules.apostrophe(character));
-        if (editorAllowed && (rules != null || lexicon != null) && inWord && !literalWord) {
+        if (editorAllowed && inWord && !literalWord) {
             if (word.length() + text.length() <= MAX_WORD_LENGTH) {
                 word.append(text);
                 if (!input.setComposingText(word.toString(), 1)) {
                     leaveWordLiteral();
                     literalWord = true;
+                    resetOpening(false);
                     input.commitText(text, 1);
                 } else scheduleSuggestions();
             } else {
                 leaveWordLiteral();
                 literalWord = true;
+                resetOpening(false);
                 input.commitText(text, 1);
             }
         } else {
-            completeWord(input, text, null);
+            boolean committed = completeWord(input, text, null);
+            if (committed && editorAllowed && (character == '.' || character == ','))
+                pendingPunctuation = (char) character;
+            if (committed && editorAllowed) {
+                if (character == '.' || character == '!' || character == '?' || character == '\n')
+                    resetOpening(true);
+                else if (character != ' ') resetOpening(false);
+            }
             literalWord = inWord;
         }
         if (page == Page.LETTERS && Character.isLetter(character)) lastShiftTap = 0;
@@ -271,21 +315,79 @@ public final class GagKeyboardService extends InputMethodService {
         }
     }
 
-    private void completeWord(InputConnection input, String suffix, String suggestion) {
+    private void clearPendingSpace() {
+        pendingPunctuation = 0;
+        punctuationCursor = -1;
+    }
+
+    private void insertPendingSpace(InputConnection input, int next) {
+        char punctuation = pendingPunctuation;
+        clearPendingSpace();
+        if (!editorAllowed || punctuation == 0 || !Character.isLetter(next)) return;
+        CharSequence selected = input.getSelectedText(0);
+        if (selected != null && selected.length() != 0) return;
+        if (GagPunctuation.needsSpace(punctuation, next, input.getTextBeforeCursor(2, 0),
+                input.getTextAfterCursor(2, 0))) input.commitText(" ", 1);
+    }
+
+    private boolean completeWord(InputConnection input, String suffix, String suggestion) {
         clearSuggestions();
         if (word.length() == 0) {
-            if (!suffix.isEmpty()) input.commitText(suffix, 1);
-            return;
+            boolean committed = !suffix.isEmpty() && input.commitText(suffix, 1);
+            if (!committed || literalWord) resetOpening(false);
+            return committed;
         }
         String original = word.toString();
         String completed = suggestion == null ? original : suggestion;
         word.setLength(0);
-        if (subWorkspace && rules != null)
-            completed = rules.complete(original, completed, bound -> ThreadLocalRandom.current().nextInt(bound));
-        input.commitText(completed + suffix, 1);
+        String proposed = completed;
+        completed = applyGag(original, proposed);
+        if (!input.commitText(completed + suffix, 1)) {
+            resetOpening(false);
+            return false;
+        }
+        if (completed.equals(proposed)) rememberWord(completed);
+        else resetOpening(false);
+        return true;
+    }
+
+    private String applyGag(String original, String proposed) {
+        return subWorkspace && rules != null
+                ? rules.complete(original, proposed, bound -> ThreadLocalRandom.current().nextInt(bound))
+                : proposed;
+    }
+
+    private void resetOpening(boolean collect) {
+        sentenceOpening.setLength(0);
+        openingWords = 0;
+        collectOpening = collect;
+    }
+
+    private void rememberWord(String learned) {
+        if (!editorAllowed) return;
+        GagPersonalDictionary personal = personalDictionary();
+        if (!personal.isLearningEnabled()) {
+            resetOpening(false);
+            return;
+        }
+        String opener = null;
+        if (collectOpening) {
+            if (openingWords > 0) sentenceOpening.append(' ');
+            sentenceOpening.append(learned);
+            if (++openingWords >= 2) opener = sentenceOpening.toString();
+            if (openingWords == 3) resetOpening(false);
+        }
+        personal.recordToken(learned, opener);
+    }
+
+    private synchronized GagPersonalDictionary personalDictionary() {
+        if (personalDictionary == null) personalDictionary = new GagPersonalDictionary(this);
+        return personalDictionary;
     }
 
     private void backspace() {
+        clearPendingSpace();
+        resetOpening(false);
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
@@ -301,17 +403,20 @@ public final class GagKeyboardService extends InputMethodService {
             }
             scheduleSuggestions();
         } else {
+            clearSuggestions();
+            awaitingDeleteSelection = canSuggest();
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
         }
     }
 
     private void enter() {
+        clearPendingSpace();
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         completeWord(input, "", null);
         literalWord = false;
-        if (!sendDefaultEditorAction(true)) input.commitText("\n", 1);
+        resetOpening(!sendDefaultEditorAction(true) && input.commitText("\n", 1));
     }
 
     private void refreshReplacementAuthority() {
@@ -591,20 +696,33 @@ public final class GagKeyboardService extends InputMethodService {
             // Android's asset merger unwraps .gz and stores the resulting TSV in the APK.
             try (java.io.InputStream source = getAssets().open("gag_words/words.tsv")) {
                 GagLexicon loaded = GagLexicon.read(source);
-                main.post(() -> { if (backend != null) lexicon = loaded; });
+                main.post(() -> {
+                    if (backend == null) return;
+                    lexicon = loaded;
+                    if (editorAllowed && isInputViewShown()) scheduleSuggestions();
+                });
             } catch (java.io.IOException | NumberFormatException invalid) {
                 // Invalid optional dictionary data must not interfere with literal typing.
             }
         });
     }
 
-    private void scheduleSuggestions() {
+    private boolean canSuggest() {
+        return editorAllowed && suggestionStrip != null && page == Page.LETTERS;
+    }
+
+    private void scheduleSuggestions() { scheduleSuggestions(-1); }
+
+    private void scheduleSuggestions(int cursor) {
         clearSuggestions();
-        if (editorAllowed && lexicon != null && word.length() > 0 && page == Page.LETTERS)
-            main.postDelayed(requestSuggestions, 45);
+        if (!canSuggest()) return;
+        committedCursor = cursor;
+        main.postDelayed(requestSuggestions, 45);
     }
 
     private void clearSuggestions() {
+        awaitingDeleteSelection = false;
+        committedCursor = -1;
         suggestionGeneration++;
         main.removeCallbacks(requestSuggestions);
         if (suggestionTask != null) {
@@ -622,23 +740,37 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void requestSuggestions() {
-        String token = word.toString();
+        if (!canSuggest()) return;
+        InputConnection input = getCurrentInputConnection();
+        if (input == null) return;
+        int cursor = committedCursor;
+        String token = cursor < 0 ? word.toString() : readCommittedPrefix(input, cursor);
+        if (token.isEmpty() && !isEmptyEditor(input)) return;
         long generation = suggestionGeneration;
         GagLexicon source = lexicon;
-        if (!editorAllowed || source == null || token.isEmpty() || page != Page.LETTERS) return;
         suggestionTask = spelling.submit(() -> {
-            List<String> candidates = source.suggestions(token);
+            List<String> generic = source == null ? List.of() : source.suggestions(token);
+            if (source != null && source.isKnownWord(token)) {
+                List<String> withLiteral = new ArrayList<>(generic.size() + 1);
+                withLiteral.add(token);
+                withLiteral.addAll(generic);
+                generic = withLiteral;
+            }
+            List<String> candidates = personalDictionary().suggestions(token, generic, 3);
             main.post(() -> {
-                if (generation != suggestionGeneration || !editorAllowed || candidates.isEmpty()
+                if (generation != suggestionGeneration || input != getCurrentInputConnection()
+                        || !editorAllowed || candidates.isEmpty()
                         || suggestionStrip == null) return;
+                if (token.isEmpty() && !isEmptyEditor(input)) return;
                 for (int index = 0; index < suggestionViews.size(); index++) {
                     TextView view = suggestionViews.get(index);
-                    boolean available = index < candidates.size();
+                    int rank = index == 0 ? 1 : index == 1 ? 0 : 2;
+                    boolean available = rank < candidates.size();
                     view.setVisibility(available ? View.VISIBLE : View.INVISIBLE);
                     if (!available) continue;
-                    String candidate = candidates.get(index);
+                    String candidate = candidates.get(rank);
                     view.setText(candidate);
-                    view.setOnClickListener(key -> acceptSuggestion(generation, candidate));
+                    view.setOnClickListener(key -> acceptSuggestion(generation, input, cursor, token, candidate));
                 }
                 status.setVisibility(View.INVISIBLE);
                 suggestionStrip.setVisibility(View.VISIBLE);
@@ -646,13 +778,65 @@ public final class GagKeyboardService extends InputMethodService {
         });
     }
 
-    private void acceptSuggestion(long generation, String candidate) {
-        refreshReplacementAuthority();
-        InputConnection input = getCurrentInputConnection();
-        if (generation == suggestionGeneration && editorAllowed && word.length() != 0 && input != null) {
-            completeWord(input, " ", candidate);
-            literalWord = false;
+    private static boolean isEmptyEditor(InputConnection input) {
+        if (input == null) return false;
+        CharSequence selection = input.getSelectedText(0);
+        if (selection != null && selection.length() != 0) return false;
+        CharSequence before = input.getTextBeforeCursor(1, 0);
+        CharSequence after = input.getTextAfterCursor(1, 0);
+        return before != null && before.length() == 0 && after != null && after.length() == 0;
+    }
+
+    private static String readCommittedPrefix(InputConnection input, int cursor) {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            android.view.inputmethod.SurroundingText text =
+                    input.getSurroundingText(GagLexicon.cursorPrefixLimit(), 2, 0);
+            if (text != null && text.getOffset() >= 0) {
+                int selection = text.getSelectionStart();
+                if (selection != text.getSelectionEnd() || text.getOffset() + selection != cursor)
+                    return "";
+                CharSequence buffer = text.getText();
+                return GagLexicon.cursorPrefix(buffer.subSequence(0, selection),
+                        buffer.subSequence(selection, buffer.length()));
+            }
         }
+        CharSequence selection = input.getSelectedText(0);
+        if (selection != null && selection.length() != 0) return "";
+        return GagLexicon.cursorPrefix(input.getTextBeforeCursor(GagLexicon.cursorPrefixLimit(), 0),
+                input.getTextAfterCursor(2, 0));
+    }
+
+    private void acceptSuggestion(long generation, InputConnection input, int cursor,
+            String token, String candidate) {
+        refreshReplacementAuthority();
+        if (generation != suggestionGeneration || !canSuggest()
+                || input != getCurrentInputConnection()) return;
+        clearPendingSpace();
+        if (token.isEmpty()) {
+            clearSuggestions();
+            if (!isEmptyEditor(input)) return;
+            StringBuilder completed = new StringBuilder();
+            for (String chunk : candidate.split(" "))
+                completed.append(applyGag(chunk, chunk)).append(' ');
+            input.commitText(completed.toString(), 1);
+            resetOpening(false);
+        } else if (cursor < 0) {
+            if (word.length() == 0) return;
+            completeWord(input, " ", candidate);
+        } else {
+            clearSuggestions();
+            if (cursor < token.length() || !token.equals(readCommittedPrefix(input, cursor))) return;
+            input.beginBatchEdit();
+            try {
+                if (!input.setComposingRegion(cursor - token.length(), cursor)) return;
+                String completed = applyGag(token, candidate);
+                if (!input.commitText(completed + " ", 1)) input.finishComposingText();
+                else if (completed.equals(candidate)) rememberWord(candidate);
+            } finally {
+                input.endBatchEdit();
+            }
+        }
+        literalWord = false;
     }
 
     private ImageButton iconKey(LinearLayout row, float weight, int surface, int icon, int label,
@@ -667,7 +851,7 @@ public final class GagKeyboardService extends InputMethodService {
         button.setStateListAnimator(null);
         button.setHapticFeedbackEnabled(true);
         button.setOnClickListener(view -> action.run());
-        KeyPress press = new KeyPress(repeat ? action : null);
+        GagKeyPress press = new GagKeyPress(main, repeat ? action : null);
         if (repeat) repeatingDelete = press;
         button.setOnTouchListener(press);
         addKeySlot(row, button, weight);
@@ -762,7 +946,7 @@ public final class GagKeyboardService extends InputMethodService {
         button.setPadding(0, 0, 0, 0);
         button.setOnClickListener(view -> action.run());
         button.setHapticFeedbackEnabled(true);
-        button.setOnTouchListener(new KeyPress(null));
+        button.setOnTouchListener(new GagKeyPress(main, null));
         return button;
     }
 
@@ -788,54 +972,6 @@ public final class GagKeyboardService extends InputMethodService {
 
     private boolean compact() {
         return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-    }
-
-    private final class KeyPress implements View.OnTouchListener {
-        private final Runnable repeatAction;
-        private View pressed;
-        private boolean repeated;
-        private final Runnable repeat = this::repeat;
-
-        KeyPress(Runnable repeatAction) { this.repeatAction = repeatAction; }
-
-        @Override public boolean onTouch(View view, MotionEvent event) {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN -> {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                    repeated = false;
-                    if (repeatAction != null) {
-                        pressed = view;
-                        main.postDelayed(repeat, ViewConfiguration.getLongPressTimeout());
-                    }
-                }
-                case MotionEvent.ACTION_MOVE -> {
-                    if (pressed != null && (event.getX() < 0 || event.getY() < 0
-                            || event.getX() >= view.getWidth() || event.getY() >= view.getHeight()))
-                        cancelRepeat();
-                }
-                case MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    cancelRepeat();
-                    if (repeated) {
-                        view.setPressed(false);
-                        return true;
-                    }
-                }
-                default -> { }
-            }
-            return false;
-        }
-
-        private void repeat() {
-            if (pressed == null || !pressed.isPressed() || !pressed.isAttachedToWindow()) return;
-            repeated = true;
-            repeatAction.run();
-            main.postDelayed(repeat, REPEAT_MILLIS);
-        }
-
-        private void cancelRepeat() {
-            main.removeCallbacks(repeat);
-            pressed = null;
-        }
     }
 
     private int dp(float value) {

@@ -38,6 +38,15 @@
     <string name="gag_keyboard_inactive">Gag off</string>
     <string name="gag_keyboard_excluded">Literal typing</string>
     <string name="gag_keyboard_setup">Set up Gag keyboard</string>
+    <string name="gag_personal_dictionary">Personal dictionary</string>
+    <string name="gag_learn_from_typing">Learn from typing</string>
+    <string name="gag_custom_word">Word</string>
+    <string name="gag_add_custom_word">Add</string>
+    <string name="gag_remove_word">Remove</string>
+    <string name="gag_remove_custom_word">Remove %1$s</string>
+    <string name="gag_custom_word_invalid">Enter a new word.</string>
+    <string name="gag_clear_learned">Clear learned suggestions</string>
+    <string name="gag_learned_cleared">Learned suggestions cleared.</string>
     <string name="gag_status_unknown">Unknown</string>
     <string name="gag_keyboard_selected">SubHub Gag keyboard is selected.</string>
     <string name="gag_keyboard_choose_next">Choose SubHub Gag keyboard to finish setup.</string>

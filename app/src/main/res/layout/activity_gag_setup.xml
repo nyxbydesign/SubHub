@@ -37,5 +37,73 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/ui_gap_control" />
+
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/gag_personal_dictionary"
+            style="@style/Widget.SubHub.DefaultButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_group"
+            android:text="@string/gag_personal_dictionary" />
+
+        <LinearLayout
+            android:id="@+id/gag_dictionary_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.subhub.app.util.StateToggle
+                android:id="@+id/gag_learning_enabled"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:saveEnabled="false"
+                android:text="@string/gag_learn_from_typing" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:labelFor="@+id/gag_custom_word"
+                android:text="@string/gag_custom_word"
+                android:textColor="@color/text_secondary" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@id/gag_custom_word"
+                    style="@style/Widget.SubHub.Input"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:imeOptions="actionDone"
+                    android:inputType="textNoSuggestions"
+                    android:singleLine="true" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/gag_add_custom_word"
+                    style="@style/Widget.SubHub.DefaultButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/ui_gap_control"
+                    android:text="@string/gag_add_custom_word" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/gag_custom_words"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/gag_clear_learned"
+                style="@style/Widget.SubHub.DefaultButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/gag_clear_learned" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

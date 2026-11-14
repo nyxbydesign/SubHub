@@ -48,6 +48,30 @@ final class GagLexicon {
         return new GagLexicon(counts);
     }
 
+    static int cursorPrefixLimit() { return MAX_LOOKUP_LENGTH + 1; }
+
+    static String cursorPrefix(CharSequence before, CharSequence after) {
+        if (before == null || before.length() == 0 || after == null) return "";
+        if (after.length() > 0) {
+            int first = Character.codePointAt(after, 0);
+            if (GagRules.wordCharacter(first) || GagRules.apostrophe(first)) return "";
+        }
+        int end = before.length();
+        int start = end;
+        while (start > 0) {
+            int point = Character.codePointBefore(before, start);
+            if (!GagRules.wordCharacter(point) && !GagRules.apostrophe(point)) break;
+            start -= Character.charCount(point);
+        }
+        if (end - start > MAX_LOOKUP_LENGTH) return "";
+        return before.subSequence(start, end).toString();
+    }
+
+    boolean isKnownWord(String original) {
+        String word = lookupWord(original);
+        return word != null && counts.containsKey(word);
+    }
+
     List<String> suggestions(String original) {
         String word = lookupWord(original);
         if (word == null) return List.of();
