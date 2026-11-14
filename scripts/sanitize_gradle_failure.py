@@ -383,8 +383,6 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/onboarding/OnboardingRolePickerView.java": "main_onboarding_onboarding_role_picker_view",
     b"app/src/main/java/com/subhub/app/onboarding/OnboardingState.java": "main_onboarding_onboarding_state",
     b"app/src/main/java/com/subhub/app/onboarding/SetupFeaturePreviewView.java": "main_onboarding_setup_feature_preview_view",
-    b"app/src/main/java/com/subhub/app/onboarding/SetupWalletGraphic.java": "main_onboarding_setup_wallet_graphic",
-    b"app/src/main/java/com/subhub/app/onboarding/SetupWalletRulesView.java": "main_onboarding_setup_wallet_rules_view",
     b"app/src/main/java/com/subhub/app/onboarding/SubOnboardingFlow.java": "main_onboarding_sub_onboarding_flow",
     b"app/src/main/java/com/subhub/app/overlay/AndroidSplineScroll.java": "main_overlay_android_spline_scroll",
     b"app/src/main/java/com/subhub/app/overlay/BodyOverlapHeuristics.java": "main_overlay_body_overlap_heuristics",
@@ -527,7 +525,6 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/remote/BackgroundSyncPreferences.java": "main_remote_background_sync_preferences",
     b"app/src/main/java/com/subhub/app/remote/ContractChangeDetails.java": "main_remote_contract_change_details",
     b"app/src/main/java/com/subhub/app/remote/DeviceDataSyncWake.java": "main_remote_device_data_sync_wake",
-    b"app/src/main/java/com/subhub/app/remote/DummyPreviewConfiguration.java": "main_remote_dummy_preview_configuration",
     b"app/src/main/java/com/subhub/app/remote/ExtraTimeContractFields.java": "main_remote_extra_time_contract_fields",
     b"app/src/main/java/com/subhub/app/remote/ExtraTimeNotifications.java": "main_remote_extra_time_notifications",
     b"app/src/main/java/com/subhub/app/remote/ExtraTimePeer.java": "main_remote_extra_time_peer",
@@ -882,6 +879,7 @@ JAVAC_MAIN_SOURCES = {
 }
 
 JAVAC_SOURCES = {
+    b"app/src/test/java/com/subhub/app/remote/DummyPreviewConfiguration.java": "unit_remote_dummy_preview_configuration",
     b"app/src/test/java/com/subhub/app/atmosphere/GagLexiconTest.java": "unit_gag_lexicon_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagPersonalDictionaryTest.java": "unit_gag_personal_dictionary_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagPunctuationTest.java": "unit_gag_punctuation_test",
