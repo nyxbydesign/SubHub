@@ -27,6 +27,10 @@ final class DomAchievementCatalog {
             a("style_explorer", R.string.achievement_style_explorer, R.string.achievement_desc_style_explorer, "custom", R.drawable.achievement_badge_style_explorer),
             a("border_artist", R.string.achievement_border_artist, R.string.achievement_desc_border_artist, "custom", R.drawable.achievement_badge_border_artist),
             a("color_picker", R.string.achievement_color_picker, R.string.achievement_desc_color_picker, "custom", R.drawable.achievement_badge_color_picker),
+            a("app_mode_guardian", R.string.achievement_app_mode_guardian, R.string.achievement_desc_app_mode_guardian, "app_mode", R.drawable.achievement_badge_app_mode_guardian),
+            a("app_assignment_curator", R.string.achievement_app_assignment_curator, R.string.achievement_desc_app_assignment_curator, "app_mode", R.drawable.achievement_badge_app_assignment_curator),
+            a("limits_setter", R.string.achievement_limits_setter, R.string.achievement_desc_limits_setter, "limits", R.drawable.achievement_badge_limits_setter),
+            a("limits_dual_guard", R.string.achievement_limits_dual_guard, R.string.achievement_desc_limits_dual_guard, "limits", R.drawable.achievement_badge_limits_dual_guard),
             a("paypal_vault", R.string.achievement_paypal_vault, R.string.achievement_desc_paypal_vault, "dom_wallet", R.drawable.achievement_badge_paypal_vault),
             a("dom_tribute_10", R.string.dom_tribute_10, R.string.dom_desc_tribute_10, "dom_tribute", R.drawable.achievement_badge_dom_tribute_10),
             a("dom_tribute_250", R.string.dom_tribute_250, R.string.dom_desc_tribute_250, "dom_tribute", R.drawable.achievement_badge_dom_tribute_250),
@@ -42,8 +46,10 @@ final class DomAchievementCatalog {
         switch (id) {
             case "dom_subs_1": case "dom_hardcore_1":
             case "first_custom_phrase": case "paypal_vault":
-            case "text_filter_enabled": case "color_picker": return 1;
-            case "dom_subs_3": case "dom_hardcore_3": case "text_filter_catalog": return 3;
+            case "text_filter_enabled": case "color_picker":
+            case "app_mode_guardian": case "limits_setter": case "limits_dual_guard": return 1;
+            case "dom_subs_3": case "dom_hardcore_3": case "text_filter_catalog":
+            case "app_assignment_curator": return 3;
             case "border_artist": return 4;
             case "style_explorer": return 8;
             case "dom_subs_5": case "dom_hardcore_5": return 5;

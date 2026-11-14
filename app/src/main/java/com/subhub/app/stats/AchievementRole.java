@@ -24,7 +24,9 @@ public enum AchievementRole {
     static boolean isDomConfiguration(String id) {
         return "first_custom_phrase".equals(id) || "phrase_library".equals(id) || "paypal_vault".equals(id)
                 || "text_filter_enabled".equals(id) || "text_filter_catalog".equals(id)
-                || "color_picker".equals(id) || "border_artist".equals(id) || "style_explorer".equals(id);
+                || "color_picker".equals(id) || "border_artist".equals(id) || "style_explorer".equals(id)
+                || "app_mode_guardian".equals(id) || "app_assignment_curator".equals(id)
+                || "limits_setter".equals(id) || "limits_dual_guard".equals(id);
     }
 
     public boolean owns(String id) {

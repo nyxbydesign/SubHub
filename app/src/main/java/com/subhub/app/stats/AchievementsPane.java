@@ -41,8 +41,9 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private final TextView membershipUnavailable;
     private boolean active;
     private static final String[] CATEGORY_ORDER = {
-            "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor", "dom_appearance", "dom_wallet", "dom_hardcore",
-            "sessions", "time", "streaks", "app_mode", "limits", "pact", "hardcore",
+            "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor", "dom_appearance",
+            "app_mode", "limits", "dom_wallet", "dom_hardcore",
+            "sessions", "time", "streaks", "pact", "hardcore",
             "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
             "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
             "control", "hidden"

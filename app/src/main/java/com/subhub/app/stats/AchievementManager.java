@@ -200,6 +200,17 @@ public final class AchievementManager {
 
     private long domCurrent(String id, DomStatsSnapshot stats) {
         switch (id) {
+            case "app_mode_guardian":
+                return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
+                        .getBoolean(AppModeManager.KEY_ARMED, false) ? 1 : 0;
+            case "app_assignment_curator":
+                return AppModeManager.observedIncludedPackages(context).size();
+            case "limits_setter":
+                return new AppTimerManager(context).loadSettings().anyEnabled() ? 1 : 0;
+            case "limits_dual_guard": {
+                AppTimerManager.Settings settings = new AppTimerManager(context).loadSettings();
+                return settings.perAppEnabled && settings.totalEnabled ? 1 : 0;
+            }
             case "first_custom_phrase": case "phrase_library":
                 return new StatsRepository(context, false).retainedSnapshot().getCustomPhrases();
             case "style_explorer": case "border_artist": {
@@ -386,18 +397,6 @@ public final class AchievementManager {
             case "export_first": case "export_artist": return stats.getExportedImages();
             case "ntr_50": case "ntr_100": case "ntr_200": case "ntr_500": return stats.getAllCategoryCensors();
             case "legend": return getUnlockedCount();
-            case "app_mode_guardian":
-                return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
-                        .getBoolean(AppModeManager.KEY_ARMED, false) ? 1 : 0;
-            case "app_assignment_curator":
-                return (observedOnly ? AppModeManager.observedIncludedPackages(context)
-                        : new AppModeManager(context).getIncludedPackages()).size();
-            case "limits_setter":
-                return new AppTimerManager(context).loadSettings().anyEnabled() ? 1 : 0;
-            case "limits_dual_guard": {
-                AppTimerManager.Settings settings = new AppTimerManager(context).loadSettings();
-                return settings.perAppEnabled && settings.totalEnabled ? 1 : 0;
-            }
             case "pact_sealed":
                 return CommitmentManager.observedStarted(context) ? 1 : 0;
             case "pact_long_haul":
@@ -452,8 +451,7 @@ public final class AchievementManager {
 
     private static boolean ownerFeatureFact(String id) {
         switch (id) {
-            case "app_mode_guardian": case "app_assignment_curator": case "limits_setter":
-            case "limits_dual_guard": case "pact_sealed": case "pact_long_haul":
+            case "pact_sealed": case "pact_long_haul":
             case "hardcore_guardian": case "text_filter_enabled": case "text_filter_catalog":
             case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault": case "paid_pause":
             case "wallet_paid_10": case "wallet_paid_100": case "wallet_paid_500": case "wallet_paid_1000":
@@ -486,11 +484,9 @@ public final class AchievementManager {
             case "border_artist": return 4;
             case "ntr_100": return 100;
             case "ntr_200": return 200;
-            case "app_mode_guardian": case "limits_setter": case "limits_dual_guard":
             case "pact_sealed": case "hardcore_guardian":
             case "text_filter_enabled": case "wallet_keeper":
             case "paypal_vault": case "paid_pause": return 1;
-            case "app_assignment_curator": return 3;
             case "text_filter_catalog": return 3;
             case "tribute_rulesmith": return 3;
             case "wallet_paid_10": return 1_000;
@@ -540,10 +536,6 @@ public final class AchievementManager {
                 a("time_200hr", R.string.achievement_platinum_protection, R.string.achievement_desc_time_200hr, "◆", "time", R.drawable.achievement_badge_time_200hr, false),
                 a("streak_7", R.string.achievement_week_warrior, R.string.achievement_desc_streak_7, "♨", "streaks", R.drawable.achievement_badge_streak_7, false),
                 a("streak_30", R.string.achievement_month_master, R.string.achievement_desc_streak_30, "♨", "streaks", R.drawable.achievement_badge_streak_30, false),
-                a("app_mode_guardian", R.string.achievement_app_mode_guardian, R.string.achievement_desc_app_mode_guardian, "▶", "app_mode", R.drawable.achievement_badge_app_mode_guardian, false),
-                a("app_assignment_curator", R.string.achievement_app_assignment_curator, R.string.achievement_desc_app_assignment_curator, "▦", "app_mode", R.drawable.achievement_badge_app_assignment_curator, false),
-                a("limits_setter", R.string.achievement_limits_setter, R.string.achievement_desc_limits_setter, "⌛", "limits", R.drawable.achievement_badge_limits_setter, false),
-                a("limits_dual_guard", R.string.achievement_limits_dual_guard, R.string.achievement_desc_limits_dual_guard, "⌛", "limits", R.drawable.achievement_badge_limits_dual_guard, false),
                 a("pact_sealed", R.string.achievement_pact_sealed, R.string.achievement_desc_pact_sealed, "🔒", "pact", R.drawable.achievement_badge_pact_sealed, false),
                 a("pact_long_haul", R.string.achievement_pact_long_haul, R.string.achievement_desc_pact_long_haul, "⛓", "pact", R.drawable.achievement_badge_pact_long_haul, false),
                 a("hardcore_guardian", R.string.achievement_hardcore_guardian, R.string.achievement_desc_hardcore_guardian, "♜", "hardcore", R.drawable.achievement_badge_hardcore_guardian, false),
