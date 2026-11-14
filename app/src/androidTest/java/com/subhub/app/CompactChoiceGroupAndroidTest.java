@@ -59,19 +59,25 @@ public final class CompactChoiceGroupAndroidTest {
         });
     }
     @Test public void choicesWrapWithoutClippingAtNarrowWideAndLargeTextSizes() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(this::checkChoiceScreens);
+    }
+
+    private void checkChoiceScreens() {
         Context base = ApplicationProvider.getApplicationContext();
         for (int width : new int[]{320, 480}) for (float scale : new float[]{1f, 1.7f}) {
             Configuration config = new Configuration(base.getResources().getConfiguration());
             config.fontScale = scale;
             config.screenWidthDp = width;
             Context themed = new android.view.ContextThemeWrapper(base.createConfigurationContext(config), R.style.Theme_SubHub);
-            for (int layout : new int[]{R.layout.activity_settings, R.layout.activity_global_settings}) {
+            for (int layout : new int[]{R.layout.activity_settings, R.layout.activity_export_workspace}) {
                 View page = LayoutInflater.from(themed).inflate(layout, null, false);
                 int pixels = Math.round(width * themed.getResources().getDisplayMetrics().density);
                 page.measure(View.MeasureSpec.makeMeasureSpec(pixels, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(1280, View.MeasureSpec.EXACTLY));
                 page.layout(0, 0, pixels, 1280);
-                assertTrue(check(page) > 0);
+                int groups = check(page);
+                if (layout == R.layout.activity_export_workspace) assertEquals(2, groups);
+                else assertTrue("Censor settings has visible choice groups", groups > 0);
             }
         }
     }
