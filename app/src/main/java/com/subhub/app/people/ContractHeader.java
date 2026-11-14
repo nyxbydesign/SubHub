@@ -1,5 +1,6 @@
 package com.subhub.app.people;
 
+import android.graphics.Bitmap;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -12,10 +13,16 @@ public final class ContractHeader {
     private ContractHeader() { }
     public static void add(LinearLayout parent, PersonSnapshot person, boolean expanded,
             java.util.function.Consumer<Boolean> onExpansion) {
+        add(parent, person, expanded, onExpansion, null);
+    }
+
+    static void add(LinearLayout parent, PersonSnapshot person, boolean expanded,
+            java.util.function.Consumer<Boolean> onExpansion, Bitmap loadedAvatar) {
         android.content.Context context = parent.getContext();
         ProfileData profile = person.contractDom == null
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
-        ProfilePreview preview = new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion);
+        ProfilePreview preview = new ProfilePreview(context, profile, true, "contract_dom", expanded,
+                onExpansion, loadedAvatar);
         PersonSnapshot.PeerContact contact = person.contractDomContact != null
                 && person.contractDomContact.id.equals(person.contractDomId) ? person.contractDomContact : null;
         if (contact != null) ProfileViews.inlineLastOnline(preview, "contract_dom", person.contractDomId,

@@ -2,6 +2,7 @@ package com.subhub.app.people;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.text.SpannableString;
@@ -89,23 +90,23 @@ public final class ContractActivity extends RolePage {
 
     @Override protected void refresh() {
         data.cancel("contract-cover");
-        loading();
-        PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();
         data.load("contract", () -> {
-            PersonSnapshot person = repository.load(PersonId.LOCAL);
-            return new ContractData(person, subFeatureSections(application, person));
+            PersonSnapshot person = People.localContract(application);
+            Bitmap avatar = person.contractDom == null ? null : ProfileImages.decode(person.contractDom.avatar);
+            return new ContractData(person, subFeatureSections(application, person), avatar);
         }, value -> {
+            String duration = ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive());
             java.util.List<Object> signature = PersonPresentation.contract(value.person);
             java.util.Collections.addAll(signature, value.person.contractDom, value.person.contractDomId,
                     value.person.contractDomContact,
                     People.keyholder(), com.subhub.app.relationships.RelationshipUi.provider(),
-                    ControllerPinManager.domWorkspaceRevision());
+                    ControllerPinManager.domWorkspaceRevision(), duration);
             for (PersonSnapshot.Section section : value.featureSections.values())
                 java.util.Collections.addAll(signature, section.key, section.summary, section.details);
             if (signature.equals(renderedContract)) return;
             renderedContract = signature;
-            renderPage(() -> render(value));
+            renderPage(() -> render(value, duration));
         }, failure -> { renderedContract = null; unavailable(); });
     }
 
@@ -145,15 +146,14 @@ public final class ContractActivity extends RolePage {
         return result;
     }
 
-    private void render(ContractData contract) {
+    private void render(ContractData contract, String duration) {
         PersonSnapshot person = contract.person;
         body.removeAllViews();
         LinearLayout identity = OverviewUi.card(body);
         OverviewUi.heading(identity, R.string.overview_your_dom, 0, null);
         identity.setTag("person_contract_identity");
-        ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
-        sections = new ContractSections(body, person, contract.featureSections,
-                () -> ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive()),
+        ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value, contract.avatar);
+        sections = new ContractSections(body, person, contract.featureSections, duration,
                 () -> expandedSection, value -> expandedSection = value);
     }
 
@@ -167,7 +167,7 @@ public final class ContractActivity extends RolePage {
         private final Map<String, View> headers = new LinkedHashMap<>();
 
         ContractSections(LinearLayout body, PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections,
-                java.util.function.Supplier<String> durationFallback,
+                String durationFallback,
                 java.util.function.Supplier<String> expanded, java.util.function.Consumer<String> expand) {
             this.context = body.getContext();
             this.contractUnknown = person.sync.contract == PersonSnapshot.Freshness.UNKNOWN;
@@ -186,7 +186,7 @@ public final class ContractActivity extends RolePage {
             section(scope, apps, R.drawable.ic_settings_apps, false);
             PersonSnapshot.Section duration = find(person, "duration");
             if (duration == null) duration = new PersonSnapshot.Section("duration", getString(R.string.person_duration_title),
-                    durationFallback.get(), "");
+                    durationFallback, "");
             section(scope, duration, R.drawable.ic_nav_limits, true);
             LinearLayout features = null;
             for (PersonSnapshot.Section value : person.sections) {
@@ -268,9 +268,11 @@ public final class ContractActivity extends RolePage {
     private static final class ContractData {
         final PersonSnapshot person;
         final Map<String, PersonSnapshot.Section> featureSections;
-        ContractData(PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections) {
+        final Bitmap avatar;
+        ContractData(PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections, Bitmap avatar) {
             this.person = person;
             this.featureSections = featureSections;
+            this.avatar = avatar;
         }
     }
 }

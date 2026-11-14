@@ -6,14 +6,20 @@ import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.Spanned;
 import android.text.style.StyleSpan;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.ImageView;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -40,6 +46,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import org.json.JSONArray;
@@ -157,6 +165,62 @@ public final class AtmosphereContractDetailsAndroidTest {
             page.onActivity(a -> assertDetails(tagged(a, "contract_details:atmosphere")));
             onView(withTagValue(is("contract_section:atmosphere"))).perform(NativeUiActions.revealAboveNavigation(), click());
             page.onActivity(a -> assertEquals(View.GONE, tagged(a, "contract_details:atmosphere").getVisibility()));
+        }
+    }
+
+    @Test public void firstPopulatedSubContractFrameIncludesAllSavedSectionsAndPortrait() throws Exception {
+        readyUi(false);
+        Bitmap portrait = Bitmap.createBitmap(ProfileImages.EDGE, ProfileImages.EDGE, Bitmap.Config.ARGB_8888);
+        String encoded;
+        try { encoded = ProfileImages.encode(portrait); }
+        finally { portrait.recycle(); }
+        People.installLocalProjection(person -> person.withContractDom(
+                new ProfileData("Cached Dom", "", encoded, "", 0), null));
+        assertTrue(preferences.edit().putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings")).commit());
+        String appLabel = context.getPackageManager().getApplicationLabel(
+                context.getPackageManager().getApplicationInfo("com.android.settings", 0)).toString();
+
+        Application app = (Application) context.getApplicationContext();
+        CompletableFuture<Boolean> firstFrame = new CompletableFuture<>();
+        Application.ActivityLifecycleCallbacks observer = new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityStarted(Activity activity) {
+                if (!(activity instanceof ContractActivity)) return;
+                View body = activity.findViewById(R.id.role_page_body);
+                body.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                    @Override public boolean onPreDraw() {
+                        if (((ViewGroup) body).getChildCount() == 0) return true;
+                        body.getViewTreeObserver().removeOnPreDrawListener(this);
+                        try {
+                            for (String key : List.of("apps", "duration", "censor", "limits", "wallet", "atmosphere"))
+                                assertNotNull(key, tagged(activity, "contract_section:" + key));
+                            assertEquals("Cached Dom", text(tagged(activity, "contract_dom_name")));
+                            assertTrue(text(tagged(activity, "contract_details:apps")).contains(appLabel));
+                            assertTrue(text(tagged(activity, "contract_details:atmosphere")).contains("Placement: Center"));
+                            ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+                            ImageView image = (ImageView) avatar.getChildAt(1);
+                            assertEquals(View.VISIBLE, image.getVisibility());
+                            assertNotNull(image.getDrawable());
+                            firstFrame.complete(true);
+                        } catch (RuntimeException | AssertionError failure) {
+                            firstFrame.completeExceptionally(failure);
+                        }
+                        return true;
+                    }
+                });
+            }
+            @Override public void onActivityCreated(Activity activity, Bundle state) {}
+            @Override public void onActivityResumed(Activity activity) {}
+            @Override public void onActivityPaused(Activity activity) {}
+            @Override public void onActivityStopped(Activity activity) {}
+            @Override public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+            @Override public void onActivityDestroyed(Activity activity) {}
+        };
+        app.registerActivityLifecycleCallbacks(observer);
+        try (ActivityScenario<ContractActivity> ignored = ActivityScenario.launch(ContractActivity.class)) {
+            assertTrue(firstFrame.get(10, TimeUnit.SECONDS));
+        } finally {
+            app.unregisterActivityLifecycleCallbacks(observer);
         }
     }
 

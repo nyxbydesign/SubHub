@@ -12,6 +12,7 @@ import com.subhub.app.overlay.CensorPhrases;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceSnapshot;
+import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.CaptureMethod;
 import com.subhub.app.settings.CensorAppearance;
 import com.subhub.app.settings.SettingsRepository;
@@ -28,7 +29,7 @@ public final class LocalContractDetails extends ContextWrapper {
         List<ArrangementDetail> rows;
         switch (section) {
             case "censor": rows = censorArrangementRows(); break;
-            case "limits": rows = limitsArrangementDetails(false); break;
+            case "limits": rows = limitsArrangementDetails(false, false); break;
             case "wallet": rows = walletArrangementDetails(); break;
             case "atmosphere": return AtmosphereContractDetails.local(this).details;
             default: throw new IllegalArgumentException("Unknown contract section");
@@ -37,7 +38,11 @@ public final class LocalContractDetails extends ContextWrapper {
     }
 
     String subLimitsDetails() {
-        return format(limitsArrangementDetails(true));
+        return format(limitsArrangementDetails(true, true));
+    }
+
+    String observedLimitsDetails() {
+        return format(limitsArrangementDetails(false, true));
     }
 
     private String format(List<ArrangementDetail> rows) {
@@ -98,22 +103,25 @@ public final class LocalContractDetails extends ContextWrapper {
         return lines;
     }
 
-    private List<ArrangementDetail> limitsArrangementDetails(boolean hideInactiveAllowances) {
-        AppTimerManager timers = hideInactiveAllowances
+    private List<ArrangementDetail> limitsArrangementDetails(boolean hideInactiveAllowances, boolean observeOnly) {
+        AppTimerManager timers = observeOnly
                 ? AppTimerManager.forConfiguration(getSharedPreferences(SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE))
                 : new AppTimerManager(this);
         AppTimerManager.Settings settings = timers.loadSettings();
+        boolean allowed = hideInactiveAllowances || !observeOnly || SubFeaturePolicy.allowed(this, "limits");
+        boolean totalEnabled = allowed && settings.totalEnabled;
+        boolean perAppEnabled = allowed && settings.perAppEnabled;
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.arrangement_limits_shared,
-                        settings.totalEnabled
+                        totalEnabled
                                 ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                                 : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_limits_individual,
-                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
-                        + (settings.perAppEnabled || !hideInactiveAllowances
-                        ? "\n" + appAllowances(timers, hideInactiveAllowances) : "")));
+                getString(perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
+                        + (perAppEnabled || !hideInactiveAllowances
+                        ? "\n" + appAllowances(timers, observeOnly) : "")));
         return lines;
     }
 
