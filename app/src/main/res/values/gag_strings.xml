@@ -52,12 +52,7 @@
     <string name="gag_keyboard_comma_hint">Comma, hold for emoji</string>
     <string name="gag_emoji_open">Open emoji picker</string>
     <string name="gag_emoji_tab">Emoji</string>
-    <string name="gag_emoji_favorites">Favorites</string>
+    <string name="gag_emoji_recent">Recent</string>
     <string name="gag_emoji_back_to_keyboard">Back to keyboard</string>
-    <string name="gag_emoji_favorites_empty">Hold an emoji to add it to Favorites.</string>
-    <string name="gag_emoji_favorite">Favorite</string>
-    <string name="gag_emoji_add_favorite">Add to Favorites</string>
-    <string name="gag_emoji_remove_favorite">Remove from Favorites</string>
-    <string name="gag_emoji_added">Added to Favorites</string>
-    <string name="gag_emoji_removed">Removed from Favorites</string>
+    <string name="gag_emoji_recent_empty">No recent emoji</string>
 </resources>

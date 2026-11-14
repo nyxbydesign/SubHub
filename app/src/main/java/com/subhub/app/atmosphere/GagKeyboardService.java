@@ -563,8 +563,16 @@ public final class GagKeyboardService extends InputMethodService {
         scheduleSuggestions();
     }
 
-    private void insertEmoji(String emoji) {
-        if (page == Page.EMOJI && editorAllowed) type(emoji);
+    private boolean insertEmoji(String emoji) {
+        if (page != Page.EMOJI || !editorAllowed) return false;
+        refreshReplacementAuthority();
+        InputConnection input = getCurrentInputConnection();
+        if (input == null) return false;
+        clearPendingSpace();
+        boolean committed = completeWord(input, emoji, null);
+        literalWord = false;
+        if (committed) resetOpening(false);
+        return committed;
     }
 
     private boolean numberEditor() {
