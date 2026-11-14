@@ -5,7 +5,7 @@
         android:orientation="vertical" android:paddingBottom="28dp">
         <include layout="@layout/view_secondary_header" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
-            android:layout_marginTop="@dimen/primary_header_top" android:layout_marginBottom="@dimen/ui_gap_group" />
+            android:layout_marginTop="@dimen/primary_header_top" android:layout_marginBottom="@dimen/primary_header_content_gap" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin" android:text="@string/permission_setup_intro"
             android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_row_title" android:lineSpacingExtra="2dp" />
