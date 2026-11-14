@@ -35,6 +35,10 @@ public final class People {
         }, remote, new InternalPersonRepository(application));
     }
 
+    static PersonSnapshot localContract(Context context) {
+        return localProjection.apply(new LocalPersonRepository(context).loadContract());
+    }
+
     public static void installRemoteRepository(PersonRepository repository) { remote = repository; }
     public static void installConnectionUi(ConnectionUi ui) { connectionUi = ui; }
     public static ConnectionUi connectionUi() { return connectionUi; }

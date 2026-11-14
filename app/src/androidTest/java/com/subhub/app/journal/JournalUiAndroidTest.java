@@ -406,7 +406,13 @@ public final class JournalUiAndroidTest {
         String domDefaultTitle = runtime.entry(true, PersonId.LOCAL, domPrivateId).displayTitle();
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
-            await(scenario, a -> tagged(a, "profile_journal_preview") != null && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals(subDefaultTitle));
+            await(scenario, a -> {
+                if (tagged(a, "profile_preview:sub") == null) return false;
+                TextView journal = (TextView) tagged(a, "profile_journal_preview");
+                assertNotNull(journal);
+                assertEquals(subDefaultTitle, journal.getText().toString());
+                return true;
+            });
             scenario.onActivity(a -> {
                 assertTrue(tagged(a, "profile_preview:sub") instanceof com.subhub.app.people.ProfilePreview);
                 assertTrue(((TextView) tagged(a, "self_profile_details")).getText().toString().contains("Non-binary"));

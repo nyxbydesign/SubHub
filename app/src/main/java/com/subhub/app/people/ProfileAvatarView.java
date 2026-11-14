@@ -1,6 +1,7 @@
 package com.subhub.app.people;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.view.View;
@@ -13,6 +14,7 @@ import com.subhub.app.util.AsyncUiScope;
 /** The existing initials remain an immediate fallback while bounded profile artwork is decoded. */
 public final class ProfileAvatarView extends FrameLayout {
     private final ProfileData profile;
+    private final Bitmap loadedAvatar;
     private final ImageView image;
     private final String job = "profile-avatar:" + System.identityHashCode(this);
     private AsyncUiScope scope;
@@ -20,8 +22,13 @@ public final class ProfileAvatarView extends FrameLayout {
     private int presenceColor;
 
     public ProfileAvatarView(Context context, ProfileData profile) {
+        this(context, profile, null);
+    }
+
+    ProfileAvatarView(Context context, ProfileData profile, Bitmap loadedAvatar) {
         super(context);
         this.profile = profile;
+        this.loadedAvatar = loadedAvatar;
         // Only the image child is oval-clipped; the corner badge needs the full square bounds.
         setClipToOutline(false);
         TextView fallback = ProfileViews.avatar(context, profile.name);
@@ -65,6 +72,11 @@ public final class ProfileAvatarView extends FrameLayout {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        if (loadedAvatar != null) {
+            image.setImageBitmap(loadedAvatar);
+            image.setVisibility(View.VISIBLE);
+            return;
+        }
         if (profile.avatar.isEmpty()) return;
         String encoded = profile.avatar;
         try { scope = AsyncUiScope.forContext(getContext()); }
