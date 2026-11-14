@@ -437,6 +437,8 @@ public final class DummySubPreviewAndroidTest {
 
     @Test public void internalTasksSubmitAndReviewWithoutChangingPhysicalRoleOrLedger() throws Exception {
         assertTrue(DummySubPreview.toggle(context));
+        // The real roster is route setup. Check exact physical state from before the owned task work.
+        Intent profile = authorizedProfileIntent();
         java.time.LocalDateTime start = java.time.LocalDateTime.now().withSecond(0).withNano(0);
         com.subhub.app.tasks.TaskDefinition task = new com.subhub.app.tasks.TaskDefinition("owned_internal_task", "Internal completion",
                 "Synthetic fixture only", start, java.time.ZoneId.systemDefault(), 300_000, Set.of(), true, false, null);
@@ -445,9 +447,6 @@ public final class DummySubPreviewAndroidTest {
         com.subhub.app.tasks.TaskRepository author = new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID);
         author.create(task);
         assertRealState(before, rows);
-        Intent profile = authorizedProfileIntent();
-        assertStateAfterNormalRosterReturn(before, rows);
-        Map<String, Map<String, ?>> ownedBefore = realPreferences();
         AtomicReference<Intent> route = new AtomicReference<>();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
             scenario.onActivity(page -> route.set(DummySubPreview.childIntent(page, com.subhub.app.tasks.TasksActivity.class)));
@@ -474,7 +473,7 @@ public final class DummySubPreviewAndroidTest {
         assertEquals(com.subhub.app.tasks.TaskEngine.Status.ACCEPTED,
                 new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID).engine()
                         .occurrence(task.id, start.toLocalDate(), System.currentTimeMillis()).status);
-        assertRealState(ownedBefore, rows);
+        assertRealState(before, rows);
     }
 
     @Test public void internalPresentationBuildsOffMainAndRejectsStaleRevisionAndController() throws Exception {
