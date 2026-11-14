@@ -37,7 +37,7 @@
                 android:id="@+id/hardcore_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_sub_hero"
+                android:background="@drawable/bg_header_card"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
                 android:paddingTop="@dimen/ui_gap_group"

@@ -49,7 +49,7 @@ public final class FeatureConsentView extends ViewGroup {
         control.setMinWidth(0); control.setMinHeight(PersonUi.dp(getContext(), 48));
         control.setGravity(Gravity.CENTER_VERTICAL); control.setPaddingRelative(PersonUi.dp(getContext(), 8),
                 PersonUi.dp(getContext(), 4), cell.statusWidth + PersonUi.dp(getContext(), 16), PersonUi.dp(getContext(), 4));
-        control.setBackgroundResource(R.drawable.bg_home_composition_stat);
+        control.setBackgroundResource(R.drawable.bg_card);
         cell.label = control;
         cell.addView(control, 0, new FrameLayout.LayoutParams(-1, -1));
         control.setChecked(allowed);

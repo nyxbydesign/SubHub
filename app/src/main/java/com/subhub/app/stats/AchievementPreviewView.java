@@ -21,7 +21,7 @@ public final class AchievementPreviewView extends LinearLayout {
         super(context);
         this.compact = compact;
         setOrientation(VERTICAL);
-        setBackgroundResource(R.drawable.bg_home_composition_stat);
+        setBackgroundResource(R.drawable.bg_card);
         int padding = PersonUi.dp(context, 14);
         setPadding(padding, compact ? PersonUi.dp(context, 4) : padding, padding, compact ? PersonUi.dp(context, 4) : padding);
         if (!compact) com.subhub.app.util.UiIdentity.cardPadding(this);
