@@ -78,6 +78,20 @@ public class JournalStoreAndroidTest {
         assertTrue(store.shared(b, 0).isEmpty());
         assertNull(store.entry(false, identity('b') + "_repaired", entry.id));
     }
+    @Test public void latestPreviewMatchesFirstPageAndRespectsAudience() throws Exception {
+        JournalEntry older = entry("Earlier linked entry");
+        JournalEntry newer = new JournalEntry("fedcba9876543210fedcba9876543210",
+                200, 201, "More recent private entry", null, List.of());
+        store.save(false, older, Set.of(a, "local-dom"));
+        store.save(false, newer, Set.of());
+        store.receive(b, store.outgoing(a, 0));
+        assertEquals(store.own(false, 0).get(0).id, store.latest(false, null, false).id);
+        assertEquals(older.id, store.latest(true, null, true).id);
+        assertEquals(older.id, store.latest(true, b, false).id);
+        assertNull(store.latest(true, a, false));
+        assertNull(store.latest(true, null, false));
+    }
+
     @Test public void invalidLaterRecordRollsBackEarlierContentAndCursor() throws Exception {
         store.save(true, entry("Shared"), Set.of(a)); JSONArray rows = store.outgoing(a, 0);
         rows.put(new JSONObject().put("seq", 2).put("change", new JSONObject().put("id", "../bad").put("deleted", true)));
