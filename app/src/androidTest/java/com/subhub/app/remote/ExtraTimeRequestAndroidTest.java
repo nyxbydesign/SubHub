@@ -92,10 +92,23 @@ public final class ExtraTimeRequestAndroidTest {
             assertTrue(new ExtraTimeStore(context).load(offered.scope).isEmpty());
             assertTrue(new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
             fixture.setSubAppTimeSupport(true);
+            ExtraTimeRequests.Snapshot empty = sub.snapshot(System.currentTimeMillis());
+            assertEquals(2, empty.apps.size());
+            assertTrue(empty.requests.isEmpty());
+            for (ExtraTimeRequests.App app : empty.apps) {
+                assertTrue(app.exhausted);
+                assertNull(app.pending);
+                assertNull(app.latest);
+                assertEquals(0L, app.remainingMillis);
+            }
             assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR",offered.scope+"_stale"));
             assertTrue(new ExtraTimeStore(context).load(offered.scope).isEmpty());
             assertTrue(new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
             ExtraTimeRequests.Request request = sub.submit(fixture.firstPackage,100,"EUR",offered.scope);
+            ExtraTimeRequests.App awaiting = sub.snapshot(System.currentTimeMillis()).apps.stream()
+                    .filter(app -> app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();
+            assertEquals(request.id, awaiting.pending.id);
+            assertSame(awaiting.pending, awaiting.latest);
             assertEquals(request.id,sub.submit(fixture.firstPackage,100,"EUR").id);
             assertEquals(request.id,sub.submit(fixture.firstPackage,100,"EUR",offered.scope).id);
             assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR",offered.scope+"_stale"));
@@ -109,24 +122,91 @@ public final class ExtraTimeRequestAndroidTest {
             dom.approve(request.id,25);
             assertEquals(1,new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().size());
             fixture.transfer(); fixture.transfer(); fixture.switchSub();
-            ExtraTimeRequests.Snapshot after = fixture.subRequests().snapshot(System.currentTimeMillis());
+            long measuredAt = System.currentTimeMillis();
+            ExtraTimeRequests.Snapshot after = fixture.subRequests().snapshot(measuredAt);
             ExtraTimeRequests.App first = after.apps.stream().filter(app->app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();
             ExtraTimeRequests.App second = after.apps.stream().filter(app->app.packageName.equals(fixture.secondPackage)).findFirst().orElseThrow();
             assertFalse(first.exhausted); assertEquals(25*60_000L,first.remainingMillis); assertTrue(second.exhausted);
-            assertEquals(5,new AppTimerManager(context).allowanceMinutes(fixture.firstPackage));
+            assertEquals(request.id, first.latest.id);
+            assertEquals(ExtraTimeRequests.Status.APPROVED, first.latest.status);
+            assertNull(first.pending);
+            assertEquals(25, first.bonusMinutes);
+            AppTimerManager timers = new AppTimerManager(context);
+            java.util.Set<String> selected = java.util.Set.of(fixture.firstPackage, fixture.secondPackage);
+            for (ExtraTimeRequests.App app : after.apps) {
+                assertEquals(timers.snapshot(app.packageName, measuredAt).appUsedMillis, app.usedMillis);
+                assertEquals(timers.limitStatus(app.packageName, selected, measuredAt) != AppTimerManager.LimitStatus.NONE,
+                        app.exhausted);
+            }
+            assertEquals(5,timers.allowanceMinutes(fixture.firstPackage));
             assertEquals(1,new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().size());
             assertThrows(IllegalStateException.class,()->fixture.subRequests().submit(fixture.firstPackage,100,"EUR"));
             assertTrue(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit()
                     .putInt("app_timer_allowance_minutes:"+fixture.firstPackage,6).commit());
-            ExtraTimeRequests.Request expired = fixture.subRequests().snapshot(System.currentTimeMillis()).requests.stream()
+            ExtraTimeRequests.Snapshot changed = fixture.subRequests().snapshot(System.currentTimeMillis());
+            ExtraTimeRequests.Request expired = changed.requests.stream()
                     .filter(value->value.id.equals(request.id)).findFirst().orElseThrow();
             assertEquals(ExtraTimeRequests.Status.EXPIRED,expired.status);
             assertEquals(100,expired.tributeCents);
             assertEquals(0,ExtraTimeRequests.allowance(context,fixture.firstPackage,System.currentTimeMillis()).bonusMillis);
+            ExtraTimeRequests.App changedApp = changed.apps.stream()
+                    .filter(app -> app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();
+            assertEquals(6, changedApp.dailyMinutes);
+            assertEquals(0, changedApp.bonusMinutes);
+            assertSame(expired, changedApp.latest);
             fixture.transfer(); fixture.switchDom();
             assertEquals(ExtraTimeRequests.Status.EXPIRED,fixture.domRequests().snapshot(System.currentTimeMillis()).requests.stream()
                     .filter(value->value.id.equals(request.id)).findFirst().orElseThrow().status);
             fixture.switchSub();
+            assertTrue(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                    .putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
+                    .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true)
+                    .putInt(AppTimerManager.KEY_TOTAL_MINUTES, 15).commit());
+            ExtraTimeRequests.Snapshot shared = sub.snapshot(System.currentTimeMillis());
+            assertTrue(shared.canRequest);
+            for (ExtraTimeRequests.App app : shared.apps) {
+                assertEquals(0, app.dailyMinutes);
+                assertTrue(app.exhausted);
+                assertTrue(app.combinedLimitReached);
+                assertEquals(0L, app.remainingMillis);
+            }
+            ExtraTimeRequests.Request sharedRequest = sub.submit(fixture.firstPackage, 100, "EUR", shared.scope);
+            fixture.transfer(); fixture.switchDom(); fixture.domRequests().approve(sharedRequest.id, 25);
+            fixture.transfer(); fixture.switchSub();
+
+            long sharedAt = System.currentTimeMillis();
+            ExtraTimeRequests.Snapshot credited = sub.snapshot(sharedAt);
+            ExtraTimeRequests.App creditedApp = credited.apps.stream()
+                    .filter(app -> app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();
+            ExtraTimeRequests.App uncreditedApp = credited.apps.stream()
+                    .filter(app -> app.packageName.equals(fixture.secondPackage)).findFirst().orElseThrow();
+            assertEquals(15 * 60_000L, timers.snapshot("", sharedAt).totalUsedMillis);
+            assertEquals(0, creditedApp.dailyMinutes);
+            assertEquals(25, creditedApp.bonusMinutes);
+            assertEquals(25 * 60_000L, creditedApp.remainingMillis);
+            assertEquals(30 * 60_000L, creditedApp.budgetMillis);
+            assertFalse(creditedApp.exhausted);
+            assertTrue(creditedApp.combinedLimitReached);
+            assertEquals(0, uncreditedApp.bonusMinutes);
+            assertTrue(uncreditedApp.exhausted);
+            assertTrue(uncreditedApp.combinedLimitReached);
+            assertEquals(AppTimerManager.LimitStatus.NONE, timers.limitStatus(fixture.firstPackage, selected, sharedAt));
+            assertEquals(AppTimerManager.LimitStatus.COMBINED, timers.limitStatus(fixture.secondPackage, selected, sharedAt));
+            assertEquals(sharedRequest.id, creditedApp.latest.id);
+            assertEquals(2, new PenanceManager(context).snapshot(sharedAt).getEvents().size());
+
+            assertTrue(SubFeaturePolicy.setAllowed(context, "limits", false));
+            ExtraTimeRequests.Snapshot withdrawn = sub.snapshot(System.currentTimeMillis());
+            assertFalse(withdrawn.canRequest);
+            ExtraTimeRequests.App withdrawnApp = withdrawn.apps.stream()
+                    .filter(app -> app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();
+            assertEquals(0, withdrawnApp.bonusMinutes);
+            assertEquals(0L, withdrawnApp.budgetMillis);
+            assertFalse(withdrawnApp.exhausted);
+            assertFalse(withdrawnApp.combinedLimitReached);
+            assertEquals(ExtraTimeRequests.Status.EXPIRED, withdrawnApp.latest.status);
+            assertThrows(SecurityException.class, () -> sub.submit(fixture.secondPackage, 100, "EUR", shared.scope));
+            assertEquals(2, new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().size());
             RemoteStore.Peer peer = RemoteFeature.get(context).store.peers(false).stream()
                     .filter(value->value.localRole==RemoteProtocol.Role.SUB).findFirst().orElseThrow();
             assertThrows(SecurityException.class,()->RemoteFeature.get(context).store.revoke(peer.identity,peer.generation));

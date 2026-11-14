@@ -178,9 +178,14 @@ public final class AppTimerManager {
     }
 
     public int allowanceMinutes(String packageName) {
+        return allowanceMinutes(packageName, loadSettings());
+    }
+
+    /** Resolve an override against the same settings sample used by a budget list. */
+    public int allowanceMinutes(String packageName, Settings settings) {
         return sanitizeMinutes(settingsPreferences.getInt(
                 ALLOWANCE_PREFIX + safePackage(packageName),
-                loadSettings().perAppMinutes));
+                settings.perAppMinutes));
     }
 
     public Map<String, Integer> loadAllowances(Set<String> packages) {
@@ -312,8 +317,20 @@ public final class AppTimerManager {
         UsageSnapshot usage = snapshot(packageName, nowMillis);
         ExtraTimeAllowance extra = ownerUsage != null ? ExtraTimeAllowance.NONE
                 : com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
+        return evaluateLimit(settings, usage, settings.perAppEnabled ? allowanceMinutes(packageName) : 0, extra);
+    }
+
+    /** Project one already sampled budget for an included app. */
+    public LimitStatus projectedLimit(Settings settings, UsageSnapshot usage,
+            int individualMinutes, ExtraTimeAllowance extra) {
+        requireUsage();
+        return preview ? LimitStatus.NONE : evaluateLimit(settings, usage, individualMinutes, extra);
+    }
+
+    private static LimitStatus evaluateLimit(Settings settings, UsageSnapshot usage,
+            int individualMinutes, ExtraTimeAllowance extra) {
         if (settings.perAppEnabled
-                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(allowanceMinutes(packageName)))) {
+                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(individualMinutes))) {
             return LimitStatus.PER_APP;
         }
         if (settings.totalEnabled
