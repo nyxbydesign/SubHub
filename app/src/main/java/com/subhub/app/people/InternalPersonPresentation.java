@@ -45,7 +45,7 @@ public final class InternalPersonPresentation {
         ProfileData profile = InternalProfileAdapter.toProfileData(record.profile);
         PersonSnapshot.SyncState sync = new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
                 observed == null ? PersonSnapshot.Freshness.UNKNOWN : PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.UNKNOWN,
-                Long.toString(record.configurationRevision), "");
+                "", "");
         Set<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.EDIT_CONTRACT);
         if(observed!=null)capabilities.add(PersonSnapshot.Capability.VIEW_STATS);
         return new PersonSnapshot(DummySubPreview.ID, profile.name, context.getString(R.string.internal_sub_device), "",

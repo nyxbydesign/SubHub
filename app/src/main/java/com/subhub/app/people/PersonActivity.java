@@ -512,7 +512,7 @@ public final class PersonActivity extends RolePage {
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
-                    ProfileViews.allowedFeatures(parent, person);
+                    if (!internal) ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
@@ -663,10 +663,12 @@ public final class PersonActivity extends RolePage {
                         : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
-        PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
-        if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
-                getString(R.string.role_changes_pending), false);
-        freshness(scope, person.sync.contract);
+        if (!internal) {
+            PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+            if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
+                    getString(R.string.role_changes_pending), false);
+            freshness(scope, person.sync.contract);
+        }
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
         if (!editable) appsTitle.setTag("person_apps");
@@ -706,7 +708,7 @@ public final class PersonActivity extends RolePage {
                 editable && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
-        if (atmosphere && known) {
+        if (atmosphere && known && !internal) {
             for (String block : value.details.split("\\n\\s*\\n")) {
                 android.text.SpannableString copy = new android.text.SpannableString(block);
                 int firstLine = block.indexOf('\n');

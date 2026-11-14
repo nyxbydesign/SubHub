@@ -327,7 +327,7 @@ public final class FeatureEditorSession {
                         scope.internalGeneration,scope.controllerRevision,scope.internalSaves,()->{
                     if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
                     scope.flushing=true;try{return flush.getAsBoolean();}finally{scope.flushing=false;}
-                },()->{scope.invalidated=true;DRAFTS.remove(scope.token);restart(activity);});
+                },()->{scope.invalidated=true;DRAFTS.remove(scope.token);restart(activity);}, !(activity instanceof PersonActivity));
                 scope.watchText(root,binding);binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
             }
             binding.autosave=new RemoteConfigurationAutosave(activity,body,scope.feature,scope.peer,scope.editBase,()->{

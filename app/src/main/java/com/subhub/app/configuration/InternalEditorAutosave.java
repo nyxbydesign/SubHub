@@ -19,6 +19,7 @@ import java.util.function.BooleanSupplier;
 final class InternalEditorAutosave implements AutoCloseable {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final BooleanSupplier current, stage;
+    private final boolean showSavedStatus;
     private final InternalEditorSaveDrain drain;
     private final InternalEditorSaveDrain.Observation observation;
     private final TextView status, reload;
@@ -47,13 +48,15 @@ final class InternalEditorAutosave implements AutoCloseable {
 
     InternalEditorAutosave(AppCompatActivity host, LinearLayout body, InternalSubData data,
             InternalConfigurationStore.EditorDraft draft, String generation, long controllerRevision,
-            InternalEditorSaveDrain drain, BooleanSupplier stage, Runnable reloadPage) {
+            InternalEditorSaveDrain drain, BooleanSupplier stage, Runnable reloadPage, boolean showSavedStatus) {
         Context physical = host.getApplicationContext();
         current = () -> DummySubPreview.current(physical, generation, controllerRevision);
         this.stage = stage; this.drain = drain;
+        this.showSavedStatus = showSavedStatus;
         status = PersonUi.text(body, host.getString(R.string.internal_sub_saved), false);
         status.setTag("internal_configuration_save_status");
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        if (!showSavedStatus) status.setVisibility(View.GONE);
         reload = PersonUi.action(body, R.string.remote_duration_reload, () -> {
             if (!drain.pending() && current.getAsBoolean()) { close(); reloadPage.run(); }
         }, false);
@@ -101,14 +104,16 @@ final class InternalEditorAutosave implements AutoCloseable {
     }
     private void render(InternalEditorSaveDrain.State state) {
         if (closed) return;
+        status.setVisibility(View.VISIBLE);
         if (unavailable) { status.setText(R.string.internal_sub_owner_data_unavailable); return; }
         if (stageFailed || state == InternalEditorSaveDrain.State.FAILED || state == InternalEditorSaveDrain.State.REVOKED) {
             status.setText(R.string.internal_sub_save_failed); reload.setVisibility(View.VISIBLE); return;
         }
         reload.setVisibility(View.GONE);
         if (invalidFields) { status.setText(R.string.remote_check_fields); return; }
-        status.setText(dirty || state == InternalEditorSaveDrain.State.SAVING
-                ? R.string.remote_autosave_saving : R.string.internal_sub_saved);
+        boolean saving = dirty || state == InternalEditorSaveDrain.State.SAVING;
+        status.setText(saving ? R.string.remote_autosave_saving : R.string.internal_sub_saved);
+        if (!saving && !showSavedStatus) status.setVisibility(View.GONE);
     }
     @Override public void close() {
         if (closed) return;

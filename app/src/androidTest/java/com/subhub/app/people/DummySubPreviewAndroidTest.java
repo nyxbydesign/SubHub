@@ -229,16 +229,23 @@ public final class DummySubPreviewAndroidTest {
                 nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
                 tapTag("person_tab:contracts");
                 await(() -> tagged(profile, "person_section:atmosphere") != null);
-                assertNotNull(tagged(profile, "person_allowed_features"));
+                assertNull(tagged(profile, "person_allowed_features"));
                 assertNotNull(tagged(profile, "person_contract_scope"));
                 assertNotNull(tagged(profile, "person_contract_features"));
                 assertNull(tagged(profile, "person_duration"));
                 instrumentation.runOnMainSync(() -> {
-                    View details = tagged(profile, "person_contract_features");
-                    assertNotNull(details);
-                    assertTrue(hasText(details, context.getString(com.subhub.app.R.string.arrangement_detail_line,
-                            context.getString(com.subhub.app.R.string.gag_title),
-                            context.getString(com.subhub.app.R.string.control_state_off))));
+                    View features = tagged(profile, "person_contract_features");
+                    View atmosphere = tagged(profile, "person_section:atmosphere");
+                    assertTrue(atmosphere.isClickable());
+                    String off = context.getString(com.subhub.app.R.string.control_state_off);
+                    assertTrue(hasText(atmosphere, context.getString(com.subhub.app.R.string.contract_atmosphere_states,
+                            off, off, off)));
+                    assertFalse(hasText(features, context.getString(com.subhub.app.R.string.arrangement_detail_line,
+                            context.getString(com.subhub.app.R.string.gag_title), off)));
+                    View scope = tagged(profile, "person_contract_scope");
+                    assertFalse(hasText(scope, context.getString(com.subhub.app.R.string.role_changes_pending)));
+                    assertFalse(hasText(scope, context.getString(com.subhub.app.R.string.profile_contract_scope)));
+                    assertEquals(View.GONE, tagged(profile, "internal_configuration_save_status").getVisibility());
                 });
                 for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
                     Class<? extends Activity> expected = PersonRoutes.sectionActivity(section);
@@ -476,6 +483,7 @@ public final class DummySubPreviewAndroidTest {
             assertThrows(IllegalStateException.class, () -> data.loadPresentation(context, before));
         });
         PersonSnapshot first = data.loadPresentation(context, before);
+        assertFalse(first.sync.hasPendingConfiguration());
         instrumentation.runOnMainSync(() -> assertSame(first, data.peekPresentation()));
         String defaultDetails = sectionDetails(first, "censor");
         assertTrue(defaultDetails.contains(context.getString(com.subhub.app.R.string.pack_field_confidence_threshold_percent) + ": 25"));
