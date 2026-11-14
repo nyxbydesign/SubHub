@@ -86,12 +86,12 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("ä");
         keyDescription(R.string.gag_keyboard_symbols);
         await(By.pkg("com.subhub.app").text("1")).longClick();
-        key("½");
-        assertText("ä½");
+        key("⅒");
+        assertText("ä⅒");
         keyDescription(R.string.gag_keyboard_more_symbols);
         await(By.pkg("com.subhub.app").text("•")).longClick();
         key("·");
-        assertText("ä½·");
+        assertText("ä⅒·");
     }
 
     private static void acceptHello() throws Exception {

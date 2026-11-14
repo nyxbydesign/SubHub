@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** English QWERTY and symbol alternatives, based on AOSP LatinIME. */
+/** Hold alternatives for the keyboard's English QWERTY layout and symbol pages. */
 final class GagKeyAlternatives {
     private GagKeyAlternatives() {}
 
@@ -30,29 +30,32 @@ final class GagKeyAlternatives {
 
     static List<String> forSymbol(String symbol) {
         String alternatives = switch (symbol) {
-            case "1" -> "¹½⅓¼⅛";
-            case "2" -> "²⅔";
-            case "3" -> "³¾⅜";
-            case "4" -> "⁴";
-            case "5" -> "⅝";
-            case "7" -> "⅞";
-            case "0" -> "ⁿ∅";
-            case "$" -> "¢£€¥₱";
-            case "£", "€", "¥", "¢" -> "¢£€¥₱$";
-            case "-" -> "_–—";
+            case "1" -> "¹½⅓¼⅕⅙⅐⅛⅑⅒";
+            case "2" -> "²⅔⅖";
+            case "3" -> "³¾⅗⅜";
+            case "4" -> "⁴⅘";
+            case "5" -> "⁵⅚⅝";
+            case "6" -> "⁶";
+            case "7" -> "⁷⅞";
+            case "8" -> "⁸";
+            case "9" -> "⁹";
+            case "0" -> "⁰ⁿ∅";
+            case "$" -> "¢£€¥₱₹";
+            case "£", "€", "¥", "¢" -> "¢£€¥₱$₹";
+            case "-" -> "_–—·";
             case "+" -> "±";
             case "*" -> "†‡★";
             case "(" -> "<{[";
             case ")" -> ">}]";
-            case "<" -> "‹≤«";
-            case ">" -> "›≥»";
+            case "<" -> "‹≤«⟨";
+            case ">" -> "›≥»⟩";
             case "!" -> "¡";
-            case "?" -> "¿";
+            case "?" -> "¿‽";
             case "'" -> "‘’‚‛‹›";
             case "\"" -> "“”„‟«»";
             case "." -> "…·";
             case "•" -> "·♪♥♠♦♣";
-            case "π" -> "Π";
+            case "π" -> "ΠμΩ";
             case "°" -> "′″";
             case "^" -> "↑↓←→";
             case "=" -> "≠≈∞";

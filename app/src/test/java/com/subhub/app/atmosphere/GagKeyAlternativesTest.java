@@ -20,7 +20,23 @@ public final class GagKeyAlternativesTest {
     }
 
     @Test public void bothSymbolPagesHoldUsableAlternates() {
-        assertTrue(GagKeyAlternatives.forSymbol("1").contains("½"));
+        assertEquals(List.of("¹", "½", "⅓", "¼", "⅕", "⅙", "⅐", "⅛", "⅑", "⅒"),
+                GagKeyAlternatives.forSymbol("1"));
+        assertEquals(List.of("²", "⅔", "⅖"), GagKeyAlternatives.forSymbol("2"));
+        assertEquals(List.of("³", "¾", "⅗", "⅜"), GagKeyAlternatives.forSymbol("3"));
+        assertEquals(List.of("⁴", "⅘"), GagKeyAlternatives.forSymbol("4"));
+        assertEquals(List.of("⁵", "⅚", "⅝"), GagKeyAlternatives.forSymbol("5"));
+        assertEquals(List.of("⁶"), GagKeyAlternatives.forSymbol("6"));
+        assertEquals(List.of("⁷", "⅞"), GagKeyAlternatives.forSymbol("7"));
+        assertEquals(List.of("⁸"), GagKeyAlternatives.forSymbol("8"));
+        assertEquals(List.of("⁹"), GagKeyAlternatives.forSymbol("9"));
+        assertEquals(List.of("⁰", "ⁿ", "∅"), GagKeyAlternatives.forSymbol("0"));
+        assertEquals(List.of("_", "–", "—", "·"), GagKeyAlternatives.forSymbol("-"));
+        assertEquals(List.of("Π", "μ", "Ω"), GagKeyAlternatives.forSymbol("π"));
+        assertEquals(List.of("¿", "‽"), GagKeyAlternatives.forSymbol("?"));
+        assertEquals(List.of("¢", "£", "€", "¥", "₱", "₹"), GagKeyAlternatives.forSymbol("$"));
+        assertEquals(List.of("‹", "≤", "«", "⟨"), GagKeyAlternatives.forSymbol("<"));
+        assertEquals(List.of("›", "≥", "»", "⟩"), GagKeyAlternatives.forSymbol(">"));
         assertTrue(GagKeyAlternatives.forSymbol("(").contains("["));
         assertTrue(GagKeyAlternatives.forSymbol("=").contains("≠"));
         assertTrue(GagKeyAlternatives.forSymbol("•").contains("·"));
