@@ -537,24 +537,10 @@ public final class TasksActivity extends RolePage {
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
-        PersonUi.text(card, occurrence.task.title, true).setTextSize(24);
-        taskStatus(card, occurrence.status);
-        DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
-        PersonUi.text(card, getString(R.string.tasks_window, display.format(occurrence.task.start(occurrence.date)),
-                display.format(occurrence.task.end(occurrence.date)), occurrence.task.zone.getId()), false);
+        int status = (occurrence.status == TaskEngine.Status.ACCEPTED
+                || occurrence.status == TaskEngine.Status.DENIED) ? 0 : statusLabel(occurrence.status);
+        TasksUi.occurrenceHeader(card, occurrence, status);
         completionTime(card, occurrence);
-        if (occurrence.task.recurring()) {
-            String[] labels = getResources().getStringArray(R.array.tasks_weekdays);
-            ArrayList<String> days = new ArrayList<>();
-            for (DayOfWeek day : DayOfWeek.values()) if (occurrence.task.weekdays.contains(day)) days.add(labels[day.getValue() - 1]);
-            PersonUi.text(card, String.join(" · ", days), false);
-        }
-        if (!occurrence.task.text.isEmpty()) PersonUi.text(card, occurrence.task.text, false);
-    }
-
-    private void taskStatus(LinearLayout card, TaskEngine.Status status) {
-        if (status != TaskEngine.Status.ACCEPTED && status != TaskEngine.Status.DENIED)
-            TasksUi.badge(card, getString(statusLabel(status)));
     }
 
     private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence) {

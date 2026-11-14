@@ -8,10 +8,41 @@ import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonUi;
+import java.time.DayOfWeek;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
+import java.util.ArrayList;
 
 /** Task cards share the role pages' surfaces, type scale and touch targets. */
 final class TasksUi {
     private TasksUi() { }
+
+    static void occurrenceHeader(LinearLayout card, TaskEngine.Occurrence occurrence, int statusLabel) {
+        Context context = card.getContext();
+        TaskDefinition task = occurrence.task;
+        PersonUi.text(card, task.title, true).setTextSize(24);
+        if (statusLabel != 0) badge(card, context.getString(statusLabel));
+
+        ZonedDateTime start = task.start(occurrence.date).atZone(task.zone);
+        ZonedDateTime end = task.end(occurrence.date).atZone(task.zone);
+        DateTimeFormatter dateTime = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
+        DateTimeFormatter endFormat = start.toLocalDate().equals(end.toLocalDate())
+                ? DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT) : dateTime;
+        TextView window = PersonUi.text(card, context.getString(R.string.tasks_window,
+                dateTime.format(start), endFormat.format(end), task.zone.getId()), false);
+        window.setTag("task_window:" + occurrence.id);
+        if (task.recurring()) {
+            String[] labels = context.getResources().getStringArray(R.array.tasks_weekdays);
+            ArrayList<String> days = new ArrayList<>();
+            for (DayOfWeek day : task.weekdays) days.add(labels[day.getValue() - 1]);
+            window.setPadding(0, window.getPaddingTop(), 0, 0);
+            TextView weekdays = PersonUi.text(card, String.join(" · ", days), false);
+            weekdays.setPadding(0, 0, 0, weekdays.getPaddingBottom());
+            weekdays.setTag("task_weekdays:" + occurrence.id);
+        }
+        if (!task.text.isEmpty()) PersonUi.text(card, task.text, false);
+    }
 
     static void counts(LinearLayout parent, int completed, int active, int pending, int scheduled) {
         LinearLayout row = counterRow(parent);

@@ -78,7 +78,7 @@ public final class TasksAndroidTest {
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
-    private final String titlePrefix = "Tasks UI " + UUID.randomUUID() + " ";
+    private String titlePrefix = "Tasks UI " + UUID.randomUUID() + " ";
     private final Map<String, List<ContentValues>> originalRows = new LinkedHashMap<>();
     private final List<File> createdMediaFiles = new ArrayList<>();
     private Map<String, ?> originalConsent;
@@ -503,12 +503,36 @@ public final class TasksAndroidTest {
     }
 
     @Test public void subRequestsCompletionWithNativeTextThenDomAcceptsTheExactSubmission() throws Exception {
-        TaskDefinition task = seed("proof", false);
+        titlePrefix = "Practice task: ";
+        ZoneId zone = ZoneId.of("Europe/Berlin");
+        LocalDateTime start = LocalDateTime.now(zone).minusMinutes(2).withSecond(0).withNano(0);
+        if (!start.plusMinutes(45).toLocalDate().equals(start.toLocalDate())) {
+            zone = ZoneId.of("Asia/Tokyo");
+            start = LocalDateTime.now(zone).minusMinutes(2).withSecond(0).withNano(0);
+        }
+        TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), titlePrefix + "Daily check-in",
+                "Write a short note about what you practiced today.", start, zone, 45 * 60_000L,
+                EnumSet.allOf(DayOfWeek.class), false, false, null);
+        assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE,
+                null, System.currentTimeMillis(), "", "", List.of(), task), true, false));
+        var dateTime = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT);
+        var time = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT);
+        var end = task.end(start.toLocalDate()).atZone(zone);
+        assertEquals(start.toLocalDate(), end.toLocalDate());
+        String expectedWindow = context.getString(R.string.tasks_window,
+                dateTime.format(task.start(start.toLocalDate()).atZone(zone)), time.format(end), zone.getId());
+        String expectedDays = String.join(" · ", context.getResources().getStringArray(R.array.tasks_weekdays));
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
             String id = occurrenceId(task);
             openTask(page, task);
-            awaitTag(page, "request:" + id); tap("request:" + id);
+            awaitTag(page, "request:" + id);
+            assertCompactSchedule(page, task, expectedWindow, expectedDays);
+            capture("sub-task-detail-schedule");
+            tap("request:" + id);
+            awaitTag(page, "tasks_send");
+            assertCompactSchedule(page, task, expectedWindow, expectedDays);
+            capture("sub-task-request-schedule");
             edit("tasks_text", "Synthetic completion proof");
             page.recreate(); awaitTag(page, "tasks_send");
             onView(withTagValue(is("tasks_text"))).check(matches(withText("Synthetic completion proof")));
@@ -530,6 +554,25 @@ public final class TasksAndroidTest {
             assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_accepted);
             capture("submission-approved");
         }
+    }
+
+    private void assertCompactSchedule(ActivityScenario<TasksActivity> page, TaskDefinition task, String window, String days) {
+        String id = occurrenceId(task);
+        page.onActivity(activity -> {
+            View root = activity.findViewById(android.R.id.content);
+            android.widget.TextView first = root.findViewWithTag("task_window:" + id);
+            android.widget.TextView second = root.findViewWithTag("task_weekdays:" + id);
+            assertNotNull(first);
+            assertNotNull(second);
+            assertEquals(window, first.getText().toString());
+            assertEquals(days, second.getText().toString());
+            assertSame(first.getParent(), second.getParent());
+            assertEquals(1, first.getLineCount());
+            assertEquals(1, second.getLineCount());
+            ViewGroup card = (ViewGroup) second.getParent();
+            assertEquals(card.indexOfChild(first) + 1, card.indexOfChild(second));
+            assertEquals(task.text, ((android.widget.TextView) card.getChildAt(card.indexOfChild(second) + 1)).getText().toString());
+        });
     }
 
     @Test public void outsideRequestCanBeDeniedWithNativeReviewControls() throws Exception {
