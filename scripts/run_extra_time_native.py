@@ -352,6 +352,7 @@ DEVICE_PASS_SOURCE_ONLY = {
     # This regression needs an explicitly owned paired fixture, with its opt-in runner argument.
     "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
         "subContractOmitsDisabledDetailsAndKeepsEnabledSiblings",
+        "subWalletKeepsPaidPauseOnlyAndHidesDetailsAfterLegacyDisable",
         "firstPopulatedSubContractFrameIncludesAllSavedSectionsAndPortrait",
     ],
     "com.subhub.app.appmode.LimitsUiAndroidTest": [

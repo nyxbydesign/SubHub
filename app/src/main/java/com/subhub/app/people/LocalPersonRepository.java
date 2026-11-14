@@ -8,7 +8,6 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.penance.PaidPauseManager;
-import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.SubFeaturePolicy;
@@ -158,14 +157,7 @@ public final class LocalPersonRepository implements PersonRepository {
                 subLimits == null ? descriptions.forSection("limits")
                         : limitsEnabled ? descriptions.subLimitsDetails(subLimits.timers, subLimits.settings) : ""));
 
-        int rules = 0;
-        for (PenanceInfraction rule : PenanceInfraction.values()) {
-            if (rule != PenanceInfraction.PAID_PAUSE && wallet.isInfractionEnabled(rule)) rules++;
-        }
-        sections.add(new PersonSnapshot.Section("wallet", context.getString(R.string.sub_wallet_title),
-                wallet.isEnabled() ? context.getString(R.string.role_wallet_rule_count, rules)
-                        : context.getString(R.string.role_disabled),
-                descriptions.forSection("wallet")));
+        sections.add(descriptions.walletSection(wallet, subLimits != null));
         String atmosphereSummary, atmosphereDetails;
         if (subLimits == null) {
             int effects = (modules.isSubliminalEnabled() ? 1 : 0) + (PopupStormSettings.load(context).isEnabled() ? 1 : 0);

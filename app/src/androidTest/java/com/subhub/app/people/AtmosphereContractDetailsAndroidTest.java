@@ -30,6 +30,8 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.onboarding.OnboardingState;
+import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.remote.RemoteExtraTimeUiFixture;
 import com.subhub.app.remote.RemoteFeature;
@@ -319,6 +321,44 @@ public final class AtmosphereContractDetailsAndroidTest {
                     assertDisabledSection(a, "wallet");
                 });
             }
+        }
+    }
+
+    @Test public void subWalletKeepsPaidPauseOnlyAndHidesDetailsAfterLegacyDisable() throws Exception {
+        readyUi(false);
+        SharedPreferences wallet = context.getSharedPreferences(PenanceManager.PREFS_NAME, 0);
+        Map<String, ?> savedWallet = new LinkedHashMap<>(wallet.getAll());
+        try {
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                    .putBoolean("wallet", true).commit());
+            assertTrue(preferences.edit().putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true).commit());
+            assertTrue(wallet.edit().clear().putBoolean("enabled", true)
+                    .putBoolean("rule_new_detection_enabled", false).putBoolean(PaidPauseManager.KEY_ENABLED, true)
+                    .commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> {
+                    View header = tagged(a, "contract_section:wallet");
+                    assertTrue(text(header).contains(context.getString(R.string.role_wallet_rule_count, 0)));
+                    assertTrue(header.isClickable());
+                    assertNotNull(tagged(a, "contract_details:wallet"));
+                });
+            }
+            assertTrue(wallet.getBoolean(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED, false));
+            assertTrue(wallet.getBoolean(PaidPauseManager.KEY_ENABLED, false));
+
+            assertTrue(preferences.edit().putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, false).commit());
+            assertTrue(wallet.edit().remove(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED).putBoolean("enabled", true)
+                    .putBoolean(PaidPauseManager.KEY_ENABLED, true).commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> assertDisabledSection(a, "wallet"));
+            }
+            assertTrue(wallet.getBoolean(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED, false));
+            assertFalse(wallet.getBoolean(PaidPauseManager.KEY_ENABLED, true));
+            assertFalse(new LocalContractDetails(context).forSection("wallet").isEmpty());
+        } finally {
+            SharedPreferenceTestRestore.restore(wallet, savedWallet);
         }
     }
 

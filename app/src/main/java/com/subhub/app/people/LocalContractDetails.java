@@ -9,6 +9,7 @@ import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.overlay.CensorPhrases;
+import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceSnapshot;
@@ -32,7 +33,10 @@ public final class LocalContractDetails extends ContextWrapper {
                 AppTimerManager timers = new AppTimerManager(this);
                 rows = limitsArrangementDetails(timers, timers.loadSettings(), false);
                 break;
-            case "wallet": rows = walletArrangementDetails(); break;
+            case "wallet":
+                PenanceManager wallet = new PenanceManager(this);
+                rows = walletArrangementDetails(wallet, walletRuleLabels(wallet));
+                break;
             case "atmosphere": return AtmosphereContractDetails.local(this).details;
             default: throw new IllegalArgumentException("Unknown contract section");
         }
@@ -41,6 +45,14 @@ public final class LocalContractDetails extends ContextWrapper {
 
     String subLimitsDetails(AppTimerManager timers, AppTimerManager.Settings settings) {
         return format(limitsArrangementDetails(timers, settings, true));
+    }
+
+    PersonSnapshot.Section walletSection(PenanceManager wallet, boolean hideDisabled) {
+        List<String> rules = walletRuleLabels(wallet);
+        boolean enabled = !rules.isEmpty() || new PaidPauseManager(this).isEnabled();
+        return new PersonSnapshot.Section("wallet", getString(R.string.sub_wallet_title),
+                enabled ? getString(R.string.role_wallet_rule_count, rules.size()) : getString(R.string.role_disabled),
+                hideDisabled && !enabled ? "" : format(walletArrangementDetails(wallet, rules)));
     }
 
     private String format(List<ArrangementDetail> rows) {
@@ -132,9 +144,7 @@ public final class LocalContractDetails extends ContextWrapper {
         return apps.isEmpty() ? getString(R.string.arrangement_no_apps) : String.join("\n", apps);
     }
 
-    private List<ArrangementDetail> walletArrangementDetails() {
-        PenanceManager wallet = new PenanceManager(this);
-        PenanceSnapshot snapshot = wallet.snapshot(System.currentTimeMillis());
+    private List<String> walletRuleLabels(PenanceManager wallet) {
         List<String> rules = new ArrayList<>();
         for (PenanceInfraction infraction : PenanceInfraction.values()) {
             if (infraction == PenanceInfraction.PAID_PAUSE
@@ -159,6 +169,11 @@ public final class LocalContractDetails extends ContextWrapper {
                             trigger,
                             wallet.money(wallet.getInfractionCents(infraction))));
         }
+        return rules;
+    }
+
+    private List<ArrangementDetail> walletArrangementDetails(PenanceManager wallet, List<String> rules) {
+        PenanceSnapshot snapshot = wallet.snapshot(System.currentTimeMillis());
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(

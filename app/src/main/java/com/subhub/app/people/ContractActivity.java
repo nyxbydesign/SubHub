@@ -14,7 +14,6 @@ import android.widget.LinearLayout;
 import androidx.core.view.ViewCompat;
 import androidx.lifecycle.Lifecycle;
 import com.subhub.app.R;
-import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.SubFeaturePolicy;
@@ -119,20 +118,10 @@ public final class ContractActivity extends RolePage {
         SharedPreferences settings = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
         Map<String, PersonSnapshot.Section> result = new LinkedHashMap<>();
         for (PersonSnapshot.Section section : person.sections) {
-            boolean enabled;
-            switch (section.key) {
-                case "censor":
-                    enabled = SubFeaturePolicy.allowed(context, "censor")
-                            && settings.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true);
-                    break;
-                case "wallet":
-                    enabled = PenanceManager.observedEnabled(context);
-                    break;
-                default:
-                    continue;
-            }
-            if (!enabled) result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
-                    context.getString(R.string.role_disabled), ""));
+            if ("censor".equals(section.key) && (!SubFeaturePolicy.allowed(context, "censor")
+                    || !settings.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true)))
+                result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
+                        context.getString(R.string.role_disabled), ""));
         }
         return result;
     }
