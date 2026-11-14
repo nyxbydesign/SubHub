@@ -27,7 +27,8 @@ public final class InstalledAppCatalog {
             List<Entry> result = new ArrayList<>();
             for (Map.Entry<String,String> entry : remote.catalog().entrySet())
                 result.add(new Entry(entry.getValue(), entry.getKey(), null));
-            result.sort((a,b) -> Collator.getInstance().compare(a.label,b.label));
+            Collator collator = Collator.getInstance();
+            result.sort((left, right) -> collator.compare(left.label, right.label));
             return Collections.unmodifiableList(result);
         }
         PackageManager packages = app.getPackageManager();
