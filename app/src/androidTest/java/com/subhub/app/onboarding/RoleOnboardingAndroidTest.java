@@ -251,12 +251,7 @@ public final class RoleOnboardingAndroidTest {
             for (int i = 0; i < flow.size(); i++) {
                 OnboardingPage spec = flow.get(i); assertEquals(spec.id, OnboardingTestSupport.pageId(page));
                 capture(page, role.name().toLowerCase(Locale.ROOT) + "-" + spec.id + "-top"); assertTextAndFooter(page);
-                page.onActivity(activity -> {
-                    ScrollView scroll = activity.findViewById(R.id.tour_scroll);
-                    int bottom = Math.max(0, scroll.getChildAt(0).getHeight() - scroll.getHeight()
-                            + scroll.getPaddingTop() + scroll.getPaddingBottom());
-                    scroll.scrollTo(0, bottom);
-                });
+                scrollToSettledBottom(page);
                 capture(page, role.name().toLowerCase(Locale.ROOT) + "-" + spec.id + "-bottom"); assertTextAndFooter(page);
                 page.onActivity(activity -> assertFalse("The final instructions can be reached",
                         activity.findViewById(R.id.tour_scroll).canScrollVertically(1)));
@@ -266,6 +261,31 @@ public final class RoleOnboardingAndroidTest {
                 if (i + 1 < flow.size()) onView(withId(R.id.tour_next)).perform(click());
             }
         }
+    }
+
+    private void scrollToSettledBottom(ActivityScenario<OnboardingActivity> page) throws Exception {
+        AtomicReference<OnboardingActivity> activity = new AtomicReference<>();
+        page.onActivity(activity::set);
+        AtomicReference<Rect> previous = new AtomicReference<>();
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        do {
+            page.onActivity(current -> {
+                ScrollView scroll = current.findViewById(R.id.tour_scroll);
+                scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
+            });
+            UiRefreshWitness.frame(activity.get());
+            AtomicReference<Rect> geometry = new AtomicReference<>();
+            page.onActivity(current -> {
+                ScrollView scroll = current.findViewById(R.id.tour_scroll);
+                if (!scroll.canScrollVertically(1)) {
+                    geometry.set(new Rect(0, scroll.getScrollY(), scroll.getHeight(),
+                            scroll.getChildAt(0).getHeight()));
+                }
+            });
+            Rect settled = geometry.get();
+            if (Objects.equals(settled, previous.getAndSet(settled)) && settled != null) return;
+        } while (SystemClock.uptimeMillis() < deadline);
+        fail("The final instructions did not reach a stable scroll position");
     }
 
     private void assertTextAndFooter(ActivityScenario<OnboardingActivity> page) {
