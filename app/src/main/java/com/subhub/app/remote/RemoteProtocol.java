@@ -1,5 +1,6 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.util.LowercaseHex;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -17,7 +18,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.Deflater;
@@ -270,10 +270,7 @@ public final class RemoteProtocol {
 
     public static String sha256(byte[] value) {
         try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(value);
-            StringBuilder result = new StringBuilder(64);
-            for (byte item : hash) result.append(String.format(Locale.ROOT, "%02x", item & 255));
-            return result.toString();
+            return LowercaseHex.encode(MessageDigest.getInstance("SHA-256").digest(value));
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 

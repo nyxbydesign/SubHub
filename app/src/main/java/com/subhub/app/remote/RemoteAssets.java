@@ -1,5 +1,6 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.util.LowercaseHex;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -153,9 +154,7 @@ public final class RemoteAssets {
                 byte[] buffer = new byte[8192]; int count;
                 while ((count = input.read(buffer)) != -1) digest.update(buffer,0,count);
             }
-            StringBuilder result = new StringBuilder();
-            for (byte value : digest.digest()) result.append(String.format(java.util.Locale.ROOT,"%02x",value & 255));
-            return result.toString();
+            return LowercaseHex.encode(digest.digest());
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 

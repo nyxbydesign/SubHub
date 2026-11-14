@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import com.subhub.app.remote.RemoteProtocol;
+import com.subhub.app.util.LowercaseHex;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -240,9 +241,7 @@ public final class JournalStore extends SQLiteOpenHelper {
         }
     }
     private static String hash(String text) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-        StringBuilder result = new StringBuilder();
-        for (byte b : digest) result.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
-        return result.toString();
+        return LowercaseHex.encode(
+                MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
     }
 }

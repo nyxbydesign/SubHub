@@ -8,13 +8,13 @@ import android.content.pm.Signature;
 import android.os.Build;
 
 import com.subhub.app.BuildConfig;
+import com.subhub.app.util.LowercaseHex;
 
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 
 /** Rejects any downloaded APK that cannot be a signed SubHub upgrade. */
@@ -84,7 +84,7 @@ public final class UpdateVerifier {
         if (signatures == null) return values;
         for (Signature signature : signatures) {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray());
-            values.add(hex(digest));
+            values.add(LowercaseHex.encode(digest));
         }
         return values;
     }
@@ -96,12 +96,6 @@ public final class UpdateVerifier {
             int count;
             while ((count = input.read(buffer)) >= 0) digest.update(buffer, 0, count);
         }
-        return hex(digest.digest());
-    }
-
-    static String hex(byte[] value) {
-        StringBuilder output = new StringBuilder(value.length * 2);
-        for (byte element : value) output.append(String.format(Locale.ROOT, "%02x", element & 0xff));
-        return output.toString();
+        return LowercaseHex.encode(digest.digest());
     }
 }
