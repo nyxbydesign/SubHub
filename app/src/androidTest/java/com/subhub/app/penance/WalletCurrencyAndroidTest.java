@@ -9,11 +9,17 @@ import static org.hamcrest.Matchers.allOf;
 import static org.junit.Assert.*;
 
 import android.content.Context;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.LayoutInflater;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.databinding.ViewWalletConnectionBinding;
+import com.subhub.app.help.HelpActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import org.json.JSONObject;
@@ -137,6 +143,45 @@ public final class WalletCurrencyAndroidTest {
         assertSame(changed.getEvents().get(0), newCurrency.getEvents().get(0));
         assertEquals(200, newCurrency.getPaidCents());
         assertEquals(25, changed.getPaidCents());
+    }
+
+    @Test public void unchangedPayPalLabelsAreNotRewrittenOnResume() {
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                var binding = ViewWalletConnectionBinding.inflate(LayoutInflater.from(activity));
+                var summary = new TextView(activity);
+                var autoPay = new HardcoreAutoPayManager(context);
+                autoPay.pause("Fixture pause");
+                try (var connection = new WalletConnectionController(activity, binding, summary)) {
+                    TextView[] labels = {summary, binding.paypalSandboxStatus, binding.paypalVaultStatus,
+                            binding.buttonLinkPaypalWallet, binding.walletCurrencyStatus, binding.paypalAutoPayStatus};
+                    int[] writes = new int[labels.length];
+                    for (int i = 0; i < labels.length; i++) {
+                        int index = i;
+                        labels[i].addTextChangedListener(new TextWatcher() {
+                            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+                            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                                writes[index]++;
+                            }
+                            @Override public void afterTextChanged(Editable text) {}
+                        });
+                    }
+
+                    connection.refresh();
+                    connection.onResume();
+                    assertArrayEquals(new int[6], writes);
+
+                    autoPay.pause("Changed fixture pause");
+                    connection.refresh();
+                    connection.onResume();
+                    assertArrayEquals(new int[]{0, 0, 0, 0, 0, 1}, writes);
+                    assertEquals(activity.getString(R.string.paypal_auto_pay_paused_status, "Changed fixture pause"),
+                            binding.paypalAutoPayStatus.getText().toString());
+                } finally {
+                    autoPay.disable();
+                }
+            });
+        }
     }
 
     @Test public void primarySelectionRequiresOneSupportedBooleanPrimary() throws Exception {
