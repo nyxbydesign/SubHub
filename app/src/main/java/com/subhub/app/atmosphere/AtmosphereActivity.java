@@ -3,7 +3,15 @@ package com.subhub.app.atmosphere;
 import com.subhub.app.configuration.FeatureEditorSession;
 
 import android.os.Bundle;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
+
+import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.AccessibilityDelegateCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityAtmosphereBinding;
 import com.subhub.app.people.PersonRoutes;
@@ -17,6 +25,15 @@ import com.subhub.app.util.SubHubNavigation;
 
 /** The selected local contract's optional on-screen effects. */
 public final class AtmosphereActivity extends AppCompatActivity {
+    private static final AccessibilityDelegateCompat CARD_ACCESSIBILITY =
+            new AccessibilityDelegateCompat() {
+                @Override public void onInitializeAccessibilityNodeInfo(
+                        View host, AccessibilityNodeInfoCompat info) {
+                    super.onInitializeAccessibilityNodeInfo(host, info);
+                    info.setClassName(Button.class.getName());
+                }
+            };
+
     private ActivityAtmosphereBinding binding;
 
     @Override protected void onCreate(Bundle state) {
@@ -29,12 +46,9 @@ public final class AtmosphereActivity extends AppCompatActivity {
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(android.view.View.VISIBLE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> FeatureEditorSession.leaveEditor(this));
-        binding.whispersCard.setOnClickListener(view -> open(SubliminalSettingsActivity.class));
-        binding.buttonWhispers.setOnClickListener(view -> open(SubliminalSettingsActivity.class));
-        binding.popupStormCard.setOnClickListener(view -> open(PopupStormActivity.class));
-        binding.buttonPopupStorm.setOnClickListener(view -> open(PopupStormActivity.class));
-        binding.gagCard.setOnClickListener(view -> openGag());
-        binding.buttonGag.setOnClickListener(view -> openGag());
+        bindEffectCard(binding.whispersCard, () -> open(SubliminalSettingsActivity.class));
+        bindEffectCard(binding.popupStormCard, () -> open(PopupStormActivity.class));
+        bindEffectCard(binding.gagCard, this::openGag);
     }
 
     @Override protected void onResume() {
@@ -45,19 +59,33 @@ public final class AtmosphereActivity extends AppCompatActivity {
             return;
         }
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
-        binding.whispersStatus.setText(new FeatureModuleManager(FeatureEditorSession.context(this)).isSubliminalEnabled()
-                ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
-        binding.popupStormStatus.setText(PopupStormSettings.load(FeatureEditorSession.context(this)).isEnabled()
-                ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
+        showEffectStatus(binding.whispersCard, binding.whispersStatus, R.string.atmosphere_whispers_title,
+                new FeatureModuleManager(FeatureEditorSession.context(this)).isSubliminalEnabled()
+                        ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
+        showEffectStatus(binding.popupStormCard, binding.popupStormStatus, R.string.popup_title,
+                PopupStormSettings.load(FeatureEditorSession.context(this)).isEnabled()
+                        ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
         binding.whispersCard.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
-        binding.buttonWhispers.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
         binding.popupStormCard.setEnabled(FeatureEditorSession.canView(this, "popup"));
-        binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canView(this, "popup"));
         boolean gagVisible = FeatureEditorSession.canEditGag(this);
         binding.gagCard.setVisibility(gagVisible ? android.view.View.VISIBLE : android.view.View.GONE);
-        if (gagVisible) binding.gagStatus.setText(R.string.gag_dom_description);
+        if (gagVisible) showEffectStatus(binding.gagCard, binding.gagStatus,
+                R.string.gag_title, R.string.gag_dom_description);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
+    }
+
+    private static void bindEffectCard(View card, Runnable open) {
+        ViewCompat.setAccessibilityDelegate(card, CARD_ACCESSIBILITY);
+        ViewCompat.setScreenReaderFocusable(card, true);
+        card.setOnClickListener(view -> open.run());
+    }
+
+    private void showEffectStatus(View card, TextView status, @StringRes int titleRes,
+            @StringRes int statusRes) {
+        status.setText(statusRes);
+        card.setContentDescription(getString(
+                R.string.atmosphere_card_description, getString(titleRes), status.getText()));
     }
 
     private void openGag() {

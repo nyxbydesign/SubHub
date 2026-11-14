@@ -1011,6 +1011,7 @@
     <string name="sub_subliminal_setup">Accessibility permission is required</string>
     <string name="sub_subliminal_summary">%1$s pack · %2$d assigned app(s) · %3$d this session</string>
     <string name="atmosphere_title">Atmosphere</string>
+    <string name="atmosphere_card_description">%1$s, %2$s</string>
     <string name="atmosphere_home_summary">Whispers %1$s · Popup Storm %2$s</string>
     <string name="atmosphere_home_hint">Keyholder, whispers and visual rituals</string>
     <plurals name="atmosphere_effects_active">

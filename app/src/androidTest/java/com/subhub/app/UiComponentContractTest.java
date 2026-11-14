@@ -1,6 +1,7 @@
 package com.subhub.app;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -12,9 +13,12 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import androidx.core.view.ViewCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -110,22 +114,44 @@ public final class UiComponentContractTest {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<AtmosphereActivity> scenario =
                 ActivityScenario.launch(AtmosphereActivity.class)) {
-            scenario.onActivity(
-                    activity -> {
-                        int[] ids = {R.id.button_whispers, R.id.button_popup_storm};
-                        for (int id : ids) {
-                            TextView button = activity.findViewById(id);
-                            assertEquals(Gravity.CENTER, button.getGravity());
-                            assertTrue(button.isShown());
-                            assertTrue(
-                                    button.getHeight()
-                                            >= activity.getResources()
-                                                    .getDimensionPixelSize(
-                                                            R.dimen.control_min_height));
-                            assertEquals(button.getPaddingTop(), button.getPaddingBottom());
-                            assertReadable(button);
-                        }
-                    });
+            scenario.onActivity(activity -> {
+                int[][] cards = {
+                    {R.id.whispers_card, R.id.button_whispers, R.id.whispers_status},
+                    {R.id.popup_storm_card, R.id.button_popup_storm, R.id.popup_storm_status},
+                    {R.id.gag_card, R.id.button_gag, R.id.gag_status}
+                };
+                for (int[] ids : cards) {
+                    View card = activity.findViewById(ids[0]);
+                    View arrow = card.findViewById(ids[1]);
+                    TextView status = card.findViewById(ids[2]);
+                    assertTrue(card.isClickable());
+                    assertTrue(card.isFocusable());
+                    assertTrue(ViewCompat.isScreenReaderFocusable(card));
+                    var node = AccessibilityNodeInfoCompat.wrap(card.createAccessibilityNodeInfo());
+                    assertEquals(Button.class.getName(), node.getClassName().toString());
+                    assertFalse(arrow.isClickable());
+                    assertFalse(arrow.isFocusable());
+                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
+                            arrow.getImportantForAccessibility());
+                    ViewGroup copy = (ViewGroup) status.getParent();
+                    ViewGroup content = (ViewGroup) copy.getParent();
+                    View icon = content.getChildAt(0);
+                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
+                            icon.getImportantForAccessibility());
+                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,
+                            copy.getImportantForAccessibility());
+                    if (card.isShown()) {
+                        TextView title = (TextView) copy.getChildAt(0);
+                        assertReadable(title);
+                        assertReadable(status);
+                        assertEquals(activity.getString(R.string.atmosphere_card_description,
+                                title.getText(), status.getText()), node.getContentDescription().toString());
+                        assertTrue(card.getHeight() >= activity.getResources()
+                                .getDimensionPixelSize(R.dimen.control_min_height));
+                        assertTrue(arrow.isShown());
+                    }
+                }
+            });
         }
     }
 
