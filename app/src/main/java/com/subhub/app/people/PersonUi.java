@@ -91,25 +91,29 @@ public final class PersonUi {
 
     /** App-time content for an existing card; daily usage is distinct from session counters. */
     public static void allowances(LinearLayout parent, PersonSnapshot snapshot) {
-        if (snapshot.allowances.isEmpty()
+        allowances(parent, snapshot.id, snapshot.allowances);
+    }
+
+    public static void allowances(LinearLayout parent, PersonId id, java.util.List<PersonSnapshot.Allowance> values) {
+        if (values.isEmpty()
                 && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())) return;
         LinearLayout card = parent;
         UiIdentity.sectionIcon(text(card, parent.getContext().getString(R.string.role_app_time_daily), true),
                 R.drawable.ic_nav_limits);
-        for (PersonSnapshot.Allowance value : PersonSnapshot.Allowance.ordered(snapshot.allowances)) {
+        for (PersonSnapshot.Allowance value : PersonSnapshot.Allowance.ordered(values)) {
             LinearLayout app = row(card, R.drawable.ic_nav_limits, value.label,
                     value.usedMillis < 0 ? parent.getContext().getString(R.string.role_allowance_unknown, value.dailyMinutes)
                             : parent.getContext().getString(R.string.role_allowance_usage,
                                     value.usedMillis / 60_000L, value.displayMinutes()), null);
             int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
             app.getChildAt(0).setTag("allowance_app_icon:" + value.packageName);
-            if (value.appIcon != null || !snapshot.id.isLocal() && !DummySubPreview.ID.equals(snapshot.id))
+            if (value.appIcon != null || !id.isLocal() && !DummySubPreview.ID.equals(id))
                 com.subhub.app.remote.RemoteUi.bindAppIcon((ImageView) app.getChildAt(0), value.appIcon, fallback);
             else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
             com.subhub.app.appmode.AllowanceProgress.add(card, value);
         }
-        com.subhub.app.appmode.ExtraTimeEntry.review(card, snapshot.id);
+        com.subhub.app.appmode.ExtraTimeEntry.review(card, id);
     }
 
     public static String connection(Context context, PersonSnapshot person) {

@@ -56,30 +56,8 @@ public final class LocalPersonRepository implements PersonRepository {
         SettingsRepository settings = new SettingsRepository(context);
         FeatureModuleManager modules = new FeatureModuleManager(context);
         AppModeManager apps = new AppModeManager(context);
-        AppTimerManager timers = new AppTimerManager(context);
-        AppTimerManager.Settings limits = timers.loadSettings();
         Set<String> packages = apps.getIncludedPackages();
-        long usageAt = System.currentTimeMillis();
-        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
-        List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
-        for (String packageName : packages) {
-            String label = appLabel(packageName);
-            if (limits.perAppEnabled) {
-                AppTimerManager.UsageSnapshot used = usage.get(packageName);
-                allowances.add(new PersonSnapshot.Allowance(packageName, label,
-                        used == null ? 0 : used.appUsedMillis, timers.allowanceMinutes(packageName), null,
-                        com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, usageAt)
-                                .individualBudget(timers.allowanceMinutes(packageName) * 60_000L)));
-            }
-        }
-
-        if (limits.totalEnabled && !packages.isEmpty()) {
-            long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
-            allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
-                    total, limits.totalMinutes));
-        }
-
-        allowances = PersonSnapshot.Allowance.ordered(allowances);
+        List<PersonSnapshot.Allowance> allowances = loadAllowances(packages);
         PenanceManager wallet = new PenanceManager(context);
         List<PersonSnapshot.Section> sections = contractSections(settings, modules, apps.isAllApps(),
                 packages, allowances.size(), wallet, false);
@@ -97,6 +75,37 @@ public final class LocalPersonRepository implements PersonRepository {
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
                 stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
                         com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context)), settings);
+    }
+
+    public List<PersonSnapshot.Allowance> loadAllowances() {
+        return loadAllowances(new AppModeManager(context).getIncludedPackages());
+    }
+
+    private List<PersonSnapshot.Allowance> loadAllowances(Set<String> packages) {
+        AppTimerManager timers = new AppTimerManager(context);
+        AppTimerManager.Settings limits = timers.loadSettings();
+        if (packages.isEmpty() || (!limits.perAppEnabled && !limits.totalEnabled)) return List.of();
+        long usageAt = System.currentTimeMillis();
+        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
+        List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
+        if (limits.perAppEnabled) {
+            for (String packageName : packages) {
+                AppTimerManager.UsageSnapshot used = usage.get(packageName);
+                int minutes = timers.allowanceMinutes(packageName, limits);
+                allowances.add(new PersonSnapshot.Allowance(packageName, appLabel(packageName),
+                        used == null ? 0 : used.appUsedMillis, minutes, null,
+                        com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, usageAt)
+                                .individualBudget(minutes * 60_000L)));
+            }
+        }
+
+        if (limits.totalEnabled) {
+            long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
+            allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
+                    total, limits.totalMinutes));
+        }
+
+        return PersonSnapshot.Allowance.ordered(allowances);
     }
 
     /** The Sub Contract reads configured values without opening usage/history or session stores. */
