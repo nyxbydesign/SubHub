@@ -8,11 +8,11 @@ import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.annotation.StringRes;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.AccessibilityDelegateCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import com.subhub.app.R;
+import com.subhub.app.configuration.FeatureEditorActivity;
 import com.subhub.app.databinding.ActivityAtmosphereBinding;
 import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.popup.PopupStormActivity;
@@ -24,7 +24,7 @@ import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
 /** The selected local contract's optional on-screen effects. */
-public final class AtmosphereActivity extends AppCompatActivity {
+public final class AtmosphereActivity extends FeatureEditorActivity {
     private static final AccessibilityDelegateCompat CARD_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
                 @Override public void onInitializeAccessibilityNodeInfo(
@@ -100,15 +100,4 @@ public final class AtmosphereActivity extends AppCompatActivity {
         if (!FeatureEditorSession.canView(this, section)) return;
         startActivity(FeatureEditorSession.child(this, destination));
     }
-    @Override protected void onSaveInstanceState(Bundle state) {
-        FeatureEditorSession.saveState(this, state);
-        super.onSaveInstanceState(state);
-    }
-
-    @Override protected void onRestoreInstanceState(Bundle state) {
-        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
-    }
-
 }

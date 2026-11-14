@@ -27,9 +27,9 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
+import com.subhub.app.configuration.FeatureEditorActivity;
 import com.subhub.app.databinding.ActivityPopupStormBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
@@ -44,7 +44,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /** Styled local configuration UI with explicit consent and a persistent escape control. */
-public final class PopupStormActivity extends AppCompatActivity {
+public final class PopupStormActivity extends FeatureEditorActivity {
     private ActivityPopupStormBinding binding;
     private SharedPreferences preferences;
     private ControllerEditMode editMode;
@@ -645,15 +645,4 @@ public final class PopupStormActivity extends AppCompatActivity {
     private abstract static class SimpleSeekListener implements SeekBar.OnSeekBarChangeListener {
         @Override public void onStartTrackingTouch(SeekBar seekBar) {}
     }
-    @Override protected void onSaveInstanceState(Bundle state) {
-        FeatureEditorSession.saveState(this, state);
-        super.onSaveInstanceState(state);
-    }
-
-    @Override protected void onRestoreInstanceState(Bundle state) {
-        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
-    }
-
 }

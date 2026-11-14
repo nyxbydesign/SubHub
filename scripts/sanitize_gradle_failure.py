@@ -276,6 +276,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/configuration/ConfigurationSettingCatalog.java": "main_configuration_configuration_setting_catalog",
     b"app/src/main/java/com/subhub/app/configuration/DraftPreferences.java": "main_configuration_draft_preferences",
     b"app/src/main/java/com/subhub/app/configuration/FeatureEditorAppIcons.java": "main_configuration_feature_editor_app_icons",
+    b"app/src/main/java/com/subhub/app/configuration/FeatureEditorActivity.java": "main_configuration_feature_editor_activity",
     b"app/src/main/java/com/subhub/app/configuration/FeatureEditorSession.java": "main_configuration_feature_editor_session",
     b"app/src/main/java/com/subhub/app/configuration/InternalEditorArtwork.java": "main_configuration_internal_editor_artwork",
     b"app/src/main/java/com/subhub/app/configuration/InternalEditorAutosave.java": "main_configuration_internal_editor_autosave",
