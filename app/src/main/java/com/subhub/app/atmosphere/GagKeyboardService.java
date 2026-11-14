@@ -98,6 +98,7 @@ public final class GagKeyboardService extends InputMethodService {
     private int editorInputType;
     private long lastShiftTap;
     private LinearLayout keyboard;
+    private GagKeyAlternativesPopup keyAlternatives;
     private LinearLayout keyboardHost;
     private LinearLayout clipboardPanel;
     private ClipboardManager clipboardManager;
@@ -131,6 +132,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onDestroy() {
+        dismissAlternatives();
         stopClipboard();
         if (configurationObserver != null) try { configurationObserver.close(); } catch (Exception ignored) { }
         participation.unregisterOnSharedPreferenceChangeListener(participationChanged);
@@ -184,6 +186,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        dismissAlternatives();
         suggestionSpace = null;
         stopClipboard();
         if (page == Page.EMOJI) page = pageBeforeEmoji;
@@ -195,6 +198,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onFinishInput() {
+        dismissAlternatives();
         suggestionSpace = null;
         stopClipboard();
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
@@ -483,11 +487,13 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public View onCreateInputView() {
+        dismissAlternatives();
         Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
         LinearLayout surface = new LinearLayout(theme);
         surface.setOrientation(LinearLayout.VERTICAL);
         surface.setBackgroundColor(Color.BLACK);
         keyboard = new LinearLayout(theme);
+        keyAlternatives = new GagKeyAlternativesPopup(keyboard);
         keyboard.setOrientation(LinearLayout.VERTICAL);
         keyboard.setMotionEventSplittingEnabled(true);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
@@ -547,6 +553,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void renderKeys(int editorAction) {
+        dismissAlternatives();
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         keyboard.removeAllViews();
         letters.clear();
@@ -586,7 +593,7 @@ public final class GagKeyboardService extends InputMethodService {
             for (int index = 0; index < rows[rowIndex].length(); index++) {
                 String label = rows[rowIndex].substring(index, index + 1);
                 if (lettersPage) letter(row, label, ALTERNATE_ROWS[rowIndex].substring(index, index + 1));
-                else key(row, label, 1, LETTER_SURFACE, 26, () -> type(label));
+                else symbolKey(row, label, LETTER_SURFACE, 26);
             }
             if (rowIndex == 2) renderDelete(row, 1.5f);
             if (lettersPage && rowIndex == 1) spacer(row, .5f);
@@ -596,11 +603,11 @@ public final class GagKeyboardService extends InputMethodService {
         else pageKey(bottom, "ABC", 1.5f, R.string.gag_keyboard_letters, Page.LETTERS);
         String left = page == Page.MORE_SYMBOLS ? "<" : ",";
         String right = page == Page.MORE_SYMBOLS ? ">" : ".";
-        Button punctuation = key(bottom, left, 1f, MODIFIER_SURFACE, 24, () -> type(left));
+        Button punctuation = symbolKey(bottom, left, MODIFIER_SURFACE, 24);
         if (editorAllowed && ",".equals(left)) GagEmojiPicker.bindComma(punctuation, this::openEmojiPicker);
         if (!lettersPage) pageKey(bottom, "1 2\n3 4", 1f, R.string.gag_keyboard_numbers, Page.NUMBERS);
         renderSpace(bottom, lettersPage ? 5f : 4f);
-        key(bottom, right, 1f, MODIFIER_SURFACE, 24, () -> type(right));
+        symbolKey(bottom, right, MODIFIER_SURFACE, 24);
         renderEnter(bottom, editorAction, 1.5f);
         renderCase();
     }
@@ -1166,10 +1173,7 @@ public final class GagKeyboardService extends InputMethodService {
         addKeySlot(row, cap, 1);
         Button button = makeKey(row.getContext(), label, LETTER_SURFACE, 26, () ->
                 type(shifted ? label.toUpperCase(Locale.ROOT) : label));
-        button.setOnLongClickListener(view -> {
-            type(alternate);
-            return true;
-        });
+        bindAlternatives(button, () -> GagKeyAlternatives.forLetter(label, alternate, shifted), alternate);
         cap.addView(button, new FrameLayout.LayoutParams(-1, -1));
         TextView hint = new TextView(row.getContext());
         hint.setText(alternate);
@@ -1181,6 +1185,31 @@ public final class GagKeyboardService extends InputMethodService {
         hintSize.setMargins(0, dp(compact() ? 4 : 7), dp(5), 0);
         cap.addView(hint, hintSize);
         letters.add(new LetterKey(button, label, alternate));
+    }
+
+    private Button symbolKey(LinearLayout row, String label, int surface, int textSize) {
+        Button button = key(row, label, 1f, surface, textSize, () -> type(label));
+        List<String> choices = GagKeyAlternatives.forSymbol(label);
+        if (!choices.isEmpty()) bindAlternatives(button, () -> choices, null);
+        return button;
+    }
+
+    private void bindAlternatives(Button button, java.util.function.Supplier<List<String>> choices, String direct) {
+        GagKeyPress press = new GagKeyPress(main, null);
+        press.setAlternatives(keyAlternatives);
+        button.setOnTouchListener(press);
+        button.setOnLongClickListener(view -> {
+            List<String> options = choices.get();
+            if (direct != null && options.size() == 1) {
+                type(direct);
+                return true;
+            }
+            return keyAlternatives != null && keyAlternatives.show(view, options, this::type);
+        });
+    }
+
+    private void dismissAlternatives() {
+        if (keyAlternatives != null) keyAlternatives.dismiss();
     }
 
     private void renderCase() {

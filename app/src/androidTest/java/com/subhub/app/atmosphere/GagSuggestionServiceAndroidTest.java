@@ -79,6 +79,21 @@ public final class GagSuggestionServiceAndroidTest {
         assertText(" ");
     }
 
+    @Test public void longPressInsertsAlternativesFromLettersAndBothSymbolPages() throws Exception {
+        openEditor(false);
+        await(By.pkg("com.subhub.app").text("a")).longClick();
+        key("ä");
+        assertText("ä");
+        keyDescription(R.string.gag_keyboard_symbols);
+        await(By.pkg("com.subhub.app").text("1")).longClick();
+        key("½");
+        assertText("ä½");
+        keyDescription(R.string.gag_keyboard_more_symbols);
+        await(By.pkg("com.subhub.app").text("•")).longClick();
+        key("·");
+        assertText("ä½·");
+    }
+
     private static void acceptHello() throws Exception {
         openEditor(false);
         correctHello("");
