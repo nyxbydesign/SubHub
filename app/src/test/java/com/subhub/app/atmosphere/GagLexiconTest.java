@@ -40,6 +40,10 @@ public final class GagLexiconTest {
         assertEquals(List.of("those", "house"), bundled.suggestions("hose").subList(0, 2));
         assertEquals("Those", bundled.suggestions("Hose").get(0));
         assertEquals("from", bundled.suggestions("form").get(0));
+        assertEquals("to", bundled.suggestions("ot").get(0));
+        assertEquals("my", bundled.suggestions("ym").get(0));
+        assertEquals("du", bundled.suggestions("ud").get(0));
+        assertEquals("die", bundled.suggestions("dei").get(0));
         assertTrue(bundled.suggestions("whise").contains("whose"));
         for (String ordinary : List.of("hello", "home", "play", "plan", "quiet", "quite")) {
             assertTrue(bundled.suggestions(ordinary).stream().allMatch(word -> word.startsWith(ordinary)));

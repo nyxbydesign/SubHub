@@ -126,11 +126,22 @@ final class GagLexicon {
 
     private Map<String, Long> typos(String word) {
         Map<String, Long> result = new HashMap<>();
-        if (word.length() < 3) return result;
+        if (word.length() < 2) return result;
+        // Broad edits swamp useful completions for short tokens. Admit only a very common
+        // transposition for a two-letter token or a three-letter exact match.
+        if (word.length() == 2 || (word.length() == 3 && counts.containsKey(word))) {
+            long minimum = Math.max(100_000, (long) counts.getOrDefault(word, 0) * 200);
+            for (int i = 1; i < word.length(); i++) {
+                if (word.charAt(i - 1) == word.charAt(i)) continue;
+                String swapped = word.substring(0, i - 1) + word.charAt(i) + word.charAt(i - 1)
+                        + word.substring(i + 1);
+                add(result, swapped, 8, minimum);
+            }
+            return result;
+        }
         Integer exactCount = counts.get(word);
         long minimumCount = SUGGEST_MIN_COUNT;
         if (exactCount != null) {
-            if (word.length() < 4) return result;
             minimumCount = Math.max(KNOWN_WORD_ALTERNATIVE_MIN_COUNT,
                     (long) exactCount * KNOWN_WORD_ALTERNATIVE_RATIO);
             if (minimumCount > highestCount) return result;
