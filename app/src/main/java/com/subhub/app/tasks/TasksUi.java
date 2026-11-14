@@ -21,7 +21,9 @@ final class TasksUi {
     static void occurrenceHeader(LinearLayout card, TaskEngine.Occurrence occurrence, int statusLabel) {
         Context context = card.getContext();
         TaskDefinition task = occurrence.task;
-        PersonUi.text(card, task.title, true).setTextSize(24);
+        TextView title = PersonUi.text(card, task.title, true);
+        title.setTextSize(24);
+        ViewCompat.setAccessibilityHeading(title, true);
         if (statusLabel != 0) badge(card, context.getString(statusLabel));
 
         ZonedDateTime start = task.start(occurrence.date).atZone(task.zone);
@@ -30,8 +32,10 @@ final class TasksUi {
         DateTimeFormatter endFormat = start.toLocalDate().equals(end.toLocalDate())
                 ? DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT) : dateTime;
         TextView window = PersonUi.text(card, context.getString(R.string.tasks_window,
-                dateTime.format(start), endFormat.format(end), task.zone.getId()), false);
+                dateTime.format(start), endFormat.format(end)), false);
         window.setTag("task_window:" + occurrence.id);
+        window.setTextColor(context.getColor(R.color.accent_text));
+        window.setTypeface(null, Typeface.BOLD);
         if (task.recurring()) {
             String[] labels = context.getResources().getStringArray(R.array.tasks_weekdays);
             ArrayList<String> days = new ArrayList<>();
@@ -41,7 +45,42 @@ final class TasksUi {
             weekdays.setPadding(0, 0, 0, weekdays.getPaddingBottom());
             weekdays.setTag("task_weekdays:" + occurrence.id);
         }
-        if (!task.text.isEmpty()) PersonUi.text(card, task.text, false);
+        if (!task.text.isEmpty()) {
+            divider(card);
+            PersonUi.text(card, task.text, false);
+        }
+    }
+
+    static LinearLayout requestHeading(LinearLayout card) {
+        Context context = card.getContext();
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        TextView title = PersonUi.text(row, context.getString(R.string.tasks_submission_heading), true);
+        title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        ViewCompat.setAccessibilityHeading(title, true);
+        return row;
+    }
+
+    static void divider(LinearLayout card) {
+        Context context = card.getContext();
+        android.view.View line = new android.view.View(context);
+        line.setBackgroundColor(context.getColor(R.color.outline_subtle));
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, PersonUi.dp(context, 1));
+        size.topMargin = PersonUi.dp(context, 6);
+        size.bottomMargin = PersonUi.dp(context, 6);
+        card.addView(line, size);
+    }
+
+    static TextView inlineBadge(LinearLayout row, CharSequence label) {
+        TextView badge = badge(row, label);
+        LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) badge.getLayoutParams();
+        size.setMarginStart(PersonUi.dp(row.getContext(), 8));
+        size.topMargin = 0;
+        size.bottomMargin = 0;
+        badge.setMaxWidth(PersonUi.dp(row.getContext(), 112));
+        badge.setLayoutParams(size);
+        return badge;
     }
 
     static void counts(LinearLayout parent, int completed, int active, int pending, int scheduled) {

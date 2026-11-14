@@ -520,7 +520,7 @@ public final class TasksAndroidTest {
         var end = task.end(start.toLocalDate()).atZone(zone);
         assertEquals(start.toLocalDate(), end.toLocalDate());
         String expectedWindow = context.getString(R.string.tasks_window,
-                dateTime.format(task.start(start.toLocalDate()).atZone(zone)), time.format(end), zone.getId());
+                dateTime.format(task.start(start.toLocalDate()).atZone(zone)), time.format(end));
         String expectedDays = String.join(" · ", context.getResources().getStringArray(R.array.tasks_weekdays));
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
@@ -762,7 +762,7 @@ public final class TasksAndroidTest {
         java.util.Collections.sort(tied); expected.addAll(tied);
         try (ActivityScenario<TasksActivity> page = launch()) {
             openTask(page, approved);
-            assertCompletionText(page, approved, requested);
+            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "tasks_history"); tap("tasks_history");
             onView(withTagValue(is("task_completion_time:" + occurrenceId(approved)))).check(doesNotExist());
@@ -785,16 +785,17 @@ public final class TasksAndroidTest {
             assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
             assertCompletionText(page, approved, requested);
             openTask(page, approved);
-            assertCompletionText(page, approved, requested);
+            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
             assertSubmissionVerdict(page, occurrenceId(approved), approvedProof.id, R.string.tasks_accepted);
             page.recreate();
-            assertCompletionText(page, approved, requested);
-            captureHistoryView(page, "approved-detail", "task_detail:" + occurrenceId(approved));
+            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
+            captureHistoryView(page, "approved-detail", "task_submission:" + occurrenceId(approved));
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "tasks_history");
             openTask(page, declined);
-            assertCompletionText(page, declined, completionRequestText(declined, declinedProof.at));
-            captureHistoryView(page, "declined-detail", "task_detail:" + occurrenceId(declined));
+            assertCompletionText(page, declined, completionDetailText(declined, declinedProof.at));
+            assertSubmissionVerdict(page, occurrenceId(declined), declinedProof.id, R.string.tasks_denied);
+            captureHistoryView(page, "declined-detail", "task_submission:" + occurrenceId(declined));
             androidx.test.espresso.Espresso.pressBack();
             for (TaskDefinition noRequest : List.of(cancelled, refused, skipped)) {
                 openTask(page, noRequest);
@@ -824,9 +825,16 @@ public final class TasksAndroidTest {
     }
 
     private String completionRequestText(TaskDefinition task, long at) {
-        return context.getString(R.string.tasks_completion_requested_at,
-                java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
-                        .withZone(task.zone).format(java.time.Instant.ofEpochMilli(at)), task.zone.getId());
+        return context.getString(R.string.tasks_completion_requested_at, formattedCompletionTime(task, at));
+    }
+
+    private String completionDetailText(TaskDefinition task, long at) {
+        return context.getString(R.string.tasks_submission_timestamp, formattedCompletionTime(task, at));
+    }
+
+    private String formattedCompletionTime(TaskDefinition task, long at) {
+        return java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
+                .withZone(task.zone).format(java.time.Instant.ofEpochMilli(at));
     }
 
     private void assertCompletionText(ActivityScenario<TasksActivity> page, TaskDefinition task, String expected) throws Exception {
@@ -1455,7 +1463,9 @@ public final class TasksAndroidTest {
             View completion = root.findViewWithTag("task_submission:" + occurrence);
             View badge = root.findViewWithTag(tag);
             assertNotNull(detail); assertNotNull(completion); assertNotNull(badge);
-            assertSame(completion, badge.getParent());
+            assertSame(completion, badge.getParent().getParent());
+            assertNotNull(completion.findViewWithTag("task_completion_time:" + occurrence));
+            assertNull(detail.findViewWithTag("task_completion_time:" + occurrence));
             assertEquals(activity.getString(verdict), ((android.widget.TextView) badge).getText().toString());
             assertFalse(containsText(detail, activity.getString(verdict)));
         });

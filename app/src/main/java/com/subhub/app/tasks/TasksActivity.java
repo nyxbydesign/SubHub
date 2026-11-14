@@ -437,12 +437,17 @@ public final class TasksActivity extends RolePage {
         if (occurrence.submission != null) {
             LinearLayout submission = PersonUi.card(body);
             submission.setTag("task_submission:" + occurrence.id);
-            PersonUi.text(submission, getString(R.string.tasks_submission_heading), true);
+            LinearLayout heading = TasksUi.requestHeading(submission);
             if (occurrence.review != null && occurrence.submission.id.equals(occurrence.review.submissionId)
                     && (occurrence.review.kind == TaskAction.Kind.ACCEPT || occurrence.review.kind == TaskAction.Kind.DENY))
-                TasksUi.badge(submission, getString(statusLabel(occurrence.review.kind == TaskAction.Kind.ACCEPT
+                TasksUi.inlineBadge(heading, getString(statusLabel(occurrence.review.kind == TaskAction.Kind.ACCEPT
                         ? TaskEngine.Status.ACCEPTED : TaskEngine.Status.DENIED)))
                         .setTag("task_submission_verdict:" + occurrence.submission.id);
+            else if (occurrence.status == TaskEngine.Status.PENDING)
+                TasksUi.inlineBadge(heading, getString(R.string.tasks_pending));
+            completionTime(submission, occurrence, R.string.tasks_submission_timestamp);
+            int headerChildren = submission.getChildCount();
+            TasksUi.divider(submission);
             if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
                 PersonUi.text(submission, getString(R.string.tasks_outside_pending), false);
             else {
@@ -458,14 +463,18 @@ public final class TasksActivity extends RolePage {
                                 model.proofAttachments = true; render(); scrollTop(); })
                             .setTag("task_proof_attachments:" + occurrence.id);
             }
+            boolean hasProof = submission.getChildCount() > headerChildren + 1;
+            if (!hasProof) submission.removeViewAt(headerChildren);
+            if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING) {
+                TasksUi.divider(submission);
+                action(submission, R.string.tasks_accept, "accept:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
+                action(submission, R.string.tasks_deny, "deny:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.DENY), false);
+            }
         }
         LinearLayout actions = PersonUi.card(body);
-        if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING && occurrence.submission != null) {
-            action(actions, R.string.tasks_accept, "accept:" + occurrence.id,
-                    () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
-            action(actions, R.string.tasks_deny, "deny:" + occurrence.id,
-                    () -> act(occurrence, TaskAction.Kind.DENY), false);
-        } else if (!state.dom && !state.refused.contains(occurrence.task.id)) {
+        if (!state.dom && !state.refused.contains(occurrence.task.id)) {
             if (occurrence.status == TaskEngine.Status.ACTIVE) {
                 action(actions, R.string.tasks_request, "request:" + occurrence.id, () -> {
                     model.openForm(occurrence.id); render(); scrollTop(); InputFocusPolicy.openActivityForReading(this);
@@ -540,14 +549,17 @@ public final class TasksActivity extends RolePage {
         int status = (occurrence.status == TaskEngine.Status.ACCEPTED
                 || occurrence.status == TaskEngine.Status.DENIED) ? 0 : statusLabel(occurrence.status);
         TasksUi.occurrenceHeader(card, occurrence, status);
-        completionTime(card, occurrence);
     }
 
     private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence) {
+        completionTime(card, occurrence, R.string.tasks_completion_requested_at);
+    }
+
+    private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence, int label) {
         if (occurrence.submission == null) return;
         DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
-        PersonUi.text(card, getString(R.string.tasks_completion_requested_at,
-                display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at)), occurrence.task.zone.getId()), false)
+        PersonUi.text(card, getString(label,
+                display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at))), false)
                 .setTag("task_completion_time:" + occurrence.id);
     }
 

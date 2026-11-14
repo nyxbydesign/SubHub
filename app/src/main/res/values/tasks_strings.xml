@@ -39,7 +39,7 @@
     <string name="tasks_skipped">Skipped</string>
     <string name="tasks_refused">Refused</string>
     <string name="tasks_series_refused">Series cancelled</string>
-    <string name="tasks_window">%1$s – %2$s · %3$s</string>
+    <string name="tasks_window">%1$s – %2$s</string>
     <string name="tasks_request">Request completion</string>
     <string name="tasks_send">Send request</string>
     <string name="tasks_proof">Completion text</string>
