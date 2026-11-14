@@ -954,26 +954,6 @@ public final class PenanceActivity extends AppCompatActivity {
                 historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more);
     }
 
-    private String infractionLabel(PenanceInfraction infraction) {
-        if (infraction == PenanceInfraction.TASK_FAILURE) return getString(R.string.tasks_tribute_rule);
-        if (infraction == PenanceInfraction.PAID_PAUSE) {
-            return getString(R.string.paid_pause_history_label);
-        }
-        if (infraction == PenanceInfraction.CENSORED_DWELL) {
-            return getString(R.string.penance_history_dwell);
-        }
-        if (infraction == PenanceInfraction.CENSORED_TAP) {
-            return getString(R.string.penance_history_tap);
-        }
-        if (infraction == PenanceInfraction.WATCHED_APP_OPEN) {
-            return getString(R.string.penance_history_app_open);
-        }
-        if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
-            return getString(R.string.penance_history_tamper);
-        }
-        return getString(R.string.penance_history_detection);
-    }
-
     private static boolean validExternalUrl(String value) {
         try {
             URI uri = URI.create(value);
