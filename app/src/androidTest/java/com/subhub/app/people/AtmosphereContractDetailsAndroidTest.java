@@ -217,11 +217,33 @@ public final class AtmosphereContractDetailsAndroidTest {
             @Override public void onActivityDestroyed(Activity activity) {}
         };
         app.registerActivityLifecycleCallbacks(observer);
-        try (ActivityScenario<ContractActivity> ignored = ActivityScenario.launch(ContractActivity.class)) {
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
             assertTrue(firstFrame.get(10, TimeUnit.SECONDS));
+            var firstBitmap = new java.util.concurrent.atomic.AtomicReference<Bitmap>();
+            page.onActivity(activity -> firstBitmap.set(contractPortrait(activity)));
+
+            People.installLocalProjection(person -> person.withContractDom(
+                    new ProfileData("Renamed Dom", "", encoded, "", 0), null));
+            page.onActivity(ContractActivity::showSectionHome);
+            await(page, activity -> "Renamed Dom".equals(text(tagged(activity, "contract_dom_name"))));
+            page.onActivity(activity -> assertSame(firstBitmap.get(), contractPortrait(activity)));
+
+            People.installLocalProjection(person -> person.withContractDom(ProfileData.empty("No portrait"), null));
+            page.onActivity(ContractActivity::showSectionHome);
+            await(page, activity -> "No portrait".equals(text(tagged(activity, "contract_dom_name"))));
+            page.onActivity(activity -> {
+                ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+                assertNull(((ImageView) avatar.getChildAt(1)).getDrawable());
+            });
         } finally {
             app.unregisterActivityLifecycleCallbacks(observer);
         }
+    }
+
+    private static Bitmap contractPortrait(Activity activity) {
+        ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+        return ((android.graphics.drawable.BitmapDrawable) ((ImageView) avatar.getChildAt(1))
+                .getDrawable()).getBitmap();
     }
 
     @Test public void subContractOmitsDisabledDetailsAndKeepsEnabledSiblings() throws Exception {

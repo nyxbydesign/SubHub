@@ -31,6 +31,7 @@ public final class ContractActivity extends RolePage {
     private boolean expandedAbout;
     private ContractSections sections;
     private java.util.List<Object> renderedContract;
+    private Portrait renderedPortrait;
     private AutoCloseable presenceObserver, configurationObserver;
     private boolean refreshQueued;
     private final Runnable refreshObservedContract = () -> {
@@ -91,10 +92,13 @@ public final class ContractActivity extends RolePage {
     @Override protected void refresh() {
         data.cancel("contract-cover");
         android.content.Context application = getApplicationContext();
+        Portrait previousPortrait = renderedPortrait;
         data.load("contract", () -> {
             PersonSnapshot person = People.localContract(application);
-            Bitmap avatar = person.contractDom == null ? null : ProfileImages.decode(person.contractDom.avatar);
-            return new ContractData(person, subFeatureSections(application, person), avatar);
+            String encoded = person.contractDom == null ? "" : person.contractDom.avatar;
+            Portrait portrait = previousPortrait != null && previousPortrait.encoded().equals(encoded)
+                    ? previousPortrait : new Portrait(encoded, ProfileImages.decode(encoded));
+            return new ContractData(person, subFeatureSections(application, person), portrait);
         }, value -> {
             String duration = ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive());
             java.util.List<Object> signature = PersonPresentation.contract(value.person);
@@ -106,8 +110,9 @@ public final class ContractActivity extends RolePage {
                 java.util.Collections.addAll(signature, section.key, section.summary, section.details);
             if (signature.equals(renderedContract)) return;
             renderedContract = signature;
+            renderedPortrait = value.portrait;
             renderPage(() -> render(value, duration));
-        }, failure -> { renderedContract = null; unavailable(); });
+        }, failure -> { renderedContract = null; renderedPortrait = null; unavailable(); });
     }
 
     private static Map<String, PersonSnapshot.Section> subFeatureSections(Context context, PersonSnapshot person) {
@@ -152,7 +157,7 @@ public final class ContractActivity extends RolePage {
         LinearLayout identity = OverviewUi.card(body);
         OverviewUi.heading(identity, R.string.overview_your_dom, 0, null);
         identity.setTag("person_contract_identity");
-        ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value, contract.avatar);
+        ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value, contract.portrait.bitmap());
         sections = new ContractSections(body, person, contract.featureSections, duration,
                 () -> expandedSection, value -> expandedSection = value);
     }
@@ -265,14 +270,16 @@ public final class ContractActivity extends RolePage {
         }
     }
 
+    private record Portrait(String encoded, Bitmap bitmap) {}
+
     private static final class ContractData {
         final PersonSnapshot person;
         final Map<String, PersonSnapshot.Section> featureSections;
-        final Bitmap avatar;
-        ContractData(PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections, Bitmap avatar) {
+        final Portrait portrait;
+        ContractData(PersonSnapshot person, Map<String, PersonSnapshot.Section> featureSections, Portrait portrait) {
             this.person = person;
             this.featureSections = featureSections;
-            this.avatar = avatar;
+            this.portrait = portrait;
         }
     }
 }
