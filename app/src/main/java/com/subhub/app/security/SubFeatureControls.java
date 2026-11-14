@@ -48,12 +48,15 @@ public final class SubFeatureControls {
         }
         if (draft == null && new HardcoreModeManager(activity).isEnabled()) {
             android.content.Context app = activity.getApplicationContext();
+            long workspace = ControllerPinManager.domWorkspaceRevision();
+            var showBlackmailState = grid.readOnlyPending("blackmail", R.string.full_access_title);
             AsyncUiScope.forContext(activity).load("self-profile-blackmail", () -> FullAccessGrant.isLocallyEnabled(app),
                     enabled -> {
-                        if (grid.isAttachedToWindow() && DeviceRolePreferences.supportsSub(app)
-                                && !DeviceRolePreferences.isDomWorkspace(app)
+                        if (grid.getParent() == parent && grid.isAttachedToWindow()
+                                && workspace == ControllerPinManager.domWorkspaceRevision()
+                                && DeviceRolePreferences.supportsSub(app) && !DeviceRolePreferences.isDomWorkspace(app)
                                 && new HardcoreModeManager(app).isEnabled())
-                            grid.readOnly("blackmail", R.string.full_access_title, enabled);
+                            showBlackmailState.accept(enabled);
                     }, failure -> { });
         }
         return grid;
