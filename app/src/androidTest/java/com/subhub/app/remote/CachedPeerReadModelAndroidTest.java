@@ -149,9 +149,28 @@ public final class CachedPeerReadModelAndroidTest {
         PersonSnapshot local=new PersonSnapshot(PersonId.LOCAL,"Local Sub","","","",PersonSnapshot.Connection.LOCAL,
                 PersonSnapshot.Freshness.CURRENT,0,EnumSet.noneOf(PersonSnapshot.Capability.class),Collections.emptyList(),
                 Collections.emptyList(),"EUR",0,0,0,0,false);
+        RemoteStore.Peer dom = store.peer(DOM, incoming);
+        PersonSnapshot transportOnly = store.authorityObservation(() -> repository.localProjection(local));
+        assertEquals(RemotePersonRepository.id(dom), transportOnly.contractDomContact.id);
+        assertEquals(PersonSnapshot.Connection.OFFLINE, transportOnly.contractDomContact.state);
+        assertEquals(0, transportOnly.contractDomContact.lastOnlineAt);
+        assertEquals(0, transportOnly.lastSyncedAt);
+        assertEquals(domContact, dom.lastSyncedAt);
+
+        assertTrue(PeerPresence.receive(store, dom, new JSONObject()
+                .put("version", 1).put("sequence", 1).put("foreground", true)));
+        long onlineAt = PeerPresence.read(store, dom).lastOnlineAt;
+        assertTrue(onlineAt > domContact);
+        assertTrue(PeerPresence.receive(store, dom, new JSONObject()
+                .put("version", 1).put("sequence", 2).put("foreground", false).put("backgroundSync", false)));
         PersonSnapshot projected=store.authorityObservation(()->repository.localProjection(local));
-        assertEquals(RemotePersonRepository.id(store.peer(DOM,incoming)),projected.contractDomContact.id);
-        assertEquals(domContact,projected.contractDomContact.lastOnlineAt);assertEquals(0,projected.lastSyncedAt);
+        assertEquals(RemotePersonRepository.id(dom), projected.contractDomContact.id);
+        assertEquals(PersonSnapshot.Connection.OFFLINE, projected.contractDomContact.state);
+        assertEquals(onlineAt, projected.contractDomContact.lastOnlineAt);
+        assertEquals(0, projected.lastSyncedAt);
+        PersonSnapshot otherPeer = repository.loadForPage(selected, false);
+        assertEquals(old, otherPeer.lastSyncedAt);
+        assertEquals(0, otherPeer.lastOnlineAt);
         assertEquals(projected.contractDomContact,projected.withProfile(local.profile,Collections.emptyMap()).contractDomContact);
         assertEquals(projected.contractDomContact,projected.withContractDom(projected.contractDom,projected.contractDomId).contractDomContact);
         assertNull(projected.withContractDom(projected.contractDom).contractDomContact);
