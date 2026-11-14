@@ -71,6 +71,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         domBody = activity.findViewById(R.id.home_dom_overview);
         subBody = activity.findViewById(R.id.home_sub_summary);
         service = activity.findViewById(R.id.home_service_widget);
+        service.setVisibility(View.GONE);
         oldDashboard = activity.findViewById(R.id.sub_dashboard);
         relationship = PersonUi.column(activity);
         relationship.setId(R.id.home_assigned_dom);
@@ -154,7 +155,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
         subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
-        service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
+        updateSessionVisibility(dom);
         if (dom || sessionPage) relationship.setVisibility(View.GONE);
         oldDashboard.setVisibility(View.GONE);
         if (dom && !ControllerPinManager.isDomWorkspaceUnlocked()) {
@@ -258,6 +259,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                     if (loaded.achievements != null) subAchievements.render(loaded.achievements);
                     else if (firstSubComposition) subAchievements.unavailable();
                     else subAchievements.load(data, "home-achievement-preview");
+                    updateSessionVisibility(false);
                 }
             } finally { finishRefresh(); }
         }, failure -> {
@@ -277,8 +279,14 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
                         ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
                 PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
+                updateSessionVisibility(false);
             } finally { finishRefresh(); }
         });
+    }
+
+    private void updateSessionVisibility(boolean dom) {
+        // The dedicated Session route is independent; Overview reveals it with its other cards.
+        service.setVisibility(sessionPage || (!dom && subBody.getChildCount() != 0) ? View.VISIBLE : View.GONE);
     }
 
     private void finishRefresh() {

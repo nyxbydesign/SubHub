@@ -17,12 +17,14 @@ import android.graphics.Paint;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
 import com.subhub.app.MainActivity;
@@ -268,16 +270,55 @@ public final class OverviewReferenceAndroidTest {
     public void subOverviewUsesAuthorizedDomActualTimerOwnJournalAndConfiguredAppUsage() throws Exception {
         assertTrue(CommitmentManager.start(context, 5_040_000L, 5_040_000L, false));
         ControllerPinManager.enterSubMode();
+        java.util.concurrent.CountDownLatch readEntered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseRead = new java.util.concurrent.CountDownLatch(1);
+        People.installLocalProjection(person -> {
+            readEntered.countDown();
+            try {
+                if (!releaseRead.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                    throw new AssertionError("Overview fixture did not release the local read");
+            } catch (InterruptedException cancelled) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(cancelled);
+            }
+            return project(person);
+        });
+        AtomicReference<List<String>> firstFrameMissing = new AtomicReference<>();
+        ActivityLifecycleCallback observeFirstDraw = (candidate, stage) -> {
+            if (!(candidate instanceof MainActivity) || stage != Stage.STARTED) return;
+            View root = candidate.findViewById(android.R.id.content);
+            root.getViewTreeObserver().addOnDrawListener(new ViewTreeObserver.OnDrawListener() {
+                @Override public void onDraw() {
+                    if (firstFrameMissing.get() != null) return;
+                    View session = candidate.findViewById(R.id.home_service_widget);
+                    ViewGroup sub = candidate.findViewById(R.id.home_sub_summary);
+                    if (!session.isShown() && sub.getChildCount() == 0) return;
+                    List<String> missing = new ArrayList<>();
+                    if (!session.isShown() || !candidate.findViewById(R.id.service_countdown).isShown())
+                        missing.add("Session countdown");
+                    for (String tag : List.of("home_contract_dom_name", "home_tasks", "home_app_time",
+                            "achievement_next", "home_help"))
+                        if (tagged(candidate, tag) == null) missing.add(tag);
+                    View journal = tagged(candidate, "home_journal:sub");
+                    if (journal == null || !hasText(journal, "Today's progress")) missing.add("saved Journal entry");
+                    firstFrameMissing.set(missing);
+                    root.post(() -> {
+                        if (root.getViewTreeObserver().isAlive())
+                            root.getViewTreeObserver().removeOnDrawListener(this);
+                    });
+                }
+            });
+        };
+        onMain(() -> ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(observeFirstDraw));
         try (AutoCloseable relationship = localDomFixture();
                 ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
-            await(() -> tagged(activity, "home_tasks") != null);
-            onMain(() -> {
-                View journal = tagged(activity, "home_journal:sub");
-                assertNotNull(journal);
-                assertTrue(hasText(journal, "Today's progress"));
-                assertNotNull(tagged(activity, "achievement_next"));
-            });
+            assertTrue("Overview requested its local data", readEntered.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            com.subhub.app.UiRefreshWitness.frame(activity);
+            assertNull("No Overview card draws on its own while the first local read is held", firstFrameMissing.get());
+            releaseRead.countDown();
+            await(() -> firstFrameMissing.get() != null);
+            assertEquals("All ready local cards appear in the first Overview draw", List.of(), firstFrameMissing.get());
             await(() -> tagged(activity, "home_contract_dom_name") != null);
             onMain(() -> assertFalse(hasText(tagged(activity, "home_journal:sub"), "A little progress today.")));
             onMain(() -> activity.findViewById(R.id.home_service_widget).setTag("overview_session_card"));
@@ -331,6 +372,10 @@ public final class OverviewReferenceAndroidTest {
             onView(withId(R.id.primary_header_settings)).perform(NativeUiActions.revealAboveNavigation(), click());
             GlobalSettingsActivity settings = resumed(GlobalSettingsActivity.class);
             onMain(settings::finish); resumed(MainActivity.class);
+        } finally {
+            releaseRead.countDown();
+            onMain(() -> ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(observeFirstDraw));
+            People.installLocalProjection(this::project);
         }
     }
 
