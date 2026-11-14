@@ -37,9 +37,7 @@ import com.subhub.app.util.PreferencePage;
 import com.subhub.app.util.PrimaryHeader;
 import java.io.File;
 import java.nio.file.Files;
-import java.text.DateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -279,8 +277,10 @@ public final class JournalActivity extends PreferencePage {
                 ? R.string.journal_empty : R.string.journal_shared_empty));
         for (int index = 0; index < Math.min(value.entries.size(), JournalStore.PAGE_SIZE); index++) {
             JournalEntry entry = value.entries.get(index);
+            String createdLabel = JournalEntry.defaultTitle(entry.created);
+            String title = entry.displayTitle(createdLabel);
             LinearLayout card = JournalUi.surface(content); card.setTag("journal_entry:" + entry.id);
-            JournalUi.text(card, date(entry.created), 12, false);
+            JournalUi.text(card, createdLabel, 12, false);
             JournalUi.state(card, !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id)))
                     .setTag("journal_visibility:" + entry.id);
             if (model.target.isLocal() && Boolean.TRUE.equals(value.shared.get(entry.id))
@@ -288,7 +288,7 @@ public final class JournalActivity extends PreferencePage {
                 JournalUi.text(card, getString(model.dom ? R.string.journal_current_subs_missing
                         : R.string.journal_current_dom_missing), 12, false).setTag("journal_current_audience:" + entry.id);
             {
-                TextView preview = JournalUi.text(card, entryTitle(entry), 16, true); preview.setMaxLines(3);
+                TextView preview = JournalUi.text(card, title, 16, true); preview.setMaxLines(3);
                 preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
             }
             List<String> media = new ArrayList<>();
@@ -301,7 +301,7 @@ public final class JournalActivity extends PreferencePage {
             card.setClickable(true); card.setFocusable(true); card.setMinimumHeight(dp(48));
             android.util.TypedValue ripple = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
             card.setForeground(getDrawable(ripple.resourceId));
-            card.setContentDescription(date(entry.created) + ", " + entryTitle(entry));
+            card.setContentDescription(createdLabel + ", " + title);
             card.setOnClickListener(view -> { model.selected = entry.id; rendered = ""; top(); refresh(); });
         }
         if (model.offset > 0) JournalUi.action(content, R.string.journal_previous, 0, () -> {
@@ -314,12 +314,13 @@ public final class JournalActivity extends PreferencePage {
 
     private void renderEntry(Snapshot value) {
         JournalEntry entry = value.entries.get(0);
+        String createdLabel = JournalEntry.defaultTitle(entry.created);
         sharedContext(value);
         LinearLayout card = JournalUi.surface(content); card.setTag("journal_detail");
-        JournalUi.text(card, date(entry.created), 12, false);
+        JournalUi.text(card, createdLabel, 12, false);
         boolean shared = !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id));
         JournalUi.state(card, shared).setTag("journal_detail_visibility");
-        JournalUi.text(card, entryTitle(entry), 20, true).setTag("journal_entry_title");
+        JournalUi.text(card, entry.displayTitle(createdLabel), 20, true).setTag("journal_entry_title");
         if (!entry.text.isEmpty()) {
             TextView writing = JournalUi.text(card, entry.text, 16, true); writing.setTag("journal_text_body"); writing.setTextIsSelectable(true);
         }
@@ -604,8 +605,4 @@ public final class JournalActivity extends PreferencePage {
     }
     private void closePlayers() { for (JournalAudioPlayer player : players) player.close(); players.clear(); }
     private void top() { if (page != null && page.getParent() instanceof ScrollView) ((ScrollView) page.getParent()).scrollTo(0, 0); }
-    private String entryTitle(JournalEntry entry) {
-        return entry.displayTitle();
-    }
-    private static String date(long time) { return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(time)); }
 }

@@ -21,7 +21,6 @@ import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.capture.CustomImagesActivity;
 import com.subhub.app.capture.ExportActivity;
-import com.subhub.app.commitment.CommitmentActivity;
 import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.penance.PenanceActivity;
@@ -296,7 +295,7 @@ public final class PageMapScreenshotTest {
                 .putLong("commitment_ends_at", now + 3_600_000L)
                 .putLong("commitment_duration", 3_600_000L)
                 .commit();
-        capture(name, CommitmentActivity.class);
+        captureMain(name, true);
     }
 
     private static void captureMain(String name, boolean subSpace) throws Exception {

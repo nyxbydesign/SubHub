@@ -112,7 +112,7 @@ public final class VisualIdentityAndroidTest {
                 "capture.CustomImagesActivity", "capture.ExportActivity",
                 "capture.export.ExportAppearanceActivity",
                 "diagnostics.DiagnosticsActivity",
-                "update.UpdatesActivity", "commitment.CommitmentActivity"}) review(page);
+                "update.UpdatesActivity", "people.ServiceDurationActivity"}) review(page);
         finishReview("secondary");
     }
 

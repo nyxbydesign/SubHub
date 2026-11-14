@@ -12,6 +12,8 @@ import com.subhub.app.remote.RemoteSessionClock;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.settings.SettingsRepository;
 
+import java.util.Locale;
+
 /** Bounded, app-local commitment pact guarded by the controller PIN. */
 public final class CommitmentManager {
     public static final long MIN_DURATION_MS = 30L * 60L * 1000L;
@@ -177,11 +179,6 @@ public final class CommitmentManager {
             throw new SecurityException("Managed pact requires installed physical ownership");
     }
 
-    /** Compatibility for older callers; keeper codes are no longer part of a pact. */
-    public static boolean start(Context context, long requestedDurationMs, String ignoredCode) {
-        return start(context, requestedDurationMs);
-    }
-
     public static boolean isActive(Context context) {
         synchronized (RuntimeSessionIdentity.LOCK) {
             SharedPreferences values = preferences(context);
@@ -217,11 +214,18 @@ public final class CommitmentManager {
 
     public static String countdownLabel(Context context) {
         return isCountdownHidden(context) ? context.getString(com.subhub.app.R.string.pact_time_hidden)
-                : CommitmentActivity.formatDuration(remainingMillis(context));
+                : formatDuration(remainingMillis(context));
     }
 
-    public static boolean verifyAndRelease(Context context, String code) {
-        return !isActive(context);
+    public static String formatDuration(long milliseconds) {
+        long seconds = Math.max(0L, (milliseconds + 999L) / 1000L);
+        long days = seconds / 86400L;
+        long hours = (seconds % 86400L) / 3600L;
+        long minutes = (seconds % 3600L) / 60L;
+        long remainder = seconds % 60L;
+        return days > 0
+                ? String.format(Locale.ROOT, "%dd %02d:%02d:%02d", days, hours, minutes, remainder)
+                : String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, remainder);
     }
 
     /** Dom mode may release the pact without the separate keeper code. */

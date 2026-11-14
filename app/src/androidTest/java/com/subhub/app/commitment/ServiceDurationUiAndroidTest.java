@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 import static org.junit.Assume.assumeTrue;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.*;
 import android.view.View;
 import android.widget.*;
@@ -15,7 +16,11 @@ import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.onboarding.OnboardingState;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
+import com.subhub.app.people.ServiceDurationActivity;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.ProtectionStopPolicy;
 import com.subhub.app.settings.FeatureModuleManager;
 
 import org.junit.*;
@@ -47,13 +52,14 @@ public class ServiceDurationUiAndroidTest {
     }
 
     @Test
-    public void inactiveSettingsHasDirectChoicesAndRandomFieldsAndHomeSharesSelection() {
-        try (ActivityScenario<CommitmentActivity> settings =
-                ActivityScenario.launch(CommitmentActivity.class)) {
+    public void contractDurationPersistsRandomFieldsAndHomeReadsTheSelection() {
+        Intent duration = new Intent(context, ServiceDurationActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
+        try (ActivityScenario<ServiceDurationActivity> settings = ActivityScenario.launch(duration)) {
             settings.onActivity(
                     activity -> {
-                        assertTrue(activity.findViewById(R.id.inactive_panel).isShown());
-                        assertFalse(activity.findViewById(R.id.active_panel).isShown());
+                        ServiceDurationView picker = activity.findViewById(R.id.person_duration_control);
+                        assertTrue(picker.isShown());
                         activity.findViewById(R.id.commitment_timer_1h).performClick();
                         assertTrue(activity.findViewById(R.id.commitment_timer_1h).isSelected());
                         assertFalse(CommitmentManager.isActive(context));
@@ -64,7 +70,6 @@ public class ServiceDurationUiAndroidTest {
                         ((EditText) activity.findViewById(R.id.service_duration_max_hours))
                                 .setText("5");
                         activity.findViewById(R.id.service_duration_hide).performClick();
-                        ServiceDurationView picker = activity.findViewById(R.id.duration_selection);
                         assertTrue(picker.validateSelection());
                         assertEquals(2 * 3_600_000L, picker.selection().minimum);
                         assertEquals(5 * 3_600_000L, picker.selection().maximum);
@@ -85,20 +90,14 @@ public class ServiceDurationUiAndroidTest {
                                         .getText()
                                         .toString());
                     });
-        }
-        try (ActivityScenario<MainActivity> home = ActivityScenario.launch(MainActivity.class)) {
-            home.onActivity(
+            settings.onActivity(
                     activity -> {
-                        assertTrue(
-                                activity.findViewById(R.id.service_duration_random).isSelected());
-                        assertTrue(
-                                ((CompoundButton) activity.findViewById(R.id.service_duration_hide))
-                                        .isChecked());
                         ((EditText) activity.findViewById(R.id.service_duration_min_hours))
                                 .setText("6");
                         ((EditText) activity.findViewById(R.id.service_duration_max_hours))
                                 .setText("5");
-                        activity.findViewById(R.id.button_protection).performClick();
+                        ServiceDurationView picker = activity.findViewById(R.id.person_duration_control);
+                        assertFalse(picker.validateSelection());
                         assertNotNull(
                                 ((EditText) activity.findViewById(R.id.service_duration_max_hours))
                                         .getError());
@@ -110,8 +109,18 @@ public class ServiceDurationUiAndroidTest {
                                         .isSelected());
                         assertFalse(activity.findViewById(R.id.service_duration_range).isShown());
                         assertTrue(activity.findViewById(R.id.service_duration_hide).isShown());
-                        capture(activity, "duration-home-fixed.png");
+                        capture(activity, "duration-contract-fixed.png");
                     });
+        }
+        try (ActivityScenario<MainActivity> home = ActivityScenario.launch(homeIntent())) {
+            home.onActivity(activity -> {
+                ServiceDurationView selection = activity.findViewById(R.id.commitment_start_panel);
+                assertEquals(0L, selection.selection().maximum);
+                assertTrue(selection.selection().hidden);
+                assertTrue(activity.findViewById(R.id.service_configured_duration).isShown());
+                assertFalse(new AppModeManager(context).isArmed());
+                assertFalse(CommitmentManager.isActive(context));
+            });
         }
     }
 
@@ -119,23 +128,27 @@ public class ServiceDurationUiAndroidTest {
     public void activeHiddenCountdownKeepsSubjectReleaseBlocked() {
         assertTrue(CommitmentManager.start(context, PactDuration.MIN, PactDuration.MIN, true));
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<CommitmentActivity> active =
-                ActivityScenario.launch(CommitmentActivity.class)) {
+        try (ActivityScenario<MainActivity> active = ActivityScenario.launch(homeIntent())) {
             active.onActivity(
                     activity -> {
-                        assertTrue(activity.findViewById(R.id.active_panel).isShown());
-                        assertFalse(activity.findViewById(R.id.inactive_panel).isShown());
+                        assertTrue(activity.findViewById(R.id.commitment_active_panel).isShown());
+                        assertFalse(activity.findViewById(R.id.commitment_start_panel).isShown());
                         assertEquals(
                                 context.getString(R.string.pact_time_hidden),
-                                ((TextView) activity.findViewById(R.id.countdown))
-                                        .getText()
-                                        .toString());
-                        assertFalse(activity.findViewById(R.id.button_emergency_release).isShown());
-                        activity.findViewById(R.id.button_emergency_release).performClick();
+                                activity.findViewById(R.id.service_countdown).getContentDescription());
+                        assertFalse(activity.findViewById(R.id.button_protection).isShown());
+                        assertEquals(ProtectionStopPolicy.Decision.TIMER_LOCKED,
+                                ProtectionStopPolicy.decision(context));
+                        assertFalse(ControllerPinManager.isDomModeActive());
                         assertTrue(CommitmentManager.isActive(context));
                         capture(activity, "duration-active-sub.png");
                     });
         }
+    }
+
+    private Intent homeIntent() {
+        return new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN)
+                .putExtra(MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true);
     }
 
     private static void capture(android.app.Activity activity, String name) {

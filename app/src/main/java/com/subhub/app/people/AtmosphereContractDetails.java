@@ -110,7 +110,7 @@ public final class AtmosphereContractDetails {
 
     private static String gagStatus(Context context, JSONObject gag) {
         return context.getString(gag == null ? R.string.gag_status_unknown
-                : gag.optBoolean("enabled") ? R.string.arrangement_configured_on : R.string.control_state_off);
+                : gag.optBoolean("enabled") ? R.string.control_state_on : R.string.control_state_off);
     }
 
     private static String state(Context context, boolean enabled, Boolean allowed, boolean current) {

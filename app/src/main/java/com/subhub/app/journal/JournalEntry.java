@@ -58,7 +58,12 @@ public final class JournalEntry {
                 .format(new java.util.Date(created));
     }
 
-    public String displayTitle() { return title.isEmpty() ? defaultTitle(created) : title; }
+    public String displayTitle() { return displayTitle(null); }
+
+    String displayTitle(String createdLabel) {
+        if (!title.isEmpty()) return title;
+        return createdLabel == null ? defaultTitle(created) : createdLabel;
+    }
 
     public List<JournalAttachment> media() {
         List<JournalAttachment> result = new ArrayList<>(attachments);

@@ -544,7 +544,13 @@ public final class OverviewReferenceAndroidTest {
             ContractActivity activity = resumed(ContractActivity.class);
             await(() -> tagged(activity, "contract_dom_details") != null);
             capture(activity, "contract-sub-missing-profile", null);
-            onMain(() -> assertEquals(context.getString(R.string.role_dom), ((TextView) tagged(activity, "contract_dom_details")).getText().toString()));
+            onMain(() -> {
+                TextView name = (TextView) tagged(activity, "contract_dom_name");
+                TextView details = (TextView) tagged(activity, "contract_dom_details");
+                assertEquals(context.getString(R.string.role_dom), name.getText().toString());
+                assertEquals("", details.getText().toString());
+                assertEquals(View.GONE, details.getVisibility());
+            });
         }
     }
 

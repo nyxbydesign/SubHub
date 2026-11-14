@@ -1,7 +1,5 @@
 package com.subhub.app.penance;
 
-import java.util.Locale;
-
 /** Supported two-decimal wallet denominations. No exchange-rate conversion. */
 public final class WalletCurrency {
     private WalletCurrency() { }
@@ -18,7 +16,8 @@ public final class WalletCurrency {
     public static String format(String code, long cents) {
         requireSupported(code);
         long amount = Math.max(0L, cents);
-        return String.format(Locale.ROOT, "%s%d.%02d", "EUR".equals(code) ? "€" : "$",
-                amount / 100L, amount % 100L);
+        long fraction = amount % 100L;
+        return ("EUR".equals(code) ? "€" : "$") + amount / 100L + "."
+                + (fraction < 10L ? "0" : "") + fraction;
     }
 }

@@ -84,7 +84,7 @@ public final class DevUpdatesAndroidTest {
         long now = System.currentTimeMillis();
         state.setCandidate(selected);
         assertTrue(state.reserveAutomaticDownload(asset, now));
-        state.clearDownload(true);
+        state.clearDownload();
         UpdateStateStore recreated = new UpdateStateStore(context);
         assertFalse(recreated.reserveAutomaticDownload(asset, now));
         assertTrue(recreated.reserveAutomaticDownload(asset, now + java.util.concurrent.TimeUnit.HOURS.toMillis(1)));

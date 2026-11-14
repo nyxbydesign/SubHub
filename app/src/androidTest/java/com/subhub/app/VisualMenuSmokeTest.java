@@ -16,7 +16,6 @@ import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.capture.CustomImagesActivity;
 import com.subhub.app.capture.ExportActivity;
-import com.subhub.app.commitment.CommitmentActivity;
 import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.penance.PenanceActivity;
@@ -48,7 +47,6 @@ public final class VisualMenuSmokeTest {
         screens.put("export", ExportActivity.class);
         screens.put("app-mode", AppModeActivity.class);
         screens.put("atmosphere", AtmosphereActivity.class);
-        screens.put("commitment", CommitmentActivity.class);
         screens.put("penance", PenanceActivity.class);
         screens.put("popup-storm", PopupStormActivity.class);
         screens.put("custom-images", CustomImagesActivity.class);

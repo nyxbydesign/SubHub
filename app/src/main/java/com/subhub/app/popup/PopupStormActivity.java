@@ -566,7 +566,7 @@ public final class PopupStormActivity extends AppCompatActivity {
                 remove.setText(R.string.popup_remove);
                 remove.setAllCaps(false);
                 remove.setBackgroundResource(R.drawable.bg_outline_button);
-                remove.setTextColor(getColor(R.color.accent));
+                remove.setTextColor(getColorStateList(R.color.outline_button_text));
                 remove.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
                 remove.setOnClickListener(view -> removeFolder(value));
                 remove.setMinHeight(dp(48));

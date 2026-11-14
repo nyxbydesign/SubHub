@@ -29,12 +29,7 @@ public abstract class PreferencePage extends AppCompatActivity {
         header.setLayoutParams(headerParams);
     }
     protected LinearLayout card(LinearLayout parent) {
-        LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackgroundResource(R.drawable.bg_card);
-        int gap = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        UiIdentity.cardPadding(card);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = gap;
-        parent.addView(card, params); return card;
+        return UiIdentity.addCard(parent, this, R.drawable.bg_card);
     }
     protected TextView text(LinearLayout parent, CharSequence value, int size, boolean muted) {
         TextView view = new TextView(this); view.setText(value);

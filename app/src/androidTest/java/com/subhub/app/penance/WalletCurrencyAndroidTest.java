@@ -1,11 +1,20 @@
 package com.subhub.app.penance;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.hamcrest.Matchers.allOf;
 import static org.junit.Assert.*;
 
 import android.content.Context;
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import org.json.JSONObject;
 import org.junit.After;
@@ -200,17 +209,15 @@ public final class WalletCurrencyAndroidTest {
         }
     }
 
-    @Test public void walletHeaderShowsActualCurrencyInBothModes() {
+    @Test public void walletOverviewShowsActualCurrencyInBothModes() {
         assertTrue(manager.changeCurrency("USD"));
+        assertEquals(0, manager.snapshot(System.currentTimeMillis()).getDueCents());
         for (boolean dom : new boolean[] {true, false}) {
-            if (dom) com.subhub.app.security.ControllerPinManager.enterDomMode();
-            else com.subhub.app.security.ControllerPinManager.enterSubMode();
-            try (androidx.test.core.app.ActivityScenario<PenanceActivity> scenario =
-                    androidx.test.core.app.ActivityScenario.launch(PenanceActivity.class)) {
-                scenario.onActivity(activity -> assertEquals(
-                                        "USD",
-                        ((android.widget.TextView) activity.findViewById(com.subhub.app.R.id.primary_header_subtitle))
-                                .getText().toString()));
+            if (dom) ControllerPinManager.enterDomMode();
+            else ControllerPinManager.enterSubMode();
+            try (ActivityScenario<PenanceActivity> scenario = ActivityScenario.launch(PenanceActivity.class)) {
+                scenario.onActivity(activity -> assertEquals(dom, ControllerPinManager.isDomModeActive()));
+                onView(withId(R.id.due_amount)).check(matches(allOf(isDisplayed(), withText("$0.00"))));
             }
         }
     }

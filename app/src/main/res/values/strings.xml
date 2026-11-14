@@ -621,14 +621,6 @@
     <string name="onboarding_dismiss">Continue</string>
     <string name="shortcut_start_protection">Enter Service</string>
     <string name="shortcut_start_protection_long">Enter SubHub service</string>
-    <string name="commitment_title">Service Duration</string>
-    <string name="commitment_subtitle">Decide how long your Sub stays in service.</string>
-    <string name="commitment_pact_sealed">Service Locked</string>
-    <string name="commitment_active_body">Service stays locked until the countdown ends, then may stop normally.</string>
-    <string name="commitment_emergency_release">Release service lock</string>
-    <string name="commitment_emergency_title">End the service lock?</string>
-    <string name="commitment_emergency_body">The Dom can use this recovery action to release service immediately.</string>
-    <string name="commitment_release_now">Release service lock</string>
     <string name="commitment_active_remaining">Service lock · %1$s remaining</string>
     <string name="commitment_view_pact">View Service Lock</string>
     <string name="commitment_stop_requires_dom">Service is locked — release comes when the countdown ends.</string>
@@ -969,7 +961,7 @@
     <string name="update_history_preview">Preview Build</string>
     <string name="update_history_preview_date">Preview · %1$s</string>
     <string name="update_history_published">Published Release</string>
-    <string name="update_history_open">Open the SubHub %1$s changelog</string>
+    <string name="update_history_heading">%1$s, %2$s</string>
     <string name="update_notes_unavailable">This release does not include a user-facing changelog.</string>
     <string name="update_download_options">Download Format</string>
     <string name="update_download_guide">SubHub selected %1$s, the smallest compatible build for this device. For a manual GitHub download, choose Universal when you are unsure.</string>
@@ -1019,6 +1011,7 @@
     <string name="sub_subliminal_setup">Accessibility permission is required</string>
     <string name="sub_subliminal_summary">%1$s pack · %2$d assigned app(s) · %3$d this session</string>
     <string name="atmosphere_title">Atmosphere</string>
+    <string name="atmosphere_card_description">%1$s, %2$s</string>
     <string name="atmosphere_home_summary">Whispers %1$s · Popup Storm %2$s</string>
     <string name="atmosphere_home_hint">Keyholder, whispers and visual rituals</string>
     <plurals name="atmosphere_effects_active">
@@ -1109,7 +1102,6 @@
     <string name="permission_accessibility_name">accessibility</string>
     <string name="permission_accessibility_guidance">In Accessibility, open SubHub and turn on “Use SubHub”.</string>
     <string name="permission_device_admin_name">Device Admin</string>
-    <string name="studio_title">Contracts</string>
     <plurals name="apps_included_count"><item quantity="one">%d included app</item><item quantity="other">%d included apps</item></plurals>
     <string name="app_include_accessibility">Include %1$s</string>
     <string name="wallet_safety_title">Safety &amp; caps</string>
@@ -1128,13 +1120,6 @@
     <string name="wallet_weekly_cap">Weekly cap</string>
     <string name="wallet_recent_activity">Recent activity</string>
     <string name="wallet_settings">Wallet settings</string>
-    <string name="rituals_packs">Packs</string>
-    <string name="rituals_no_packs">No packs imported</string>
-    <string name="rituals_import_pack">Import pack</string>
-    <string name="rituals_pack_library">Library</string>
-    <string name="rituals_pack_active">Active: %1$s</string>
-    <string name="rituals_pack_available">%1$s</string>
-    <string name="rituals_pack_count">%1$d saved</string>
     <string name="wallet_rules_caps_title">Rules &amp; caps</string>
     <string name="wallet_rules_caps_summary">%1$d rules · %2$s daily cap</string>
     <string name="wallet_checkout_label">At checkout</string>

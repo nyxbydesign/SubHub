@@ -3,7 +3,7 @@ package com.subhub.app.people;
 import android.content.Context;
 import android.content.SharedPreferences;
 import com.subhub.app.R;
-import com.subhub.app.commitment.CommitmentActivity;
+import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.commitment.ServiceDurationView;
 
 /** Reads the existing duration selection without instantiating editable controls. */
@@ -21,7 +21,7 @@ public final class ServiceDurationSettings {
         if (hidden) return context.getString(R.string.pact_time_hidden);
         if (duration == ServiceDurationView.PERMANENT) return context.getString(R.string.role_permanent_duration);
         if (duration == ServiceDurationView.RANDOM) return context.getString(R.string.role_random_duration,
-                CommitmentActivity.formatDuration(minimum), CommitmentActivity.formatDuration(maximum));
-        return CommitmentActivity.formatDuration(Math.max(0L, duration));
+                CommitmentManager.formatDuration(minimum), CommitmentManager.formatDuration(maximum));
+        return CommitmentManager.formatDuration(Math.max(0L, duration));
     }
 }

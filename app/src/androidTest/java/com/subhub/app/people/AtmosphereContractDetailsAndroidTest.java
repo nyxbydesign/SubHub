@@ -119,8 +119,10 @@ public final class AtmosphereContractDetailsAndroidTest {
         assertEquals(expectedAtmosphere() + "\n\nGag\nUnknown", AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", true, "popup", true), PersonSnapshot.Freshness.CURRENT).details);
         sections.put("gag", com.subhub.app.remote.GagContractFields.defaults().put("enabled", true));
-        assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT)
-                .summary.endsWith("\nGag Configured on"));
+        AtmosphereContractDetails activeGag =
+                AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT);
+        assertTrue(activeGag.summary.endsWith("\nGag On"));
+        assertTrue(activeGag.details.endsWith("\n\nGag\nOn"));
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
                 .details.contains("Categories: Findom"));

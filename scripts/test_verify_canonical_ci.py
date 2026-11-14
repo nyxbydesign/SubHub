@@ -66,6 +66,78 @@ class CanonicalCiTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             policy.require_receipt(self.receipt, self.require_run([self.run, rerun]), self.sha, self.tree)
 
+    def test_wait_reselects_latest_trusted_run_and_never_falls_back(self):
+        pending = {**self.run, "id": 102, "run_number": 13,
+                   "status": "queued", "conclusion": None}
+        newer = {**pending, "id": 103, "run_number": 14, "status": "in_progress"}
+        passing = {**newer, "status": "completed", "conclusion": "success"}
+        with mock.patch.object(policy, "pages", side_effect=[
+                [self.run, pending], [self.run, pending, newer], [self.run, pending, passing],
+        ]) as pages, mock.patch.object(policy.time, "sleep") as sleep, mock.patch("builtins.print"):
+            selected = policy.wait_for_run("exact-head", self.workflow, 23, self.sha, 60)
+            self.assertEqual(passing, selected)
+            self.assertEqual([mock.call("exact-head", "workflow_runs")] * 3, pages.call_args_list)
+            self.assertEqual([mock.call(policy.POLL_SECONDS)] * 2, sleep.call_args_list)
+
+    def test_wait_refuses_terminal_untrusted_missing_and_api_errors(self):
+        pending = {**self.run, "id": 102, "run_number": 13,
+                   "status": "in_progress", "conclusion": None}
+        cases = (
+            ([self.run, {**pending, "status": "completed", "conclusion": "failure"}],
+             ValueError, "not a trusted passing"),
+            ([self.run, {**pending, "head_repository": {"id": 99}}],
+             ValueError, "not a trusted passing"),
+            ([], ValueError, "No canonical CI run"),
+            ([self.run], ValueError, "lookup regressed"),
+            (OSError("API error"), OSError, "API error"),
+        )
+        for result, error, message in cases:
+            with self.subTest(result=result), mock.patch.object(policy, "pages", side_effect=[
+                    [self.run, pending], result,
+            ]), mock.patch.object(policy.time, "sleep") as sleep, mock.patch("builtins.print"):
+                with self.assertRaisesRegex(error, message):
+                    policy.wait_for_run("exact-head", self.workflow, 23, self.sha, 60)
+                sleep.assert_called_once_with(policy.POLL_SECONDS)
+
+    def test_wait_deadline_bounds_sleep_and_refuses_late_api_success(self):
+        pending = {**self.run, "status": "in_progress", "conclusion": None}
+        with mock.patch.object(policy, "pages", return_value=[pending]) as pages, \
+                mock.patch.object(policy.time, "monotonic", side_effect=[0, 1, 2, 5]), \
+                mock.patch.object(policy.time, "sleep") as sleep, mock.patch("builtins.print"):
+            with self.assertRaisesRegex(ValueError, "Timed out"):
+                policy.wait_for_run("exact-head", self.workflow, 23, self.sha, 5)
+            sleep.assert_called_once_with(3)
+            pages.assert_called_once()
+        with mock.patch.object(policy, "pages", return_value=[self.run]), \
+                mock.patch.object(policy.time, "monotonic", side_effect=[0, 6]):
+            with self.assertRaisesRegex(ValueError, "Timed out"):
+                policy.wait_for_run("exact-head", self.workflow, 23, self.sha, 5)
+
+    def test_only_development_push_can_enable_wait(self):
+        for event, ref in (("push", "refs/tags/v1.0.0"), ("workflow_dispatch", "refs/heads/dev")):
+            with self.subTest(event=event, ref=ref), mock.patch.dict(
+                    os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": ref}), \
+                    mock.patch.object(policy, "api") as api:
+                with self.assertRaisesRegex(ValueError, "development branch push"):
+                    policy.verify("owner/repo", wait_for_dev_ci=True)
+                api.assert_not_called()
+
+    def test_final_lookup_rejects_successful_rerun_after_receipt(self):
+        def download(arguments, **_kwargs):
+            directory = Path(arguments[arguments.index("--dir") + 1])
+            (directory / "qualification.json").write_text(json.dumps(self.receipt), encoding="utf-8")
+
+        for replacement in ({**self.run, "run_attempt": 2},
+                            {**self.run, "id": 102, "run_number": 13}):
+            with self.subTest(replacement=replacement), \
+                    mock.patch.object(policy, "git", side_effect=[self.sha, self.tree]), \
+                    mock.patch.object(policy, "api", side_effect=[{"id": 23}, self.workflow, self.run]), \
+                    mock.patch.object(policy, "pages", side_effect=[
+                        [self.run], [{"name": policy.ARTIFACT, "expired": False}], [self.run, replacement],
+                    ]), mock.patch.object(policy.subprocess, "run", side_effect=download):
+                with self.assertRaisesRegex(ValueError, "superseded"):
+                    policy.verify("owner/repo")
+
     def test_receipt_binds_head_tree_workflow_attempt_and_configuration(self):
         changes = [{"sourceCommit": "c" * 40}, {"sourceTree": "c" * 40},
                    {"workflowPath": "other.yml"}, {"runId": 100}, {"runAttempt": 2},
@@ -113,6 +185,10 @@ class CanonicalCiTest(unittest.TestCase):
         self.assertNotIn("testDebugUnitTest", public)
         self.assertNotIn("lintDebug", public)
         self.assertIn("verify_canonical_ci.py verify", release)
+        self.assertIn('DEV_BUILD: ${{ github.event_name == \'push\' && github.ref == \'refs/heads/dev\' }}',
+                      release)
+        self.assertIn('if [[ "$DEV_BUILD" == "true" ]]; then\n'
+                      '            wait_args+=(--wait-for-dev-ci)', release)
         self.assertIn("testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease", release)
         self.assertIn("CI_RUN_NUMBER: ${{ github.run_number }}", release)
         self.assertIn("Verify release signatures", release)

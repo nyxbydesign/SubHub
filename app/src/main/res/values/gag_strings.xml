@@ -5,12 +5,14 @@
     <string name="gag_description">Enable and select the SubHub Gag keyboard to use the rules set by your paired Dom. You can switch back to your usual keyboard at any time.</string>
     <string name="gag_dom_description">Set word replacement rules for your paired Sub.</string>
     <string name="gag_enable">Replace words</string>
+    <string name="gag_when_to_replace">When to replace</string>
     <string name="gag_every_word">Every word</string>
     <string name="gag_every_n_words">Every N words</string>
     <string name="gag_specific_words">Specific words</string>
     <string name="gag_interval">Number of words between replacements</string>
-    <string name="gag_words">Words to replace, one per line</string>
-    <string name="gag_replacements">Replacements, one per line</string>
+    <string name="gag_words">Words to replace</string>
+    <string name="gag_replacements">Replacement words</string>
+    <string name="gag_one_per_line">One per line</string>
     <string name="gag_interval_error">Enter a number from 1 to 999.</string>
     <string name="gag_words_error">Enter at least one word to replace.</string>
     <string name="gag_replacements_error">Enter at least one replacement.</string>

@@ -112,9 +112,15 @@ jobs:
           fi
       - name: Require exact-source canonical CI
         if: env.PUBLISH_RELEASE == 'true'
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/verify_canonical_ci.py verify --repository "$GITHUB_REPOSITORY"
+        run: |
+          wait_args=()
+          if [[ "$DEV_BUILD" == "true" ]]; then
+            wait_args+=(--wait-for-dev-ci)
+          fi
+          python3 scripts/verify_canonical_ci.py verify --repository "$GITHUB_REPOSITORY" "${wait_args[@]}"
       - name: Test private candidate tooling
         if: env.PUBLISH_RELEASE != 'true'
         run: python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace

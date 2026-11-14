@@ -137,8 +137,10 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
         if (data.isPending(key)) return;
         JournalRuntime selected = runtime; boolean workspace = dom; PersonId source = target;
         data.load(key, () -> {
-            selected.checkTarget(workspace, source);
-            if (link) return null;
+            if (link) {
+                selected.checkTarget(workspace, source);
+                return null;
+            }
             List<JournalEntry> entries = selected.list(workspace, source, 0);
             return entries.isEmpty() ? null : entries.get(0);
         }, entry -> {

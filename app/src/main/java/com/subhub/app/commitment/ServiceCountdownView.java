@@ -60,7 +60,7 @@ public final class ServiceCountdownView extends View {
     public void setCountdown(long remaining, long duration, boolean hideTime, boolean animate) {
         permanent = false;
         hidden = hideTime;
-        label = CommitmentActivity.formatDuration(remaining);
+        label = CommitmentManager.formatDuration(remaining);
         long seconds = Math.max(0L, (remaining + 999L) / 1000L);
         overviewLabel = seconds >= 86400L
                 ? getContext().getString(R.string.overview_days_hours, seconds / 86400L, seconds % 86400L / 3600L)

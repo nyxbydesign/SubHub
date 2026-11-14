@@ -1,5 +1,8 @@
 package com.subhub.app.popup;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -15,6 +18,7 @@ import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import com.subhub.app.NativeUiActions;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
@@ -48,15 +52,8 @@ public final class PopupPreviewLifetimeAndroidTest {
                     com.subhub.app.atmosphere.AtmosphereActivity.class)));
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             AtomicReference<PopupStormActivity> editor = new AtomicReference<>();
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-                        .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
-                    if (activity instanceof com.subhub.app.atmosphere.AtmosphereActivity) {
-                        activity.findViewById(R.id.button_popup_storm).performClick();
-                        break;
-                    }
-                }
-            });
+            onView(withId(R.id.button_popup_storm))
+                    .perform(NativeUiActions.revealAboveNavigation(), click());
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry

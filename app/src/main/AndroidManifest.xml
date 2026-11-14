@@ -169,7 +169,6 @@
         <activity
             android:name=".update.UpdatesActivity"
             android:exported="false" />
-        <activity android:name=".commitment.CommitmentActivity" android:exported="false" />
         <activity android:name=".appmode.AppModeActivity" android:exported="false" />
         <activity android:name=".appmode.ExtraTimeActivity" android:exported="false"
             android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
