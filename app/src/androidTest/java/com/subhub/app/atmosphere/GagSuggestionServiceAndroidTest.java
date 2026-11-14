@@ -60,6 +60,21 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("hello  ,");
     }
 
+    @Test public void multipleMissedSpacesRequireSuggestionTapAndPreserveTheFollowingText() throws Exception {
+        openEditor(true);
+        for (char letter : "yeahbsoblike".toCharArray()) key(String.valueOf(letter));
+        await(By.pkg("com.subhub.app").text("yeah so like"));
+        assertText("yeahbsoblike next");
+        key("yeah so like");
+        assertText("yeah so like next");
+
+        openEditor(false);
+        for (char letter : "hellobworld".toCharArray()) key(String.valueOf(letter));
+        await(By.pkg("com.subhub.app").text("hello world"));
+        keyDescription(R.string.gag_keyboard_space);
+        assertText("hellobworld ");
+    }
+
     @Test public void apostropheReturnsTheRenderedSymbolPageToLetters() throws Exception {
         openEditor(false);
         keyDescription(R.string.gag_keyboard_symbols);

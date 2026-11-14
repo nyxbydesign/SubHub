@@ -1,6 +1,7 @@
 package com.subhub.app.atmosphere;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -34,8 +35,7 @@ public final class GagLexiconTest {
     }
 
     @Test public void shippedLexiconSuggestsStrongEarlyEditsWithoutReplacingTheTypedWord() throws Exception {
-        Path source = Path.of("src/main/assets/gag_words/words.tsv.gz");
-        GagLexicon bundled = GagLexicon.read(new GZIPInputStream(Files.newInputStream(source)));
+        GagLexicon bundled = shippedLexicon();
         assertTrue(bundled.isKnownWord("hose"));
         assertEquals(List.of("those", "house"), bundled.suggestions("hose").subList(0, 2));
         assertEquals("Those", bundled.suggestions("Hose").get(0));
@@ -50,6 +50,43 @@ public final class GagLexiconTest {
         }
         assertTrue(bundled.suggestions("192.168.1.1").isEmpty());
         assertTrue(bundled.suggestions("1234").isEmpty());
+    }
+
+    @Test public void shippedLexiconRepairsMultipleBoundariesAndOneAdditionalTypo() throws Exception {
+        GagLexicon bundled = shippedLexicon();
+        assertEquals("yeah so like", bundled.phraseRepair("yeahbsoblike", "en"));
+        assertEquals("hello world", bundled.phraseRepair("hellobworld", "en"));
+        assertEquals("hello world", bundled.phraseRepair("hellobwrold", "en"));
+        assertEquals("hello world", bundled.phraseRepair("hellobbworld", "en"));
+        assertEquals("look at this", bundled.phraseRepair("lookbatbthis", "en"));
+        assertEquals("I love you", bundled.phraseRepair("iloveyou", "en"));
+        assertEquals("Guten morgen", bundled.phraseRepair("Gutenbmorgen", "de"));
+        assertEquals("ich bin", bundled.phraseRepair("ichbbin", "de"));
+        assertEquals("wie geht es", bundled.phraseRepair("wiegehtes", "de"));
+        assertEquals("HELLO WORLD", bundled.phraseRepair("HELLOBWORLD", "en"));
+        assertEquals("thank you", bundled.phraseRepair("thankyou", "en"));
+    }
+
+    @Test public void phraseRepairsPreserveValidAndPersonalWordsAndExistingCorrections() throws Exception {
+        GagLexicon bundled = shippedLexicon();
+        for (String literal : List.of("blueberry", "clipboard", "keyboard", "rainbow", "someone", "anything",
+                "already", "without", "goodbye", "vielleicht", "deshalb", "from", "teh", "recieve", "wrold",
+                "doesn't", "hello,world", "42b10", "rainb", "HelloBWorld", "bluebonnet", "bookbinding",
+                "handbook", "webhook")) {
+            assertNull(literal, bundled.phraseRepair(literal, "en"));
+        }
+        assertEquals(List.of("thankyou", "thank you", "thanks"),
+                GagLexicon.prioritizePhrase("thankyou", true, List.of("thankyou", "thanks"), "thank you"));
+        assertEquals(List.of("hello world", "hello", "hellos"),
+                GagLexicon.prioritizePhrase("hellobworld", false,
+                        List.of("hello", "hellos", "hell"), "hello world"));
+        assertEquals(List.of("hellobworld", "hello"),
+                GagLexicon.prioritizePhrase("hellobworld", false, List.of("hellobworld", "hello"), "hello world"));
+    }
+
+    private static GagLexicon shippedLexicon() throws Exception {
+        Path source = Path.of("src/main/assets/gag_words/words.tsv.gz");
+        return GagLexicon.read(new GZIPInputStream(Files.newInputStream(source)));
     }
 
     @Test public void comparableExactWordsAvoidTypoSuggestions() {

@@ -96,6 +96,7 @@ public final class GagKeyboardService extends InputMethodService {
             (preferences, key) -> refreshWorkspace();
     private long requestedRevision = -1;
     private long rulesRevision = -1;
+    private boolean rulesReadSuccessfully;
     private long editorEpoch;
     private GagRules rules;
     private boolean shifted, capsLock, literalWord;
@@ -183,6 +184,7 @@ public final class GagKeyboardService extends InputMethodService {
         editorEpoch++;
         requestedRevision = -1;
         rulesRevision = -1;
+        rulesReadSuccessfully = false;
         rules = null;
         refreshWorkspace();
     }
@@ -228,6 +230,7 @@ public final class GagKeyboardService extends InputMethodService {
         editorEpoch++;
         requestedRevision = -1;
         rulesRevision = -1;
+        rulesReadSuccessfully = false;
         rules = null;
         super.onFinishInput();
     }
@@ -277,6 +280,7 @@ public final class GagKeyboardService extends InputMethodService {
             }
             rules = null;
             rulesRevision = -1;
+            rulesReadSuccessfully = false;
         }
         if (!allowed || !editorAllowed) {
             if (requestedRevision != -1) editorEpoch++;
@@ -290,16 +294,18 @@ public final class GagKeyboardService extends InputMethodService {
                         || editorEpoch != requestEpoch || requestedRevision != revision
                         || revision != feature.gagRevision()) return;
                 rulesRevision = revision;
-                if (failure == null && value != null) {
+                if (failure == null) {
                     try {
-                        GagSettings settings = GagSettings.from(value);
-                        boolean enabled = settings.enabled();
+                        GagSettings settings = value == null ? null : GagSettings.from(value);
+                        boolean enabled = settings != null && settings.enabled();
                         if (enabled && word.length() != 0) {
                             leaveWordLiteral();
                             literalWord = true;
                             resetOpening(false);
                         }
                         rules = enabled ? settings.rules() : null;
+                        rulesReadSuccessfully = true;
+                        if (!enabled && word.length() != 0) scheduleSuggestions();
                     } catch (org.json.JSONException | IllegalArgumentException ignored) { }
                 }
             }));
@@ -397,7 +403,7 @@ public final class GagKeyboardService extends InputMethodService {
             resetOpening(false);
             return false;
         }
-        if (completed.equals(proposed)) rememberWord(completed);
+        if (completed.equals(proposed)) rememberCompletion(completed);
         else resetOpening(false);
         return true;
     }
@@ -439,6 +445,10 @@ public final class GagKeyboardService extends InputMethodService {
             if (openingWords == 3) resetOpening(false);
         }
         personal.recordToken(learned, opener);
+    }
+
+    private void rememberCompletion(String completed) {
+        for (String token : completed.split(" ")) rememberWord(token);
     }
 
     private synchronized GagPersonalDictionary personalDictionary() {
@@ -1057,24 +1067,38 @@ public final class GagKeyboardService extends InputMethodService {
             return;
         }
         GagLexicon source = lexicon;
+        boolean repairPhrases = phraseRepairAllowed();
+        String language = getResources().getConfiguration().getLocales().get(0).getLanguage();
         suggestionTask = spelling.submit(() -> {
             List<String> generic = source == null ? List.of() : source.suggestions(token);
-            if (source != null && source.isKnownWord(token)) {
+            boolean known = source != null && source.isKnownWord(token);
+            if (known) {
                 List<String> withLiteral = new ArrayList<>(generic.size() + 1);
                 withLiteral.add(token);
                 withLiteral.addAll(generic);
                 generic = withLiteral;
             }
-            List<String> candidates = personalDictionary().suggestions(token, generic, 3);
+            List<String> singleWords = personalDictionary().suggestions(token, generic, 3);
+            String phrase = repairPhrases && source != null ? source.phraseRepair(token, language) : null;
             main.post(() -> {
                 if (generation != suggestionGeneration || epoch != editorEpoch
                         || input != getCurrentInputConnection()
-                        || !canSuggest() || candidates.isEmpty()) return;
+                        || !canSuggest()) return;
                 if (cursor >= 0 && !token.equals(readCommittedPrefix(input, cursor))) return;
+                List<String> candidates = phraseRepairAllowed() && phrase != null
+                        ? GagLexicon.prioritizePhrase(token, known, singleWords, phrase) : singleWords;
+                if (candidates.isEmpty()) return;
                 bindSuggestionSlots(suggestionStrip, candidates,
                         candidate -> acceptSuggestion(generation, epoch, input, cursor, token, candidate));
             });
         });
+    }
+
+    private boolean phraseRepairAllowed() {
+        // A phrase would change how a contract matches or counts the active token.
+        return !subWorkspace || !GagParticipation.allowed(participation, keyboardAlreadyEnabled)
+                || (rules == null && rulesReadSuccessfully && backend != null
+                        && rulesRevision == backend.gagRevision());
     }
 
     private List<String> nextWords(GagSuggestionContext context) {
@@ -1123,7 +1147,8 @@ public final class GagKeyboardService extends InputMethodService {
                     input.getSurroundingText(GagLexicon.cursorPrefixLimit(), 2, 0);
             if (text != null && text.getOffset() >= 0) {
                 int selection = text.getSelectionStart();
-                if (selection != text.getSelectionEnd() || text.getOffset() + selection != cursor)
+                if (selection != text.getSelectionEnd()
+                        || (cursor >= 0 && text.getOffset() + selection != cursor))
                     return "";
                 CharSequence buffer = text.getText();
                 return GagLexicon.cursorPrefix(buffer.subSequence(0, selection),
@@ -1145,9 +1170,11 @@ public final class GagKeyboardService extends InputMethodService {
             String token, String candidate) {
         refreshReplacementAuthority();
         if (!isCurrentSuggestion(generation, epoch, input)) return;
+        boolean phrase = candidate.indexOf(' ') >= 0;
+        if (phrase && !phraseRepairAllowed()) return;
         clearPendingSpace();
         if (cursor < 0) {
-            if (word.length() == 0) return;
+            if (!token.contentEquals(word) || (phrase && !token.equals(readCommittedPrefix(input, cursor)))) return;
             if (!completeWord(input, "", candidate)) return;
         } else {
             clearSuggestions();
@@ -1160,7 +1187,7 @@ public final class GagKeyboardService extends InputMethodService {
                     input.finishComposingText();
                     return;
                 }
-                if (completed.equals(candidate)) rememberWord(candidate);
+                if (completed.equals(candidate)) rememberCompletion(candidate);
             } finally {
                 input.endBatchEdit();
             }

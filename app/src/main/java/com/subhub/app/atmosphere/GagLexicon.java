@@ -27,6 +27,9 @@ final class GagLexicon {
     private static final int SUGGEST_MIN_COUNT = 40;
     private static final int KNOWN_WORD_ALTERNATIVE_MIN_COUNT = 20_000;
     private static final int KNOWN_WORD_ALTERNATIVE_RATIO = 30;
+    private static final int SEPARATED_PART_MIN_COUNT = 25_000;
+    private static final int JOINED_PART_MIN_COUNT = 40_000;
+    private static final int KNOWN_JOIN_RATIO = 160;
     private final Map<String, Integer> counts;
     private final String[] sorted;
     private final int highestCount;
@@ -118,6 +121,123 @@ final class GagLexicon {
         return List.copyOf(result);
     }
 
+    String phraseRepair(String original, String language) {
+        if (original.length() < 4) return null;
+        boolean uppercase = original.equals(original.toUpperCase(Locale.ROOT));
+        String word = lookupWord(uppercase ? original.toLowerCase(Locale.ROOT) : original);
+        if (word == null) return null;
+        PhraseSearch search = new PhraseSearch(word, language);
+        search.visit(0, 0, 0, 0, Integer.MAX_VALUE, 0, "");
+        if (search.best == null) return null;
+        return uppercase ? search.best.toUpperCase(Locale.ROOT) : withCase(original, search.best);
+    }
+
+    static List<String> prioritizePhrase(String token, boolean known, List<String> singles, String phrase) {
+        boolean literalFirst = !singles.isEmpty() && token.equalsIgnoreCase(singles.get(0));
+        if (literalFirst && !known) return singles; // A personal word should stay intact.
+        List<String> choices = new ArrayList<>(singles);
+        choices.add(literalFirst ? 1 : 0, phrase);
+        return List.copyOf(choices.subList(0, Math.min(MAX_SUGGESTIONS, choices.size())));
+    }
+
+    private final class PhraseSearch {
+        private final String token;
+        private final String language;
+        private final int literalCount;
+        private final Map<String, String> typoParts = new HashMap<>();
+        private String best;
+        private double bestScore = Double.NEGATIVE_INFINITY;
+
+        PhraseSearch(String token, String language) {
+            this.token = token;
+            this.language = language;
+            literalCount = counts.getOrDefault(token, 0);
+        }
+
+        private void visit(int start, int words, int missing, int edits, int weakest,
+                double frequency, String phrase) {
+            if (words == 3) return;
+            int last = token.length();
+            for (int end = start + 1; end <= last; end++) {
+                if (words == 0 && end == last) break;
+                String part = token.substring(start, end);
+                int count = partCount(part);
+                int extraEdit = 0;
+                boolean besideB = (start > 1 && token.charAt(start - 1) == 'b')
+                        || (end < last - 1 && token.charAt(end) == 'b');
+                if (count == 0 && edits == 0 && literalCount == 0 && besideB && part.length() >= 2) {
+                    part = typoParts.computeIfAbsent(part, GagLexicon.this::phraseTypo);
+                    count = partCount(part);
+                    extraEdit = 1;
+                }
+                if (count < SEPARATED_PART_MIN_COUNT) continue;
+                if (part.equals("i")) part = "I";
+                String extended = phrase.isEmpty() ? part : phrase + " " + part;
+                int nextWeakest = Math.min(weakest, count);
+                int nextEdits = edits + extraEdit;
+                double nextFrequency = frequency + Math.log(count);
+                if (!phrase.isEmpty() && GagNextWords.after(phrase + " ", language).contains(part))
+                    nextFrequency += 16;
+                if (end == last) {
+                    rank(extended, words + 1, missing, nextEdits, nextWeakest, nextFrequency);
+                } else if (words < 2) {
+                    if (token.charAt(end) == 'b' && end + 1 < last) {
+                        visit(end + 1, words + 1, missing, nextEdits, nextWeakest, nextFrequency, extended);
+                        if (nextEdits == 0 && end + 2 < last && token.charAt(end + 1) == 'b') {
+                            visit(end + 2, words + 1, missing, 1, nextWeakest, nextFrequency, extended);
+                        }
+                    }
+                    visit(end, words + 1, missing + 1, nextEdits, nextWeakest, nextFrequency, extended);
+                }
+            }
+        }
+
+        private void rank(String phrase, int words, int missing, int edits, int weakest, double frequency) {
+            if (missing > 0 && weakest < JOINED_PART_MIN_COUNT) return;
+            if (edits > 0 && missing == words - 1) return;
+            if (literalCount > 0 && (edits > 0 || weakest < (long) literalCount * KNOWN_JOIN_RATIO)) return;
+            double score = Math.log(weakest) + frequency / (4 * words)
+                    - 2.75 * missing - 1.8 * edits - 0.45 * (words - 2);
+            if (score > bestScore) {
+                best = phrase;
+                bestScore = score;
+            }
+        }
+    }
+
+    private int partCount(String word) {
+        if (word.equals("i") || word.equals("a")) return 2_000_000;
+        return counts.getOrDefault(word, 0);
+    }
+
+    private String phraseTypo(String part) {
+        String best = "";
+        int highest = JOINED_PART_MIN_COUNT - 1;
+        for (int i = 0; i < part.length(); i++) {
+            String head = part.substring(0, i);
+            String tail = part.substring(i + 1);
+            char current = part.charAt(i);
+            if (!tail.isEmpty() && current != tail.charAt(0)) {
+                String swapped = head + tail.charAt(0) + current + tail.substring(1);
+                int count = partCount(swapped);
+                if (count > highest) {
+                    best = swapped;
+                    highest = count;
+                }
+            }
+            String neighbors = neighboringKeys(current);
+            for (int key = 0; key < neighbors.length(); key++) {
+                String adjusted = head + neighbors.charAt(key) + tail;
+                int count = partCount(adjusted);
+                if (count > highest) {
+                    best = adjusted;
+                    highest = count;
+                }
+            }
+        }
+        return best;
+    }
+
     private static List<String> ranked(Map<String, Long> matches) {
         List<String> ranked = new ArrayList<>(matches.keySet());
         ranked.sort(Comparator.<String>comparingLong(matches::get).reversed().thenComparing(word -> word));
@@ -157,16 +277,20 @@ final class GagLexicon {
             add(result, head + rest, 2, minimumCount);
             if (tail.length() > 1 && current != tail.charAt(1))
                 add(result, head + tail.charAt(1) + current + tail.substring(2), 8, minimumCount);
-            String nearby = current >= 'a' && current <= 'z' ? NEIGHBORS[current - 'a'] : "";
-            nearby += switch (current) {
-                case 'a' -> "ä"; case 'o' -> "ö"; case 'u' -> "ü";
-                case 'ä' -> "a"; case 'ö' -> "o"; case 'ü' -> "u";
-                default -> "";
-            };
+            String nearby = neighboringKeys(current);
             for (int key = 0; key < nearby.length(); key++)
                 add(result, head + nearby.charAt(key) + rest, 3, minimumCount);
         }
         return result;
+    }
+
+    private static String neighboringKeys(char key) {
+        String nearby = key >= 'a' && key <= 'z' ? NEIGHBORS[key - 'a'] : "";
+        return nearby + switch (key) {
+            case 'a' -> "ä"; case 'o' -> "ö"; case 'u' -> "ü";
+            case 'ä' -> "a"; case 'ö' -> "o"; case 'ü' -> "u";
+            default -> "";
+        };
     }
 
     private void add(Map<String, Long> result, String word, int weight, long minimumCount) {
