@@ -104,6 +104,9 @@ public final class PenanceManager implements PenanceRuleSettings {
     private final SharedPreferences preferences;
     private final FeatureModuleManager modules;
     private final Context context;
+    // Snapshot rows are immutable. Writers still load their own mutable lists under LOCK.
+    private String snapshotLedger;
+    private List<PenanceEvent> snapshotRows = Collections.emptyList();
 
     public PenanceManager(Context context) {
         this.context = context.getApplicationContext();
@@ -608,13 +611,20 @@ public final class PenanceManager implements PenanceRuleSettings {
 
     public PenanceSnapshot snapshot(long nowMillis) {
         synchronized (LOCK) {
-            List<PenanceEvent> events = loadEvents();
+            String ledger = preferences.getString(KEY_EVENTS, "");
+            if (!java.util.Objects.equals(snapshotLedger, ledger)) {
+                List<PenanceEvent> newestFirst = decodeEvents(ledger);
+                newestFirst.sort(Comparator.comparingLong(PenanceEvent::getCreatedAtMillis).reversed());
+                snapshotRows = Collections.unmodifiableList(newestFirst);
+                snapshotLedger = ledger;
+            }
             int due = 0;
             int mercy = 0;
             int checkout = 0;
             int paid = 0;
-            for (PenanceEvent event : events) {
-                if (!getCurrency().equals(event.getCurrency())) continue;
+            String currency = getCurrency();
+            for (PenanceEvent event : snapshotRows) {
+                if (!currency.equals(event.getCurrency())) continue;
                 if (event.isDue(nowMillis)) due += event.getAmountCents();
                 else if (event.isInMercy(nowMillis)) mercy += event.getAmountCents();
                 else if (event.getStatus() == PenanceEvent.Status.CHECKOUT) {
@@ -623,9 +633,7 @@ public final class PenanceManager implements PenanceRuleSettings {
                     paid += event.getAmountCents();
                 }
             }
-            List<PenanceEvent> newestFirst = new ArrayList<>(events);
-            newestFirst.sort(Comparator.comparingLong(PenanceEvent::getCreatedAtMillis).reversed());
-            return new PenanceSnapshot(isEnabled(), due, mercy, checkout, paid, newestFirst);
+            return new PenanceSnapshot(isEnabled(), due, mercy, checkout, paid, snapshotRows);
         }
     }
 

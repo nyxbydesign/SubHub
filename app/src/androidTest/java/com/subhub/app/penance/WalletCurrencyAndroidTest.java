@@ -103,6 +103,42 @@ public final class WalletCurrencyAndroidTest {
         }
     }
 
+    @Test public void snapshotReusesUnchangedRowsAndReadsCurrentClockAndLedger() {
+        long deadline = System.currentTimeMillis();
+        var values = context.getSharedPreferences(PenanceManager.PREFS_NAME, Context.MODE_PRIVATE);
+        assertTrue(values.edit().putString("events_v1", "older,1,1,25,1,PAID,old;malformed;"
+                + "first,2," + deadline + ",100,1,OPEN,,NEW_DETECTION;"
+                + "second,2,2,200,1,PAID,paid,NEW_DETECTION,USD").commit());
+
+        PenanceSnapshot before = manager.snapshot(deadline - 1);
+        assertEquals(100, before.getMercyCents());
+        assertEquals(0, before.getDueCents());
+        assertEquals(25, before.getPaidCents());
+        assertEquals(3, before.getEvents().size());
+        assertEquals("first", before.getEvents().get(0).getId());
+        assertEquals("second", before.getEvents().get(1).getId());
+        assertEquals("older", before.getEvents().get(2).getId());
+        assertThrows(UnsupportedOperationException.class, before.getEvents()::clear);
+
+        PenanceSnapshot due = manager.snapshot(deadline);
+        assertSame(before.getEvents().get(0), due.getEvents().get(0));
+        assertEquals(0, due.getMercyCents());
+        assertEquals(100, due.getDueCents());
+
+        PenanceManager writer = new PenanceManager(context);
+        assertTrue(writer.forgiveLatestInMercy(deadline - 1));
+        PenanceSnapshot changed = manager.snapshot(deadline);
+        assertEquals(PenanceEvent.Status.FORGIVEN, changed.getEvents().get(0).getStatus());
+        assertEquals(PenanceEvent.Status.OPEN, before.getEvents().get(0).getStatus());
+        assertEquals(0, changed.getDueCents());
+
+        assertTrue(writer.changeCurrency("USD"));
+        PenanceSnapshot newCurrency = manager.snapshot(deadline);
+        assertSame(changed.getEvents().get(0), newCurrency.getEvents().get(0));
+        assertEquals(200, newCurrency.getPaidCents());
+        assertEquals(25, changed.getPaidCents());
+    }
+
     @Test public void primarySelectionRequiresOneSupportedBooleanPrimary() throws Exception {
         assertEquals("EUR", PayPalOrdersClient.primaryCurrency(new JSONObject(
                 "{\"balances\":[{\"currency\":\"EUR\",\"primary\":true}]}")));
