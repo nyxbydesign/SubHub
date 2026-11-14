@@ -24,10 +24,11 @@ public final class GagEditorFixtureActivity extends Activity {
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
         editor.setText(middle ? " next" : "");
-        editor.setSelection(0);
         setContentView(editor);
         editor.requestFocus();
-        editor.post(() -> getSystemService(InputMethodManager.class)
-                .showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT));
+        editor.post(() -> {
+            editor.setSelection(0);
+            getSystemService(InputMethodManager.class).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+        });
     }
 }

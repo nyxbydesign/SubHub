@@ -31,7 +31,7 @@ public final class GagSuggestionServiceAndroidTest {
 
     @Test public void explicitSuggestionsPreserveExistingSpaceAndOwnOnlyTheirNewSeparator() throws Exception {
         openEditor(true);
-        correctHello();
+        correctHello(" next");
         assertText("hello next");
 
         acceptHello();
@@ -81,12 +81,14 @@ public final class GagSuggestionServiceAndroidTest {
 
     private static void acceptHello() throws Exception {
         openEditor(false);
-        correctHello();
+        correctHello("");
         assertText("hello ");
     }
 
-    private static void correctHello() {
-        for (char letter : "helllo".toCharArray()) key(String.valueOf(letter));
+    private static void correctHello(String after) {
+        key("h");
+        assertText("h" + after);
+        for (char letter : "elllo".toCharArray()) key(String.valueOf(letter));
         key("hello");
     }
 
