@@ -130,14 +130,11 @@ public final class ExtraTimeEntry {
                 com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
         data.load(key,
-                () -> new ExtraTimeRequests(application, person).snapshot(System.currentTimeMillis()), value -> {
+                () -> new ExtraTimeRequests(application, person).pendingReviewCount(System.currentTimeMillis()), count -> {
                     if (!action.isAttachedToWindow() || !DeviceRolePreferences.isDomWorkspace(context)
                             || provider != com.subhub.app.relationships.RelationshipUi.provider()
                             || authority != com.subhub.app.people.People.keyholder() || !sameRoute(context, person)
                             || root.findViewWithTag("extra_time_review:" + person.value()) != action) return;
-                    int count = 0;
-                    for (ExtraTimeRequests.Request request : value.requests)
-                        if (request.status == ExtraTimeRequests.Status.PENDING) count++;
                     action.setText(count > 0 ? context.getString(R.string.extra_time_review_count, count)
                             : context.getString(R.string.extra_time_review));
                 }, ignored -> {

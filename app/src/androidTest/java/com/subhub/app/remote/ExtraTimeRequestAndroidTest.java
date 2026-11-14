@@ -117,11 +117,17 @@ public final class ExtraTimeRequestAndroidTest {
                     fixture.firstPackage,java.util.Set.of(fixture.firstPackage),System.currentTimeMillis()));
             fixture.transfer(); fixture.switchDom();
             ExtraTimeRequests dom = fixture.domRequests();
+            assertEquals(1, dom.pendingReviewCount(request.requestedAt));
+            assertEquals(0, dom.pendingReviewCount(request.requestedAt - 30_001L));
+            assertEquals(0, dom.pendingReviewCount(request.requestedAt + 26 * 3_600_000L));
+            assertThrows(SecurityException.class, () -> sub.pendingReviewCount(request.requestedAt));
             assertThrows(IllegalArgumentException.class,()->dom.approve(request.id,0));
             assertThrows(IllegalArgumentException.class,()->dom.approve(request.id,1441));
             dom.approve(request.id,25);
+            assertEquals(0, dom.pendingReviewCount(request.requestedAt));
             assertEquals(1,new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().size());
             fixture.transfer(); fixture.transfer(); fixture.switchSub();
+            assertThrows(SecurityException.class, () -> dom.pendingReviewCount(request.requestedAt));
             long measuredAt = System.currentTimeMillis();
             ExtraTimeRequests.Snapshot after = fixture.subRequests().snapshot(measuredAt);
             ExtraTimeRequests.App first = after.apps.stream().filter(app->app.packageName.equals(fixture.firstPackage)).findFirst().orElseThrow();

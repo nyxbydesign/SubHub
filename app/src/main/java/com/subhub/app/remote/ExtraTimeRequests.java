@@ -65,7 +65,7 @@ public final class ExtraTimeRequests {
         /** Opaque local UI fence for the current peer and relationship generation. */
         public final String scope;
         public final String subDay, subZone;
-        public final int tributeCents, pendingCount;
+        public final int tributeCents;
         public final List<App> apps;
         public final List<Request> requests;
         private Snapshot(boolean dom, boolean supported, boolean canRequest, String reason, String domName,
@@ -79,8 +79,6 @@ public final class ExtraTimeRequests {
             unavailableReason = reason; this.domName = domName; this.personName = personName;
             this.tributeCents = tributeCents; this.currency = currency;
             this.apps = Collections.unmodifiableList(apps); this.requests = Collections.unmodifiableList(requests);
-            int count = 0; for (Request row : requests) if (row.status == Status.PENDING) count++;
-            pendingCount = count;
         }
 
         /** The Overview follows the Sub's allowance day, including the captured zone. */
@@ -116,6 +114,26 @@ public final class ExtraTimeRequests {
         if (peer.localRole != RemoteProtocol.Role.DOM) throw new SecurityException("Choose your Sub's profile");
         return peer;
     }
+    /** Read the review badge from the authorized Dom journal without building request details. */
+    public int pendingReviewCount(long now) {
+        if (person.isLocal()) throw new SecurityException("Choose your Sub's profile");
+        return authority.authorityAccess(() -> {
+            synchronized (SubFeaturePolicy.LOCK) {
+                synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                    synchronized (authority) {
+                        synchronized (ExtraTimeStore.LOCK) {
+                            int count = 0;
+                            for (ExtraTimeStore.Row row : journal.load(scope(target()))) {
+                                if (row.state.equals("PENDING") && row.today(now)) count++;
+                            }
+                            return count;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     public Snapshot snapshot(long now) throws Exception {
         boolean[] changed = {false};
         Snapshot result = authority.authorityAccess(() -> {
