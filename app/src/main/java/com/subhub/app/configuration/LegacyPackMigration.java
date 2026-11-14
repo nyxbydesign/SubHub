@@ -40,11 +40,6 @@ public final class LegacyPackMigration {
     private static final String ENCRYPTED_PAYPAL = "_local_encrypted_paypal";
     private static final Set<String> LEGACY_KEYS = Set.of(
             JOURNAL, "active_pack_id", "active_pack_backup", "active_sections", "creator_device_id");
-    private static final Set<String> ENCRYPTED_KEYS = Set.of(
-            "environment", "client_id", "client_secret", "verified_boundary", "primary_currency",
-            "primary_currency_boundary", "vault_status", "vault_id", "customer_id", "payer_email",
-            "payer_account_id", "vault_boundary", "vault_setup_token_id", "vault_setup_customer_id",
-            "vault_setup_metadata_id", "vault_setup_approval_url", "vault_setup_boundary");
     private static final Set<File> READY = new HashSet<>();
 
     interface Committer {
@@ -165,11 +160,6 @@ public final class LegacyPackMigration {
             String name = names.next();
             JSONObject values = backup.getJSONObject(name);
             if (ENCRYPTED_PAYPAL.equals(name)) {
-                Iterator<String> keys = values.keys();
-                while (keys.hasNext()) {
-                    String key = keys.next();
-                    if (!ENCRYPTED_KEYS.contains(key) || !(values.get(key) instanceof String)) return false;
-                }
                 encrypted = values;
                 continue;
             }

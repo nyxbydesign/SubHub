@@ -189,12 +189,21 @@ public final class LegacyPackMigrationAndroidTest {
     @Test public void malformedPendingJournalBlocksReadinessWithoutPartialRestore() throws Exception {
         assertTrue(main().edit().putBoolean("show_border", true).commit());
         assertTrue(wallet().edit().putInt("rule_new_detection_cents", 999).commit());
+        PayPalCredentialStore credentials = new PayPalCredentialStore(context);
+        assertTrue(credentials.save(PayPalEnvironment.SANDBOX, "fixture-id", "fixture-secret"));
+        SharedPreferences paypal = prefs(PayPalCredentialStore.PREFS_NAME);
+        Map<String, ?> savedCredentials = new HashMap<>(paypal.getAll());
         JSONObject valid = new JSONObject().put("show_border", typed("boolean", false));
         List<JSONObject> malformed = new ArrayList<>();
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
                 .put(PenanceManager.PREFS_NAME, new JSONObject().put("rule_new_detection_cents", typed("int", "123"))));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
                 .put("_local_encrypted_paypal", new JSONObject().put("unknown-key", "synthetic")));
+        malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
+                .put("_local_encrypted_paypal", new JSONObject().put("environment", false)));
+        malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
+                        new JSONObject().put("show_border", typed("boolean", "false")))
+                .put("_local_encrypted_paypal", new JSONObject()));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
                 new JSONObject().put("show_border", typed("boolean", "false"))));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
@@ -208,6 +217,7 @@ public final class LegacyPackMigrationAndroidTest {
             assertFalse(LegacyPackMigration.isReady(context));
             assertEquals(before, main().getAll());
             assertEquals(999, wallet().getInt("rule_new_detection_cents", 0));
+            assertEquals(savedCredentials, paypal.getAll());
             assertEquals(journal, legacy().getString("activation_journal", ""));
         }
     }
