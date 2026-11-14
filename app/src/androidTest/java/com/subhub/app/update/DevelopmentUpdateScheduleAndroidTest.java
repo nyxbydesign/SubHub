@@ -224,8 +224,8 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 String timestamp = ReleaseTimestampFormatter.preview("2026-10-18T08:31:42Z", locale, ZoneId.systemDefault());
                 assertEquals(activity.getString(R.string.update_history_preview_date, timestamp), meta(rows, 0).getText().toString());
                 assertTrue(meta(rows, 0).getText().toString().contains("UTC"));
-                assertEquals("2026-10-07", meta(rows, 1).getText().toString());
-                assertEquals(activity.getString(R.string.update_history_preview_date, "2026-10-08"), meta(rows, 2).getText().toString());
+                assertEquals(activity.getString(R.string.update_history_preview_date, "2026-10-08"), meta(rows, 1).getText().toString());
+                assertEquals("2026-10-07", meta(rows, 2).getText().toString());
                 assertEquals(activity.getString(R.string.update_automatic_dev_toggle),
                         ((TextView) activity.findViewById(R.id.automatic_checks)).getText().toString());
                 assertReleaseDisclosure(activity, rows.getChildAt(0));
