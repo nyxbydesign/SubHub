@@ -8,8 +8,6 @@
     <item name="settings_connection" type="id" />
     <item name="rituals_gallery_card" type="id" />
     <item name="rituals_keyholder_card" type="id" />
-    <item name="rituals_keyholder_status" type="id" />
-    <item name="button_keyholder" type="id" />
     <item name="achievements_home_card" type="id" />
     <item name="achievements_home_count" type="id" />
     <item name="achievements_home_badges" type="id" />
