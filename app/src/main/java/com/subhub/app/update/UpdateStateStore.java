@@ -177,14 +177,12 @@ public final class UpdateStateStore {
         return true;
     }
 
-    public void clearDownload(boolean deleteFile) {
+    void clearDownload() {
         synchronized (UpdateStateStore.class) {
             UpdateNotifications.cancelDownload(context, downloadId());
             UpdateNotifications.cancelReady(context);
-            if (deleteFile) {
-                String path = verifiedPath();
-                if (!path.isEmpty()) new File(path).delete();
-            }
+            String path = verifiedPath();
+            if (!path.isEmpty()) new File(path).delete();
             preferences.edit().remove(DOWNLOAD_ID).remove(VERIFIED_PATH).remove(VERIFIED_AT)
                     .remove(INSTALL_REQUESTED).apply();
         }
@@ -193,12 +191,12 @@ public final class UpdateStateStore {
     public void cleanupInstalled(long installedVersionCode) {
         UpdateCandidate current = candidate();
         if (current != null && installedVersionCode >= current.manifest.versionCode) {
-            clearDownload(true);
+            clearDownload();
             preferences.edit().remove(CANDIDATE).remove(LAST_NOTIFIED).apply();
         }
         long verifiedAt = preferences.getLong(VERIFIED_AT, 0L);
         if (verifiedAt > 0 && System.currentTimeMillis() - verifiedAt > 7L * 24L * 60L * 60L * 1000L) {
-            clearDownload(true);
+            clearDownload();
         }
     }
 

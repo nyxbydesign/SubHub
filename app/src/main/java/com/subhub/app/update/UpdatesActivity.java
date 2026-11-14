@@ -361,7 +361,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         File apk = path.isEmpty() ? null : new File(path);
         if (apk == null || !apk.isFile()) {
             binding.updateStatus.setText(R.string.update_verification_failed);
-            state.clearDownload(true);
+            state.clearDownload();
             render();
             return;
         }

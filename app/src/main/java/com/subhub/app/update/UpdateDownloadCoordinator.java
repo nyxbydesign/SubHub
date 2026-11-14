@@ -102,7 +102,7 @@ public final class UpdateDownloadCoordinator {
         synchronized (UpdateStateStore.class) {
             long id = state.downloadId();
             if (id >= 0) downloads.remove(id);
-            state.clearDownload(true);
+            state.clearDownload();
         }
     }
 
