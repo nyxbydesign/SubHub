@@ -15,6 +15,11 @@ final class GagKeyPress implements View.OnTouchListener {
     private View pressed;
     private int pointer = -1;
     private boolean repeated;
+    private GagKeyAlternativesPopup alternatives;
+
+    void setAlternatives(GagKeyAlternativesPopup popup) {
+        alternatives = popup;
+    }
 
     GagKeyPress(Handler handler, Runnable repeatAction) {
         this.handler = handler;
@@ -37,6 +42,10 @@ final class GagKeyPress implements View.OnTouchListener {
             case MotionEvent.ACTION_MOVE -> {
                 if (pointer == -1) return true;
                 int owner = event.findPointerIndex(pointer);
+                if (owner >= 0 && alternatives != null && alternatives.isShowingFor(view)) {
+                    alternatives.highlight(view, event, owner);
+                    return true;
+                }
                 if (owner < 0 || !inside(view, event, owner)) {
                     pointer = -1;
                     cancelRepeat();
@@ -48,6 +57,11 @@ final class GagKeyPress implements View.OnTouchListener {
                 if (pointer == -1) return true;
                 if (pointer != event.getPointerId(index)) return false;
                 pointer = -1;
+                if (alternatives != null && alternatives.isShowingFor(view)) {
+                    finishNativeTouch(view, event, index, MotionEvent.ACTION_CANCEL);
+                    alternatives.release(view, event, index);
+                    return true;
+                }
                 cancelRepeat();
                 boolean cancel = repeated || !inside(view, event, index);
                 if (!cancel && action == MotionEvent.ACTION_UP) return false;
@@ -55,6 +69,7 @@ final class GagKeyPress implements View.OnTouchListener {
                 return true;
             }
             case MotionEvent.ACTION_CANCEL -> {
+                if (alternatives != null && alternatives.isShowingFor(view)) alternatives.dismiss();
                 pointer = -1;
                 cancelRepeat();
             }

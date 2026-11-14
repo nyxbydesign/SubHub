@@ -262,7 +262,7 @@ public final class AtmosphereContractDetailsAndroidTest {
                 assertFalse(copy.contains("Categories:"));
                 assertFalse(copy.contains("Intensity:"));
                 assertTrue(copy.contains("Placement: Center"));
-                assertTrue(copy.contains("Gag\nUnknown"));
+                assertTrue(copy.contains("Gagging\nUnknown"));
             });
         }
         assertTrue(preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).commit());
@@ -276,7 +276,7 @@ public final class AtmosphereContractDetailsAndroidTest {
                 assertFalse(atmosphere.isClickable());
                 assertTrue(text(atmosphere).contains("Whispers Disabled by Sub"));
                 assertTrue(text(atmosphere).contains("Popup Storm Off"));
-                assertTrue(text(atmosphere).contains("Gag Unknown"));
+                assertTrue(text(atmosphere).contains("Gagging Unknown"));
                 assertNull(tagged(a, "contract_details:atmosphere"));
             });
         }
