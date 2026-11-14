@@ -77,6 +77,7 @@ public final class GagKeyboardService extends InputMethodService {
     private GagDeleteSuggestion pendingDelete;
     private final Runnable checkDeleteSuggestions = this::checkDeleteSuggestions;
     private int committedCursor = -1;
+    private GagSuggestionSpace suggestionSpace;
     private char pendingPunctuation;
     private int punctuationCursor = -1;
     private LinearLayout suggestionStrip;
@@ -142,6 +143,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onStartInput(EditorInfo editor, boolean restarting) {
+        suggestionSpace = null;
         stopClipboard();
         super.onStartInput(editor, restarting);
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
@@ -182,6 +184,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        suggestionSpace = null;
         stopClipboard();
         if (page == Page.EMOJI) page = pageBeforeEmoji;
         clearPendingSpace();
@@ -192,6 +195,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onFinishInput() {
+        suggestionSpace = null;
         stopClipboard();
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         word.setLength(0);
@@ -209,6 +213,9 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onUpdateSelection(int oldStart, int oldEnd, int newStart, int newEnd,
             int composingStart, int composingEnd) {
         super.onUpdateSelection(oldStart, oldEnd, newStart, newEnd, composingStart, composingEnd);
+        if (suggestionSpace != null
+                && !suggestionSpace.atSelection(getCurrentInputConnection(), newStart, newEnd))
+            suggestionSpace = null;
         if (clipboardSessionConnection != null && clipboardSessionConnection != getCurrentInputConnection())
             stopClipboard();
         if (word.length() > 0 && (composingStart < 0 || newStart != newEnd || newEnd != composingEnd)) {
@@ -290,6 +297,9 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
+        GagSuggestionSpace ownedSpace = suggestionSpace;
+        suggestionSpace = null;
+        if (ownedSpace != null) ownedSpace.removeBefore(input, character);
         insertPendingSpace(input, character);
         boolean inWord = (page == Page.LETTERS && GagRules.wordCharacter(character))
                 || ((word.length() > 0 || literalWord) && GagRules.apostrophe(character));
@@ -325,6 +335,11 @@ public final class GagKeyboardService extends InputMethodService {
             shifted = false;
             renderCase();
         }
+        if ((page == Page.SYMBOLS || page == Page.MORE_SYMBOLS)
+                && (character == ' ' || GagRules.apostrophe(character))) {
+            page = Page.LETTERS;
+            renderKeysIfNeeded(getCurrentInputEditorInfo());
+        }
     }
 
     private void clearPendingSpace() {
@@ -354,12 +369,24 @@ public final class GagKeyboardService extends InputMethodService {
         word.setLength(0);
         String proposed = completed;
         completed = applyGag(original, proposed);
-        if (!input.commitText(completed + suffix, 1)) {
+        boolean committed = suggestion == null ? input.commitText(completed + suffix, 1)
+                : commitSuggestion(input, original.length(), completed);
+        if (!committed) {
             resetOpening(false);
             return false;
         }
         if (completed.equals(proposed)) rememberWord(completed);
         else resetOpening(false);
+        return true;
+    }
+
+    private boolean commitSuggestion(InputConnection input, int originalLength, String completed) {
+        suggestionSpace = null;
+        boolean append = GagSuggestionSpace.needsSpace(input.getTextAfterCursor(2, 0));
+        GagDeleteSuggestion.Snapshot before = append ? GagDeleteSuggestion.editorSnapshot(input) : null;
+        String inserted = append ? completed + " " : completed;
+        if (!input.commitText(inserted, 1)) return false;
+        if (append) suggestionSpace = GagSuggestionSpace.capture(input, before, originalLength, inserted);
         return true;
     }
 
@@ -398,6 +425,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void backspace() {
+        suggestionSpace = null;
         clearPendingSpace();
         resetOpening(false);
         refreshReplacementAuthority();
@@ -434,6 +462,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void enter() {
+        suggestionSpace = null;
         clearPendingSpace();
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
@@ -607,6 +636,7 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return false;
         clearPendingSpace();
+        suggestionSpace = null;
         boolean committed = completeWord(input, emoji, null);
         literalWord = false;
         if (committed) resetOpening(false);
@@ -918,6 +948,7 @@ public final class GagKeyboardService extends InputMethodService {
         clearPendingSpace();
         clearSuggestions();
         resetOpening(false);
+        suggestionSpace = null;
         String insertion = word + entry.text();
         word.setLength(0);
         String completed = GagClipboard.applyWords(insertion, token -> applyGag(token, token));
@@ -1038,7 +1069,8 @@ public final class GagKeyboardService extends InputMethodService {
         if (!isCurrentSuggestion(generation, epoch, input) || word.length() != 0) return;
         clearSuggestions();
         clearPendingSpace();
-        if (!context.commit(input, candidate, token -> applyGag(token, token))) return;
+        if (!context.commit(input, candidate, token -> applyGag(token, token),
+                completed -> commitSuggestion(input, 0, completed))) return;
         resetOpening(false);
         literalWord = false;
         lastShiftTap = 0;
@@ -1089,7 +1121,7 @@ public final class GagKeyboardService extends InputMethodService {
         clearPendingSpace();
         if (cursor < 0) {
             if (word.length() == 0) return;
-            if (!completeWord(input, " ", candidate)) return;
+            if (!completeWord(input, "", candidate)) return;
         } else {
             clearSuggestions();
             if (cursor < token.length() || !token.equals(readCommittedPrefix(input, cursor))) return;
@@ -1097,7 +1129,7 @@ public final class GagKeyboardService extends InputMethodService {
             try {
                 if (!input.setComposingRegion(cursor - token.length(), cursor)) return;
                 String completed = applyGag(token, candidate);
-                if (!input.commitText(completed + " ", 1)) {
+                if (!commitSuggestion(input, token.length(), completed)) {
                     input.finishComposingText();
                     return;
                 }
@@ -1168,6 +1200,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void chooseKeyboard() {
+        suggestionSpace = null;
         if (word.length() != 0) literalWord = true;
         leaveWordLiteral();
         InputMethodManager manager = getSystemService(InputMethodManager.class);

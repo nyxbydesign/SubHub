@@ -40,7 +40,7 @@ final class GagDeleteSuggestion {
         return before == null || deletedCursor(current) == selectionEnd ? selectionEnd : -1;
     }
 
-    private static Snapshot editorSnapshot(InputConnection connection) {
+    static Snapshot editorSnapshot(InputConnection connection) {
         try {
             if (Build.VERSION.SDK_INT >= 31) {
                 SurroundingText text = connection.getSurroundingText(BEFORE, AFTER, 0);
@@ -67,5 +67,5 @@ final class GagDeleteSuggestion {
                 text.subSequence(start, right).toString());
     }
 
-    private record Snapshot(int cursor, String left, String right) {}
+    record Snapshot(int cursor, String left, String right) {}
 }

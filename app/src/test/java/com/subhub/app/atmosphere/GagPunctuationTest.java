@@ -6,6 +6,20 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public final class GagPunctuationTest {
+    @Test public void suggestionSeparatorsReuseExistingWhitespaceAndJoinPunctuation() {
+        assertFalse(GagSuggestionSpace.needsSpace(" next"));
+        assertFalse(GagSuggestionSpace.needsSpace("\t"));
+        assertFalse(GagSuggestionSpace.needsSpace("\u00A0"));
+        assertFalse(GagSuggestionSpace.needsSpace("),"));
+        assertTrue(GagSuggestionSpace.needsSpace(""));
+        assertTrue(GagSuggestionSpace.joinsPrevious('('));
+        assertTrue(GagSuggestionSpace.joinsPrevious(']'));
+        assertTrue(GagSuggestionSpace.joinsPrevious(','));
+        assertTrue(GagSuggestionSpace.joinsPrevious('>'));
+        assertFalse(GagSuggestionSpace.joinsPrevious(' '));
+        assertFalse(GagSuggestionSpace.joinsPrevious('a'));
+    }
+
     @Test public void spacesBeforeTheNextWordAfterCommasPeriodsAndEllipses() {
         assertTrue(GagPunctuation.needsSpace(',', 'w', "hello,", ""));
         assertTrue(GagPunctuation.needsSpace('.', 'W', "hello.", ""));

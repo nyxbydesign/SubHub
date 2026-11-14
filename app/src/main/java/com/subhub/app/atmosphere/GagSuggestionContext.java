@@ -3,6 +3,7 @@ package com.subhub.app.atmosphere;
 import android.os.Build;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.SurroundingText;
+import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /** Revalidates the cursor before offering or inserting a suggestion outside a composing word. */
@@ -37,10 +38,14 @@ record GagSuggestionContext(String before, int cursor) {
         return text.subSequence(Math.max(0, text.length() - GagNextWords.CONTEXT_LIMIT), text.length()).toString();
     }
 
-    boolean commit(InputConnection input, String candidate, UnaryOperator<String> replace) {
+    boolean commit(InputConnection input, String candidate, UnaryOperator<String> replace,
+            Predicate<String> insert) {
         if (!equals(read(input))) return false;
         StringBuilder completed = new StringBuilder();
-        for (String word : candidate.split(" ")) completed.append(replace.apply(word)).append(' ');
-        return input.commitText(completed.toString(), 1);
+        for (String word : candidate.split(" ")) {
+            if (completed.length() != 0) completed.append(' ');
+            completed.append(replace.apply(word));
+        }
+        return insert.test(completed.toString());
     }
 }
