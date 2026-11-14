@@ -29,7 +29,6 @@ import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.appmode.ResumeNotificationManager;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
-import com.subhub.app.commitment.CommitmentActivity;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.databinding.ActivityMainBinding;
 import com.subhub.app.diagnostics.DiagnosticsRepository;
@@ -776,7 +775,7 @@ public final class MainActivity extends AppCompatActivity {
                     pauseActive
                             ? getString(
                                     R.string.paid_pause_active,
-                                    CommitmentActivity.formatDuration(paidPause.remainingMillis()))
+                                    CommitmentManager.formatDuration(paidPause.remainingMillis()))
                             : getString(
                                     R.string.paid_pause_buy,
                                     paidPause.getDurationMinutes(),

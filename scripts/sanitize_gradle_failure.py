@@ -262,7 +262,6 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/censor/engine/SceneEngine.java": "main_censor_engine_scene_engine",
     b"app/src/main/java/com/subhub/app/censor/engine/ScrollMotionLedger.java": "main_censor_engine_scroll_motion_ledger",
     b"app/src/main/java/com/subhub/app/censor/engine/VisualInferencePolicy.java": "main_censor_engine_visual_inference_policy",
-    b"app/src/main/java/com/subhub/app/commitment/CommitmentActivity.java": "main_commitment_commitment_activity",
     b"app/src/main/java/com/subhub/app/commitment/CommitmentExpiryReceiver.java": "main_commitment_commitment_expiry_receiver",
     b"app/src/main/java/com/subhub/app/commitment/CommitmentManager.java": "main_commitment_manager",
     b"app/src/main/java/com/subhub/app/commitment/DurationChoicesView.java": "main_commitment_duration_choices_view",

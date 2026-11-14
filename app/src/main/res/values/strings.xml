@@ -621,14 +621,6 @@
     <string name="onboarding_dismiss">Continue</string>
     <string name="shortcut_start_protection">Enter Service</string>
     <string name="shortcut_start_protection_long">Enter SubHub service</string>
-    <string name="commitment_title">Service Duration</string>
-    <string name="commitment_subtitle">Decide how long your Sub stays in service.</string>
-    <string name="commitment_pact_sealed">Service Locked</string>
-    <string name="commitment_active_body">Service stays locked until the countdown ends, then may stop normally.</string>
-    <string name="commitment_emergency_release">Release service lock</string>
-    <string name="commitment_emergency_title">End the service lock?</string>
-    <string name="commitment_emergency_body">The Dom can use this recovery action to release service immediately.</string>
-    <string name="commitment_release_now">Release service lock</string>
     <string name="commitment_active_remaining">Service lock · %1$s remaining</string>
     <string name="commitment_view_pact">View Service Lock</string>
     <string name="commitment_stop_requires_dom">Service is locked — release comes when the countdown ends.</string>

@@ -12,6 +12,8 @@ import com.subhub.app.remote.RemoteSessionClock;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.settings.SettingsRepository;
 
+import java.util.Locale;
+
 /** Bounded, app-local commitment pact guarded by the controller PIN. */
 public final class CommitmentManager {
     public static final long MIN_DURATION_MS = 30L * 60L * 1000L;
@@ -212,7 +214,18 @@ public final class CommitmentManager {
 
     public static String countdownLabel(Context context) {
         return isCountdownHidden(context) ? context.getString(com.subhub.app.R.string.pact_time_hidden)
-                : CommitmentActivity.formatDuration(remainingMillis(context));
+                : formatDuration(remainingMillis(context));
+    }
+
+    public static String formatDuration(long milliseconds) {
+        long seconds = Math.max(0L, (milliseconds + 999L) / 1000L);
+        long days = seconds / 86400L;
+        long hours = (seconds % 86400L) / 3600L;
+        long minutes = (seconds % 3600L) / 60L;
+        long remainder = seconds % 60L;
+        return days > 0
+                ? String.format(Locale.ROOT, "%dd %02d:%02d:%02d", days, hours, minutes, remainder)
+                : String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, remainder);
     }
 
     /** Dom mode may release the pact without the separate keeper code. */

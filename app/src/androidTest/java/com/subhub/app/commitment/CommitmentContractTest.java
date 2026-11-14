@@ -6,7 +6,6 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.view.View;
-import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -16,6 +15,7 @@ import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.ProtectionStopPolicy;
 import com.subhub.app.settings.FeatureModuleManager;
 
 import org.junit.After;
@@ -80,19 +80,22 @@ public final class CommitmentContractTest {
         }
     }
 
-    @Test public void activePactShowsCountdownAndHidesDomReleaseFromSubMode() {
+    @Test public void activePactShowsCountdownAndSubCannotStopProtection() {
         assertTrue(CommitmentManager.start(context, CommitmentManager.MIN_DURATION_MS));
         assertFalse(ControllerPinManager.isDomModeActive());
-        try (ActivityScenario<CommitmentActivity> scenario =
-                     ActivityScenario.launch(CommitmentActivity.class)) {
+        android.content.Intent home = new android.content.Intent(context, MainActivity.class)
+                .setAction(android.content.Intent.ACTION_MAIN)
+                .putExtra(MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home)) {
             scenario.onActivity(activity -> {
-                activity.findViewById(R.id.button_edit_lock).performClick();
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.commitment_active_panel).getVisibility());
+                CharSequence description = activity.findViewById(R.id.service_countdown).getContentDescription();
+                assertFalse(android.text.TextUtils.isEmpty(description));
+                assertEquals(View.GONE, activity.findViewById(R.id.button_protection).getVisibility());
+                assertEquals(ProtectionStopPolicy.Decision.TIMER_LOCKED,
+                        ProtectionStopPolicy.decision(context));
                 assertFalse(ControllerPinManager.isDomModeActive());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.active_panel).getVisibility());
-                assertFalse(((TextView) activity.findViewById(R.id.countdown))
-                        .getText().toString().isEmpty());
-                assertEquals(View.GONE,
-                        activity.findViewById(R.id.button_emergency_release).getVisibility());
+                assertTrue(CommitmentManager.isActive(context));
             });
         }
     }
@@ -133,10 +136,9 @@ public final class CommitmentContractTest {
     @Test public void serviceDurationAndHardcoreCopyUseTheCurrentModel() {
         String hardcore = context.getString(R.string.hardcore_title).toLowerCase();
         int[] serviceCopy = {
-                R.string.commitment_title,
-                R.string.commitment_subtitle,
-                R.string.commitment_active_body,
-                R.string.commitment_emergency_title,
+                R.string.person_duration_title,
+                R.string.commitment_active_remaining,
+                R.string.role_end_session,
                 R.string.commitment_stop_requires_dom,
                 R.string.achievement_desc_pact_sealed,
                 R.string.achievement_desc_pact_long_haul,
