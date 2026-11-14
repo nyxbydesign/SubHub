@@ -190,6 +190,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/atmosphere/GagClipboard.java": "main_atmosphere_gag_clipboard",
     b"app/src/main/java/com/subhub/app/atmosphere/GagNextWords.java": "main_atmosphere_gag_next_words",
     b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionContext.java": "main_atmosphere_gag_suggestion_context",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionSpace.java": "main_atmosphere_gag_suggestion_space",
     b"app/src/main/java/com/subhub/app/atmosphere/GagParticipation.java": "main_atmosphere_gag_participation",
     b"app/src/main/java/com/subhub/app/atmosphere/GagPersonalDictionary.java": "main_atmosphere_gag_personal_dictionary",
     b"app/src/main/java/com/subhub/app/atmosphere/GagPunctuation.java": "main_atmosphere_gag_punctuation",
