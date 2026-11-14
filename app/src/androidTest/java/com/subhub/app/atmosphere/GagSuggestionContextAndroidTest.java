@@ -47,9 +47,16 @@ public final class GagSuggestionContextAndroidTest {
     @Test public void suggestionSpaceIsOwnedOnlyAtTheUnchangedCursor() {
         try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
             host.onActivity(activity -> {
-                BaseInputConnection input = new BaseInputConnection(new View(activity), true);
-                Editable editor = input.getEditable();
-                editor.append("hel");
+                android.widget.EditText text = new android.widget.EditText(activity);
+                text.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+                text.setShowSoftInputOnFocus(false);
+                activity.setContentView(text);
+                text.requestFocus();
+                text.setText("hel");
+                android.view.inputmethod.InputConnection input = text.onCreateInputConnection(
+                        new android.view.inputmethod.EditorInfo());
+                assertNotNull(input);
+                Editable editor = text.getText();
                 Selection.setSelection(editor, 3);
                 GagDeleteSuggestion.Snapshot before = GagDeleteSuggestion.editorSnapshot(input);
                 assertNotNull(before);
