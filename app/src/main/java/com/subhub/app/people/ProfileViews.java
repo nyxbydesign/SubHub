@@ -6,8 +6,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
+import com.subhub.app.util.UiIdentity;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -69,14 +69,8 @@ public final class ProfileViews {
         presence(preview, prefix, person.id, person.connection);
         card.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(card, person, prefix + "_connection", false);
-        card.setOnClickListener(view -> open.run());
-        card.setFocusable(true);
-        card.setClickable(true);
-        android.util.TypedValue ripple = new android.util.TypedValue();
-        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-        card.setForeground(context.getDrawable(ripple.resourceId));
+        UiIdentity.bindClick(card, open);
         card.setTag("person:" + person.id.value());
-        ViewCompat.setScreenReaderFocusable(card, true);
         return card;
     }
 

@@ -1,13 +1,17 @@
 package com.subhub.app.util;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.util.TypedValue;
+import android.view.View;
 import android.view.ViewGroup.LayoutParams;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.DimenRes;
 import androidx.annotation.DrawableRes;
+import androidx.core.view.ViewCompat;
 
 import com.subhub.app.R;
 
@@ -38,6 +42,27 @@ public final class UiIdentity {
         int side = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding);
         int vertical = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding_vertical);
         view.setPaddingRelative(side, vertical, side, vertical);
+    }
+
+    public static void addActionChevron(LinearLayout row) {
+        Context context = row.getContext();
+        ImageView arrow = new ImageView(context);
+        arrow.setImageResource(R.drawable.ic_overview_chevron);
+        arrow.setImageTintList(ColorStateList.valueOf(context.getColor(R.color.text_secondary)));
+        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        int size = Math.round(20 * context.getResources().getDisplayMetrics().density);
+        row.addView(arrow, new LinearLayout.LayoutParams(size, size));
+    }
+
+    public static void bindClick(View view, Runnable action) {
+        Context context = view.getContext();
+        view.setFocusable(true);
+        view.setClickable(true);
+        TypedValue ripple = new TypedValue();
+        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        view.setForeground(context.getDrawable(ripple.resourceId));
+        view.setOnClickListener(ignored -> action.run());
+        ViewCompat.setScreenReaderFocusable(view, true);
     }
 
     public static LinearLayout addCard(LinearLayout parent, Context context, @DrawableRes int background) {

@@ -134,11 +134,8 @@ public final class OverviewUi {
         if (!stacked) detailSize.setMarginStart(dp(context, 10));
         copy.addView(detail, detailSize);
         if (action != null) {
-            ImageView arrow = new ImageView(context);
-            arrow.setImageResource(R.drawable.ic_overview_chevron);
-            arrow.setImageTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.text_secondary)));
-            arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(arrow, new LinearLayout.LayoutParams(dp(context, 20), dp(context, 20))); click(row, action);
+            UiIdentity.addActionChevron(row);
+            click(row, action);
         }
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2)); return row;
     }
@@ -149,11 +146,7 @@ public final class OverviewUi {
     }
 
     public static void click(View view, Runnable action) {
-        view.setFocusable(true); view.setClickable(true);
-        android.util.TypedValue ripple = new android.util.TypedValue();
-        view.getContext().getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-        view.setForeground(view.getContext().getDrawable(ripple.resourceId));
-        view.setOnClickListener(ignored -> action.run()); ViewCompat.setScreenReaderFocusable(view, true);
+        UiIdentity.bindClick(view, action);
     }
 
     private static int dp(Context context, int value) { return PersonUi.dp(context, value); }

@@ -66,18 +66,8 @@ public final class PersonUi {
             description.setPadding(0, dp(context, 4), 0, 0);
         }
         if (action != null) {
-            ImageView arrow = new ImageView(context);
-            arrow.setImageResource(R.drawable.ic_overview_chevron);
-            arrow.setImageTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.text_secondary)));
-            arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(arrow, new LinearLayout.LayoutParams(dp(context, 20), dp(context, 20)));
-            row.setFocusable(true);
-            row.setClickable(true);
-            android.util.TypedValue ripple = new android.util.TypedValue();
-            context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-            row.setForeground(context.getDrawable(ripple.resourceId));
-            row.setOnClickListener(v -> action.run());
-            ViewCompat.setScreenReaderFocusable(row, true);
+            UiIdentity.addActionChevron(row);
+            UiIdentity.bindClick(row, action);
         }
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
