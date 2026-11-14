@@ -30,6 +30,7 @@ import com.subhub.app.people.PersonId;
 import com.subhub.app.remote.ExtraTimeRequests;
 import com.subhub.app.remote.RemoteExtraTimeUiFixture;
 
+import java.time.ZonedDateTime;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
@@ -180,8 +181,22 @@ public final class ExtraTimeUiAndroidTest {
                 await(dom, a -> hasText(a, a.getString(R.string.extra_time_declined)));
             }
             fixture.transfer(); fixture.switchSub(); overview.decorate(com.subhub.app.people.PersonSnapshot.Connection.OFFLINE);
+            ZonedDateTime now = ZonedDateTime.now();
+            ZonedDateTime dayStart = now.toLocalDate().atStartOfDay(now.getZone());
+            String previousDay = fixture.seedExpiredRequest(fixture.secondPackage, dayStart.minusSeconds(1));
+            String currentDay = fixture.seedExpiredRequest(fixture.firstPackage, dayStart);
+            ExtraTimeRequests.Snapshot history = fixture.subRequests().snapshot(System.currentTimeMillis());
+            assertTrue("Prior-day request survives in history", history.requests.stream()
+                    .anyMatch(request -> previousDay.equals(request.id) && !history.isOnSubDay(request)));
+            assertTrue("Midnight starts the current allowance day", history.requests.stream()
+                    .anyMatch(request -> currentDay.equals(request.id) && history.isOnSubDay(request)));
             try (UiPage<com.subhub.app.MainActivity> home = openHome(true, fixture.secondPackage)) {
                 await(home, a -> hasText(a, a.getString(R.string.extra_time_declined)));
+                home.onActivity(a -> {
+                    assertNull(tagged(a, "extra_time_receipt:" + previousDay));
+                    assertNotNull("Today's expired request is still visible",
+                            tagged(a, "extra_time_receipt:" + currentDay));
+                });
                 assertEquals(0, app(fixture.subRequests(), fixture.secondPackage).bonusMinutes);
                 assertEquals(10, app(fixture.subRequests(), fixture.secondPackage).dailyMinutes);
                 capture(home, tag("extra_time_inline_status:" + fixture.secondPackage), "extra-time-overview-declined");
@@ -195,6 +210,7 @@ public final class ExtraTimeUiAndroidTest {
                 home.onActivity(a -> {
                     View declined = tagged(a, "extra_time_receipt:" + secondId);
                     View pending = tagged(a, "extra_time_receipt:" + nextId);
+                    assertNull(tagged(a, "extra_time_receipt:" + previousDay));
                     assertNotNull(declined); assertNotNull(pending); assertNotSame(declined, pending);
                     assertTrue(hasText(declined, a.getString(R.string.extra_time_declined)));
                     assertFalse(hasText(declined, a.getString(R.string.extra_time_pending)));

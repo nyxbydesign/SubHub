@@ -62,19 +62,28 @@ public final class ExtraTimeRequests {
         public final String unavailableReason, domName, personName, currency;
         /** Opaque local UI fence for the current peer and relationship generation. */
         public final String scope;
+        public final String subDay, subZone;
         public final int tributeCents, pendingCount;
         public final List<App> apps;
         public final List<Request> requests;
         private Snapshot(boolean dom, boolean supported, boolean canRequest, String reason, String domName,
                 String personName, int tributeCents, String currency, List<App> apps, List<Request> requests,
-                String scope) {
+                String scope, long now) {
             this.dom = dom; this.supported = supported; this.canRequest = canRequest;
             this.scope = scope;
+            ZoneId zone = ZoneId.systemDefault();
+            subDay = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().toString();
+            subZone = zone.getId();
             unavailableReason = reason; this.domName = domName; this.personName = personName;
             this.tributeCents = tributeCents; this.currency = currency;
             this.apps = Collections.unmodifiableList(apps); this.requests = Collections.unmodifiableList(requests);
             int count = 0; for (Request row : requests) if (row.status == Status.PENDING) count++;
             pendingCount = count;
+        }
+
+        /** The Overview follows the Sub's allowance day, including the captured zone. */
+        public boolean isOnSubDay(Request request) {
+            return subDay.equals(request.day) && subZone.equals(request.zone);
         }
     }
     private final Context context;
@@ -157,7 +166,7 @@ public final class ExtraTimeRequests {
                         : !eligible ? "App limits must be active to request time" : "";
                 return new Snapshot(dom, supported, !dom && eligible, reason,
                         !dom && peer != null ? peer.name : "", dom && peer != null ? peer.name : "",
-                        quote, tribute.getCurrency(), apps, requests, peer == null ? "" : scope(peer));
+                        quote, tribute.getCurrency(), apps, requests, peer == null ? "" : scope(peer), now);
             } } } }
         });
         if (changed[0]) feature.changed();
