@@ -52,15 +52,27 @@ public final class LocalPersonRepository implements PersonRepository {
     }
 
     @Override public PersonSnapshot load(PersonId id) {
+        return load(id, true, true);
+    }
+
+    @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract) {
+        return load(id, includeContract, false);
+    }
+
+    private PersonSnapshot load(PersonId id, boolean includeContract, boolean includeAllowances) {
         if (!PersonId.LOCAL.equals(id)) throw new IllegalArgumentException("Not this device");
         SettingsRepository settings = new SettingsRepository(context);
         FeatureModuleManager modules = new FeatureModuleManager(context);
         AppModeManager apps = new AppModeManager(context);
-        Set<String> packages = apps.getIncludedPackages();
-        List<PersonSnapshot.Allowance> allowances = loadAllowances(packages);
+        Set<String> packages = includeContract ? apps.getIncludedPackages() : Set.of();
+        List<PersonSnapshot.Allowance> allowances = includeAllowances ? loadAllowances(packages) : List.of();
         PenanceManager wallet = new PenanceManager(context);
-        List<PersonSnapshot.Section> sections = contractSections(settings, modules, apps.isAllApps(),
-                packages, allowances.size(), wallet, null);
+        List<PersonSnapshot.Section> sections = List.of();
+        if (includeContract) {
+            int allowanceCount = includeAllowances ? allowances.size()
+                    : configuredAllowanceCount(packages, settings);
+            sections = contractSections(settings, modules, apps.isAllApps(), packages, allowanceCount, wallet, null);
+        }
         StatsSnapshot stats = new StatsRepository(context).load();
         boolean paused = new PaidPauseManager(context).isActive();
         boolean active = paused || CommitmentManager.isActive(context) || apps.isArmed()
@@ -79,6 +91,12 @@ public final class LocalPersonRepository implements PersonRepository {
 
     public List<PersonSnapshot.Allowance> loadAllowances() {
         return loadAllowances(new AppModeManager(context).getIncludedPackages());
+    }
+
+    private int configuredAllowanceCount(Set<String> packages, SettingsRepository settings) {
+        if (packages.isEmpty() || !SubFeaturePolicy.allowed(context, "limits")) return 0;
+        AppTimerManager.Settings limits = AppTimerManager.forConfiguration(settings.preferences()).loadSettings();
+        return (limits.perAppEnabled ? packages.size() : 0) + (limits.totalEnabled ? 1 : 0);
     }
 
     private List<PersonSnapshot.Allowance> loadAllowances(Set<String> packages) {

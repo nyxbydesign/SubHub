@@ -19,12 +19,22 @@ public final class RemotePersonRepository implements PersonRepository {
         List<PersonId> result=new ArrayList<>();for(RemoteStore.Peer peer:store.peers(true))if(peer.localRole==RemoteProtocol.Role.DOM)result.add(id(peer));return result;
     }
     @Override public PersonSnapshot load(PersonId id) throws Exception {
-        return store.authorityObservation(()->loadObserved(id, false));
+        return load(id, Read.FULL);
     }
     @Override public PersonSnapshot loadSummary(PersonId id) throws Exception {
-        return store.authorityObservation(()->loadObserved(id, true));
+        return load(id, Read.SUMMARY);
     }
-    private PersonSnapshot loadObserved(PersonId id, boolean summaryOnly) throws Exception {
+    @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract) throws Exception {
+        return load(id, includeContract ? Read.CONTRACT_PAGE : Read.PERSON_PAGE);
+    }
+    private enum Read { FULL, SUMMARY, CONTRACT_PAGE, PERSON_PAGE }
+
+    private PersonSnapshot load(PersonId id, Read read) {
+        return store.authorityObservation(()->loadObserved(id, read));
+    }
+
+    private PersonSnapshot loadObserved(PersonId id, Read read) throws Exception {
+        boolean summaryOnly = read == Read.SUMMARY;
         RemoteStore.Peer peer=peer(id);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new IllegalArgumentException("Not a paired Sub");
         JSONObject baseline=summaryOnly?null:store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");
         JSONObject configuration=null;
@@ -52,7 +62,10 @@ public final class RemotePersonRepository implements PersonRepository {
         String currency=stats==null?"EUR":stats.optString("currency","EUR");
         long tribute=stats==null?0:stats.optLong("USD".equals(currency)?"assessedUSD":"assessedEUR");
         return new PersonSnapshot(id,peer.name,runtime==null?"":runtime.optString("device",""),configuration==null?context.getString(R.string.remote_unknown):configuration.getJSONObject("contract").getString("name"),
-                service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration,runtime,live),allowances(peer,configuration),currency,
+                service,connection,statistics,peer.lastSyncedAt,capabilities,
+                configuration!=null && (read==Read.FULL || read==Read.CONTRACT_PAGE)
+                        ? sections(peer,configuration,runtime,live) : List.of(),
+                read==Read.FULL ? allowances(peer,configuration) : List.of(),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
                 .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);

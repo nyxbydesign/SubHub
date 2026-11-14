@@ -32,6 +32,9 @@ public final class People {
                             ? local.people() : java.util.Collections.emptyList();}
             @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
             @Override public PersonSnapshot loadSummary(PersonId id){return localProjection.apply(local.loadSummary(id));}
+            @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract){
+                return localProjection.apply(local.loadForPage(id, includeContract));
+            }
         }, remote, new InternalPersonRepository(application));
     }
 

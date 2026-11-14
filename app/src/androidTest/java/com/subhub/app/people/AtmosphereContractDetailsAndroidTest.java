@@ -372,6 +372,24 @@ public final class AtmosphereContractDetailsAndroidTest {
 
     @Test public void domContractShowsDetailsWhileKeepingItsExistingEditRoute() throws Exception {
         readyUi(true);
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", true).commit());
+        assertTrue(preferences.edit()
+                .putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings"))
+                .putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, true)
+                .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true).commit());
+        PersonRepository repository = People.repository(context);
+        PersonSnapshot full = repository.load(PersonId.LOCAL);
+        assertEquals(2, full.allowances.size());
+        PersonSnapshot profile = repository.loadForPage(PersonId.LOCAL, false);
+        assertEquals(full.capabilities, profile.capabilities);
+        assertTrue(profile.sections.isEmpty());
+        assertTrue(profile.allowances.isEmpty());
+        PersonSnapshot contract = repository.loadForPage(PersonId.LOCAL, true);
+        assertTrue(contract.allowances.isEmpty());
+        assertEquals(PersonPresentation.contract(full), PersonPresentation.contract(contract));
+
         Intent intent = new Intent(context, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
                 .putExtra("person_section", "contracts");
         try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(intent)) {

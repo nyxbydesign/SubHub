@@ -113,6 +113,29 @@ public final class CachedPeerReadModelAndroidTest {
         store.putMetadata(SUB,generation,"confirmed_APP_USAGE",Long.toString(now));
         saved=repository.load(selected);assertFalse(saved.sections.isEmpty());assertEquals(1,saved.allowances.size());
         assertEquals(-1,saved.allowances.get(0).usedMillis);assertEquals(7200,saved.protectedSeconds);
+        for (boolean includeContract : new boolean[]{false, true}) {
+            PersonSnapshot page = repository.loadForPage(selected, includeContract);
+            assertEquals(saved.id, page.id);
+            assertEquals(saved.profile, page.profile);
+            assertEquals(saved.capabilities, page.capabilities);
+            assertEquals(saved.contractName, page.contractName);
+            assertEquals(saved.sync.contract, page.sync.contract);
+            assertEquals(saved.sync.runtime, page.sync.runtime);
+            assertEquals(saved.sync.stats, page.sync.stats);
+            assertEquals(saved.sync.desiredRevision, page.sync.desiredRevision);
+            assertEquals(saved.sync.appliedRevision, page.sync.appliedRevision);
+            assertEquals(saved.connection, page.connection);
+            assertEquals(saved.lastOnlineAt, page.lastOnlineAt);
+            assertEquals(saved.protectedSeconds, page.protectedSeconds);
+            assertEquals(saved.featureConsent, page.featureConsent);
+            assertTrue(page.allowances.isEmpty());
+            assertEquals(includeContract ? saved.sections.size() : 0, page.sections.size());
+            if (includeContract) {
+                PersonSnapshot.Section apps = page.sections.stream()
+                        .filter(section -> "apps".equals(section.key)).findFirst().orElseThrow();
+                assertEquals("com.android.settings", apps.apps.get(0).packageName);
+            }
+        }
         PersonSnapshot summary=repository.loadSummary(selected);
         assertEquals(saved.id,summary.id);assertEquals(saved.profile,summary.profile);
         assertEquals(saved.connection,summary.connection);assertEquals(saved.lastOnlineAt,summary.lastOnlineAt);
@@ -144,8 +167,12 @@ public final class CachedPeerReadModelAndroidTest {
         store.revoke(SUB,generation);saved=repository.load(selected);
         assertEquals(PersonSnapshot.Connection.REVOKED,saved.connection);assertFalse(saved.can(PersonSnapshot.Capability.EDIT_CONTRACT));
         assertFalse(saved.can(PersonSnapshot.Capability.END_SESSION));
+        PersonSnapshot revokedPage = repository.loadForPage(selected, false);
+        assertEquals(saved.capabilities, revokedPage.capabilities);
+        assertEquals(PersonSnapshot.Connection.REVOKED, revokedPage.connection);
         store.getWritableDatabase().execSQL("UPDATE linking_state SET revision=revision-1 WHERE id=1");
         assertThrows(IllegalStateException.class,()->repository.load(selected));
+        assertThrows(IllegalStateException.class,()->repository.loadForPage(selected, false));
     }
 
     @Test public void atmosphereSummaryUsesOnlyThePeerBaselineAndKeepsConsentFreshnessSeparate() throws Exception {

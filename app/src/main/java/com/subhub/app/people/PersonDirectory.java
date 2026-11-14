@@ -31,18 +31,26 @@ public final class PersonDirectory implements PersonRepository {
         return new ArrayList<>(ids);
     }
 
-    @Override public PersonSnapshot load(PersonId id) throws Exception { return load(id, false); }
+    @Override public PersonSnapshot load(PersonId id) throws Exception { return load(id, PersonRepository::load); }
 
-    @Override public PersonSnapshot loadSummary(PersonId id) throws Exception { return load(id, true); }
+    @Override public PersonSnapshot loadSummary(PersonId id) throws Exception { return load(id, PersonRepository::loadSummary); }
 
-    private PersonSnapshot load(PersonId id, boolean summary) throws Exception {
+    @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract) throws Exception {
+        return load(id, (repository, target) -> repository.loadForPage(target, includeContract));
+    }
+
+    private PersonSnapshot load(PersonId id, PageRead read) throws Exception {
         if (id == null) throw new IllegalArgumentException("Missing person identity");
         PersonRepository selected = PersonId.INTERNAL.equals(id) ? internal : id.isLocal() ? local : remote;
         if (selected == null) throw new IllegalArgumentException("Person unavailable");
-        PersonSnapshot result = summary ? selected.loadSummary(id) : selected.load(id);
+        PersonSnapshot result = read.load(selected, id);
         if (result == null || !id.equals(result.id)) {
             throw new IllegalStateException("Person identity mismatch");
         }
         return result;
+    }
+
+    private interface PageRead {
+        PersonSnapshot load(PersonRepository repository, PersonId id) throws Exception;
     }
 }

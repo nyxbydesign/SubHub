@@ -287,13 +287,14 @@ public final class PersonActivity extends RolePage {
         if (data.isPending("person") || data.isPending("person-observe")) return;
         runtimeRefreshPending = false;
         PersonId requested = personId;
+        boolean includeContract = "contracts".equals(section);
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         data.load("person-observe", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
-            return repository.load(requested);
+            return repository.loadForPage(requested, includeContract);
         }, person -> {
             if (!guardTarget() || !observing || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
@@ -393,6 +394,7 @@ public final class PersonActivity extends RolePage {
         data.cancel("contract-cover");
         loading();
         PersonId requested = personId;
+        boolean includeContract = "contracts".equals(section);
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
@@ -402,7 +404,7 @@ public final class PersonActivity extends RolePage {
         boolean dom = com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(this);
         data.load("person", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
-            PersonSnapshot person = repository.load(requested);
+            PersonSnapshot person = repository.loadForPage(requested, includeContract);
             JournalPreview.Initial journal = includeJournal && requested.equals(person.id)
                     ? JournalPreview.loadInitial(app, dom, ProfileViews.journalTarget(requested)) : null;
             return new ProfileLoad(person, journal);

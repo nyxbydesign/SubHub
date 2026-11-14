@@ -7,6 +7,9 @@ public interface PersonRepository {
     List<PersonId> people() throws Exception;
     PersonSnapshot load(PersonId id) throws Exception;
 
+    /** Authorized person page. Only the Contract page consumes sections, and Statistics reads allowances separately. */
+    default PersonSnapshot loadForPage(PersonId id, boolean includeContract) throws Exception { return load(id); }
+
     /**
      * Identity, presence and recorded session/stat totals for read-only roster cards.
      * Callers must use load() before showing contracts or exposing commands. Implementations may

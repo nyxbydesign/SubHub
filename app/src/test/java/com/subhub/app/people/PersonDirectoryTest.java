@@ -13,6 +13,8 @@ public final class PersonDirectoryTest {
         assertEquals(List.of(PersonId.LOCAL, peer), directory.people());
         assertEquals(peer, directory.load(peer).id);
         assertEquals(PersonId.LOCAL, directory.load(PersonId.LOCAL).id);
+        assertEquals(peer, directory.loadForPage(peer, false).id);
+        assertTrue(directory.loadForPage(PersonId.LOCAL, true).can(PersonSnapshot.Capability.VIEW_CONTRACT));
     }
 
     @Test public void summaryReadsUseTheSelectedProjectionAndKeepIdentityChecks() throws Exception {
@@ -57,6 +59,7 @@ public final class PersonDirectoryTest {
         };
         PersonDirectory directory = new PersonDirectory(repository(PersonId.LOCAL), remote);
         assertThrows(IllegalStateException.class, () -> directory.load(requested));
+        assertThrows(IllegalStateException.class, () -> directory.loadForPage(requested, true));
     }
 
     @Test public void internalIdentityUsesOnlyItsExplicitBackendForFullAndSummaryReads() throws Exception {
