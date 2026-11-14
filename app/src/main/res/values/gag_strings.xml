@@ -58,7 +58,15 @@
     <string name="gag_emoji_recent_empty">No recent emoji</string>
     <string name="gag_emoji_unavailable">Could not open emoji</string>
     <string name="gag_keyboard_clipboard">Clipboard history</string>
-    <string name="gag_keyboard_clipboard_empty">No recent text to paste</string>
+    <string name="gag_keyboard_clipboard_empty">No recent items</string>
     <string name="gag_keyboard_clipboard_clear">Clear history</string>
+    <string name="gag_clipboard_title">Clipboard</string>
+    <string name="gag_clipboard_recent">Recent</string>
+    <string name="gag_clipboard_retention">Keep recent items for up to 6 hours</string>
+    <string name="gag_clipboard_edit">Edit</string>
+    <string name="gag_clipboard_done">Done</string>
+    <string name="gag_clipboard_image">Image</string>
+    <string name="gag_clipboard_image_unsupported">This field doesn’t accept images.</string>
+    <string name="gag_clipboard_remove_item">Remove %1$s</string>
     <string name="gag_keyboard_back_to_keys">Back to keys</string>
 </resources>

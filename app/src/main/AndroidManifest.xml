@@ -76,6 +76,11 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/full_access_download_paths" />
         </provider>
+        <provider android:name=".atmosphere.GagClipboardFileProvider"
+            android:authorities="${applicationId}.gag.clipboard" android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/gag_clipboard_paths" />
+        </provider>
         <activity android:name=".tasks.TasksActivity" android:exported="false" />
         <activity android:name=".journal.JournalActivity" android:exported="false" android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
         <provider android:name=".journal.JournalProvider" android:authorities="${applicationId}.journal"
