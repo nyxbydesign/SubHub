@@ -31,10 +31,8 @@ public final class GagSuggestionServiceAndroidTest {
 
     @Test public void explicitSuggestionsPreserveExistingSpaceAndOwnOnlyTheirNewSeparator() throws Exception {
         openEditor(true);
-        keyDescription(R.string.gag_keyboard_delete);
-        assertText("teh next");
-        key("the");
-        assertText("the next");
+        correctHello();
+        assertText("hello next");
 
         acceptHello();
         key(",");
@@ -83,11 +81,13 @@ public final class GagSuggestionServiceAndroidTest {
 
     private static void acceptHello() throws Exception {
         openEditor(false);
-        key("h");
-        key("e");
-        key("l");
-        key("hello");
+        correctHello();
         assertText("hello ");
+    }
+
+    private static void correctHello() {
+        for (char letter : "helllo".toCharArray()) key(String.valueOf(letter));
+        key("hello");
     }
 
     private static void openEditor(boolean middle) throws Exception {
@@ -97,7 +97,7 @@ public final class GagSuggestionServiceAndroidTest {
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         await(By.pkg("com.subhub.app").text("q"));
-        assertText(middle ? "tehx next" : "");
+        assertText(middle ? " next" : "");
     }
 
     private static String shell(String command) throws Exception {

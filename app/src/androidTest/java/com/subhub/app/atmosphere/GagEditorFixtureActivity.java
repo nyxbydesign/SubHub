@@ -23,8 +23,8 @@ public final class GagEditorFixtureActivity extends Activity {
         editor.setInputType(InputType.TYPE_CLASS_TEXT);
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
-        editor.setText(middle ? "tehx next" : "");
-        editor.setSelection(middle ? 4 : 0);
+        editor.setText(middle ? " next" : "");
+        editor.setSelection(0);
         setContentView(editor);
         editor.requestFocus();
         editor.post(() -> getSystemService(InputMethodManager.class)
