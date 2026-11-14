@@ -22,13 +22,7 @@ public final class PersonUi {
     }
 
     public static LinearLayout card(LinearLayout parent) {
-        LinearLayout value = column(parent.getContext());
-        value.setBackgroundResource(R.drawable.bg_card);
-        UiIdentity.cardPadding(value);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        parent.addView(value, params);
-        return value;
+        return UiIdentity.addCard(parent, parent.getContext(), R.drawable.bg_card);
     }
 
     public static TextView text(LinearLayout parent, CharSequence copy, boolean heading) {

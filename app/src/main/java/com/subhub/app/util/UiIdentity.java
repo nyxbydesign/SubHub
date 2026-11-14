@@ -1,9 +1,15 @@
 package com.subhub.app.util;
 
+import android.content.Context;
 import android.util.TypedValue;
+import android.view.ViewGroup.LayoutParams;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.DimenRes;
+import androidx.annotation.DrawableRes;
+
+import com.subhub.app.R;
 
 /** Shared typography and spacing tokens for XML and dynamically created UI. */
 public final class UiIdentity {
@@ -32,5 +38,16 @@ public final class UiIdentity {
         int side = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding);
         int vertical = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding_vertical);
         view.setPaddingRelative(side, vertical, side, vertical);
+    }
+
+    public static LinearLayout addCard(LinearLayout parent, Context context, @DrawableRes int background) {
+        LinearLayout card = new LinearLayout(context);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackgroundResource(background);
+        cardPadding(card);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        size.bottomMargin = context.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        parent.addView(card, size);
+        return card;
     }
 }
