@@ -892,6 +892,7 @@ JAVAC_MAIN_SOURCES = {
 
 JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/remote/DummyPreviewConfiguration.java": "unit_remote_dummy_preview_configuration",
+    b"app/src/test/java/com/subhub/app/atmosphere/GagKeyAlternativesTest.java": "unit_gag_key_alternatives_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagLexiconTest.java": "unit_gag_lexicon_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagNextWordsTest.java": "unit_gag_next_words_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagPersonalDictionaryTest.java": "unit_gag_personal_dictionary_test",
