@@ -571,7 +571,11 @@ public final class TasksAndroidTest {
             assertEquals(1, second.getLineCount());
             ViewGroup card = (ViewGroup) second.getParent();
             assertEquals(card.indexOfChild(first) + 1, card.indexOfChild(second));
-            assertEquals(task.text, ((android.widget.TextView) card.getChildAt(card.indexOfChild(second) + 1)).getText().toString());
+            View divider = card.getChildAt(card.indexOfChild(second) + 1);
+            assertFalse(divider instanceof android.widget.TextView);
+            android.widget.TextView instructions = (android.widget.TextView)
+                    card.getChildAt(card.indexOfChild(second) + 2);
+            assertEquals(task.text, instructions.getText().toString());
         });
     }
 
