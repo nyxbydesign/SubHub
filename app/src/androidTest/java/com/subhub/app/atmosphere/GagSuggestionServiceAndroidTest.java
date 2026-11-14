@@ -5,8 +5,12 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.UiAutomation;
+import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
+import android.view.InputDevice;
+import android.view.MotionEvent;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.By;
@@ -20,6 +24,8 @@ import com.subhub.app.R;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -94,6 +100,37 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("ä⅒·");
     }
 
+    @Test public void characterPreviewTracksTouchAndDoesNotCommitOnSlideOrCancel() throws Exception {
+        openEditor(false);
+        keyDescription(R.string.gag_keyboard_symbols);
+        Rect key = await(By.pkg("com.subhub.app").text("@")).getVisibleBounds();
+        assertPreviewPixels(key, false);
+        long down = SystemClock.uptimeMillis();
+        touch(down, MotionEvent.ACTION_DOWN, key.centerX(), key.centerY());
+        try {
+            assertPreviewPixels(key, true);
+            assertText("");
+            touch(down, MotionEvent.ACTION_MOVE, key.right + 1, key.centerY());
+            assertPreviewPixels(key, false);
+        } finally {
+            touch(down, MotionEvent.ACTION_UP, key.right + 1, key.centerY());
+        }
+        assertText("");
+
+        down = SystemClock.uptimeMillis();
+        touch(down, MotionEvent.ACTION_DOWN, key.centerX(), key.centerY());
+        try {
+            assertPreviewPixels(key, true);
+        } finally {
+            touch(down, MotionEvent.ACTION_CANCEL, key.centerX(), key.centerY());
+        }
+        assertPreviewPixels(key, false);
+        assertText("");
+        key("@");
+        assertPreviewPixels(key, false);
+        assertText("@");
+    }
+
     private static void acceptHello() throws Exception {
         openEditor(false);
         correctHello("");
@@ -154,6 +191,51 @@ public final class GagSuggestionServiceAndroidTest {
             SystemClock.sleep(50);
         } while (SystemClock.uptimeMillis() < deadline);
         assertEquals(expected, observed);
+    }
+
+    private static void touch(long down, int action, int x, int y) {
+        MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0);
+        event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        try {
+            assertTrue(InstrumentationRegistry.getInstrumentation().getUiAutomation().injectInputEvent(event, true));
+        } finally {
+            event.recycle();
+        }
+    }
+
+    private static void assertPreviewPixels(Rect key, boolean expected) {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        UiAutomation automation = instrumentation.getUiAutomation();
+        int height = Math.round(40 * instrumentation.getTargetContext().getResources().getDisplayMetrics().density);
+        long deadline = SystemClock.uptimeMillis() + 2_000;
+        boolean shown;
+        do {
+            Bitmap screen = automation.takeScreenshot();
+            assertNotNull(screen);
+            try {
+                int matching = 0;
+                for (int y = Math.max(0, key.top - height); y < Math.min(key.top, screen.getHeight()); y += 3) {
+                    for (int x = key.left; x < Math.min(key.right, screen.getWidth()); x += 3) {
+                        if (screen.getPixel(x, y) == 0xff444446) matching++;
+                    }
+                }
+                shown = matching >= 16;
+                if (shown == expected) return;
+                if (SystemClock.uptimeMillis() >= deadline) {
+                    try (FileOutputStream output = instrumentation.getTargetContext().openFileOutput(
+                            "gag-key-preview-failure.png", android.content.Context.MODE_PRIVATE)) {
+                        screen.compress(Bitmap.CompressFormat.PNG, 100, output);
+                    } catch (IOException failure) {
+                        throw new AssertionError("Could not preserve the failed preview screenshot", failure);
+                    }
+                    break;
+                }
+            } finally {
+                screen.recycle();
+            }
+            SystemClock.sleep(25);
+        } while (true);
+        assertEquals("Key preview above the active symbol", expected, shown);
     }
 
     private static UiDevice device() {
