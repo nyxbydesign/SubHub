@@ -39,7 +39,6 @@ public final class DeviceRoleView extends LinearLayout {
             choice.setId(View.generateViewId());
             choice.setTag("device_role:" + mode.name());
             choice.setText(labels[index++]);
-            choice.setTextColor(activity.getColor(R.color.text_primary));
             choice.setMinHeight(PersonUi.dp(activity, 48));
             choices.addView(choice, new RadioGroup.LayoutParams(-1, -2));
         }

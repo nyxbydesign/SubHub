@@ -86,6 +86,18 @@ public final class DeviceRoleAndroidTest {
             assertFalse(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.DOM_ONLY));
             assertFalse(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.SUB_ONLY));
             assertEquals(DeviceRolePreferences.Mode.BOTH, DeviceRolePreferences.get(context));
+            try (ActivityScenario<GlobalSettingsActivity> page =
+                    ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                page.onActivity(activity -> {
+                    View roles = activity.findViewById(android.R.id.content)
+                            .findViewWithTag("device_role_selector");
+                    for (DeviceRolePreferences.Mode mode : DeviceRolePreferences.Mode.values()) {
+                        TextView choice = roles.findViewWithTag("device_role:" + mode.name());
+                        assertFalse(choice.isEnabled());
+                        assertEquals(activity.getColor(R.color.text_muted), choice.getCurrentTextColor());
+                    }
+                });
+            }
         }
     }
 
@@ -101,7 +113,13 @@ public final class DeviceRoleAndroidTest {
 
     @Test public void inlineRoleSelectionRequiresFreshPinEvenForAnUnlockedController() {
         try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            onView(withTagValue(is("device_role:DOM_ONLY"))).perform(scrollTo(), click());
+            onView(withTagValue(is("device_role:DOM_ONLY"))).perform(scrollTo())
+                    .check((view, failure) -> {
+                        if (failure != null) throw failure;
+                        assertTrue(view.isEnabled());
+                        assertEquals(context.getColor(R.color.text_primary),
+                                ((TextView) view).getCurrentTextColor());
+                    }).perform(click());
             onView(withHint(R.string.controller_pin_label)).inRoot(isDialog()).check(matches(isDisplayed()));
             onView(withText(android.R.string.cancel)).inRoot(isDialog()).perform(click());
             assertEquals(DeviceRolePreferences.Mode.BOTH, DeviceRolePreferences.get(context));
