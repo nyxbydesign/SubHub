@@ -6,25 +6,45 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 
 WORKFLOW = ".github/workflows/android-ci.yml"
 ARTIFACT = "SubHub-canonical-ci"
 PROFILE = {"immediateQualityExperiment": False, "replacementLabCandidate": False}
+DEV_WAIT_SECONDS = 12 * 60
+POLL_SECONDS = 15
+PENDING_STATUSES = {"queued", "in_progress", "waiting", "requested", "pending"}
 
 
-def require_run(runs, workflow, repository_id, sha):
+class CanonicalRunPending(ValueError):
+    """The latest trusted exact-source run has yet to finish."""
+
+    def __init__(self, run):
+        super().__init__(f"Canonical CI run {run['id']} attempt {run['run_attempt']} is {run['status']}")
+        self.run = run
+
+
+def run_order(run):
+    return run.get("run_number", 0), run.get("run_attempt", 0)
+
+
+def require_run(runs, workflow, repository_id, sha, *, allow_pending=False):
     if workflow.get("path") != WORKFLOW or workflow.get("state") != "active":
         raise ValueError("Canonical CI workflow is unavailable")
     candidates = [run for run in runs if run.get("head_sha") == sha
                   and run.get("workflow_id") == workflow.get("id")]
     if not candidates:
         raise ValueError("No canonical CI run exists for the exact release commit")
-    run = max(candidates, key=lambda item: (item.get("run_number", 0), item.get("run_attempt", 0)))
+    run = max(candidates, key=run_order)
     if (run.get("path") != WORKFLOW
             or (run.get("repository") or {}).get("id") != repository_id
             or (run.get("head_repository") or {}).get("id") != repository_id
-            or run.get("event") not in ("pull_request", "workflow_dispatch")
-            or run.get("status") != "completed" or run.get("conclusion") != "success"):
+            or run.get("event") not in ("pull_request", "workflow_dispatch")):
+        raise ValueError("The latest exact-source canonical CI run is not a trusted passing run")
+    if (allow_pending and run.get("status") in PENDING_STATUSES
+            and run.get("conclusion") is None):
+        raise CanonicalRunPending(run)
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ValueError("The latest exact-source canonical CI run is not a trusted passing run")
     return run
 
@@ -78,15 +98,45 @@ def pages(endpoint, key):
     raise ValueError("Canonical CI lookup exceeded its pagination bound")
 
 
-def verify(repository):
+def wait_for_run(endpoint, workflow, repository_id, sha, wait_seconds):
+    deadline = time.monotonic() + wait_seconds
+    latest_order = (0, 0)
+    while True:
+        runs = pages(endpoint, "workflow_runs")
+        if time.monotonic() >= deadline:
+            raise ValueError("Timed out waiting for exact-source canonical CI")
+        try:
+            run = require_run(runs, workflow, repository_id, sha, allow_pending=True)
+        except CanonicalRunPending as pending:
+            if run_order(pending.run) < latest_order:
+                raise ValueError("Canonical CI lookup regressed while waiting") from pending
+            latest_order = run_order(pending.run)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("Timed out waiting for exact-source canonical CI") from pending
+            print(pending, flush=True)
+            time.sleep(min(POLL_SECONDS, remaining))
+            if time.monotonic() >= deadline:
+                raise ValueError("Timed out waiting for exact-source canonical CI") from pending
+        else:
+            if run_order(run) < latest_order:
+                raise ValueError("Canonical CI lookup regressed while waiting")
+            return run
+
+
+def verify(repository, *, wait_for_dev_ci=False):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("Invalid source repository")
+    if wait_for_dev_ci and (os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF")) != (
+            "push", "refs/heads/dev"):
+        raise ValueError("Canonical CI waiting requires a development branch push")
     sha, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
     prefix = "repos/" + repository
     repository_id = api(prefix)["id"]
     workflow = api(prefix + "/actions/workflows/android-ci.yml")
-    runs = pages(prefix + "/actions/workflows/android-ci.yml/runs?head_sha=" + sha, "workflow_runs")
-    run = require_run(runs, workflow, repository_id, sha)
+    endpoint = prefix + "/actions/workflows/android-ci.yml/runs?head_sha=" + sha
+    run = (wait_for_run(endpoint, workflow, repository_id, sha, DEV_WAIT_SECONDS)
+           if wait_for_dev_ci else require_run(pages(endpoint, "workflow_runs"), workflow, repository_id, sha))
     artifacts = pages(prefix + "/actions/runs/" + str(run["id"]) + "/artifacts?name=" + ARTIFACT, "artifacts")
     artifacts = [item for item in artifacts if item.get("name") == ARTIFACT and item.get("expired") is False]
     if len(artifacts) != 1:
@@ -104,8 +154,8 @@ def verify(repository):
     if (latest.get("run_attempt") != run["run_attempt"]
             or latest.get("status") != "completed" or latest.get("conclusion") != "success"):
         raise ValueError("Canonical CI changed while its qualification was being verified")
-    refreshed = pages(prefix + "/actions/workflows/android-ci.yml/runs?head_sha=" + sha, "workflow_runs")
-    if require_run(refreshed, workflow, repository_id, sha)["id"] != run["id"]:
+    refreshed = require_run(pages(endpoint, "workflow_runs"), workflow, repository_id, sha)
+    if (refreshed["id"], refreshed["run_attempt"]) != (run["id"], run["run_attempt"]):
         raise ValueError("A newer canonical CI run superseded the qualification")
     print("Canonical CI verified for " + sha + " (run " + str(run["id"]) + ")")
 
@@ -114,10 +164,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     sub.add_parser("record").add_argument("--output", type=Path, required=True)
-    sub.add_parser("verify").add_argument("--repository", required=True)
+    verifier = sub.add_parser("verify")
+    verifier.add_argument("--repository", required=True)
+    verifier.add_argument("--wait-for-dev-ci", action="store_true")
     args = parser.parse_args()
     try:
-        record(args.output) if args.operation == "record" else verify(args.repository)
+        if args.operation == "record":
+            record(args.output)
+        else:
+            verify(args.repository, wait_for_dev_ci=args.wait_for_dev_ci)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, "Canonical CI qualification refused: " + str(error) + "\n")
 
