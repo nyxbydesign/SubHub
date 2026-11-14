@@ -160,6 +160,32 @@ public final class LegacyPackMigrationAndroidTest {
         assertTrue(interruptedImage.isFile());
     }
 
+    @Test public void restoredPendingPopupJournalBlocksReadinessEvenWithMigrationMarker() throws Exception {
+        File popup = image("subhub_studio/active-assets/popup", "image-0.png", Color.MAGENTA);
+        assertTrue(main().edit().putString(PopupStormSettings.K_PACK_DIR, popup.getParent())
+                .putFloat(PopupStormSettings.K_DISPLAY_DURATION, 1f).commit());
+        assertTrue(LegacyPackMigration.recoverAndMigrate(context));
+        assertTrue(LegacyPackMigration.isReady(context));
+        assertEquals(LegacyPackMigration.VERSION, main().getInt(LegacyPackMigration.MIGRATION_KEY, 0));
+        File migrated = assertMigrated(popup, PopupStormSettings.K_PACK_DIR);
+        long revision = main().getLong(CustomImageManager.REVISION_KEY, 0);
+
+        JSONObject values = new JSONObject().put(PopupStormSettings.K_DISPLAY_DURATION, typed("float", 3.5f));
+        JSONObject backup = new JSONObject().put(SettingsRepository.PREFERENCES_NAME, values);
+        JSONObject journal = new JSONObject().put("pending", true)
+                .put("sections", new JSONArray().put("popup")).put("backup", backup);
+        assertTrue(legacy().edit().putString("activation_journal", journal.toString()).commit());
+        assertFalse(LegacyPackMigration.isReady(context));
+
+        assertTrue(LegacyPackMigration.recoverAndMigrate(context));
+        assertTrue(LegacyPackMigration.isReady(context));
+        assertEquals(LegacyPackMigration.VERSION, main().getInt(LegacyPackMigration.MIGRATION_KEY, 0));
+        assertEquals(3.5f, main().getFloat(PopupStormSettings.K_DISPLAY_DURATION, 0), 0);
+        assertEquals(migrated, assertMigrated(popup, PopupStormSettings.K_PACK_DIR));
+        assertEquals(revision, main().getLong(CustomImageManager.REVISION_KEY, 0));
+        assertFalse(legacy().contains("activation_journal"));
+    }
+
     @Test public void malformedPendingJournalBlocksReadinessWithoutPartialRestore() throws Exception {
         assertTrue(main().edit().putBoolean("show_border", true).commit());
         assertTrue(wallet().edit().putInt("rule_new_detection_cents", 999).commit());
