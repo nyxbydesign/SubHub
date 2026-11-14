@@ -444,7 +444,10 @@ public final class DummySubPreviewAndroidTest {
         Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
         com.subhub.app.tasks.TaskRepository author = new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID);
         author.create(task);
+        assertRealState(before, rows);
         Intent profile = authorizedProfileIntent();
+        assertStateAfterNormalRosterReturn(before, rows);
+        Map<String, Map<String, ?>> ownedBefore = realPreferences();
         AtomicReference<Intent> route = new AtomicReference<>();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
             scenario.onActivity(page -> route.set(DummySubPreview.childIntent(page, com.subhub.app.tasks.TasksActivity.class)));
@@ -471,7 +474,7 @@ public final class DummySubPreviewAndroidTest {
         assertEquals(com.subhub.app.tasks.TaskEngine.Status.ACCEPTED,
                 new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID).engine()
                         .occurrence(task.id, start.toLocalDate(), System.currentTimeMillis()).status);
-        assertRealState(before, rows);
+        assertRealState(ownedBefore, rows);
     }
 
     @Test public void internalPresentationBuildsOffMainAndRejectsStaleRevisionAndController() throws Exception {
