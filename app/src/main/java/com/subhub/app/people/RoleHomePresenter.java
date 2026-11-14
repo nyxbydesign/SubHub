@@ -192,7 +192,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         displayedDom = dom;
         lastRefresh = now;
         android.content.Context application = activity.getApplicationContext();
-        PersonRepository repository = People.repository(application);
+        PersonRepository repository = dom ? People.repository(application) : null;
         com.subhub.app.relationships.RelationshipUi.Provider iconSource = com.subhub.app.relationships.RelationshipUi.provider();
         KeyholderProvider authoritySource = People.keyholder();
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
@@ -213,7 +213,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                         com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale), false);
                 values.addAll(rows); generation = rows.generation;
             } else {
-                values.add(repository.load(PersonId.LOCAL));
+                values.add(People.localOverview(application));
                 try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
                 catch (Exception unavailable) { relationshipUnavailable = true; }
             }

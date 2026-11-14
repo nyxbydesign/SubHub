@@ -42,6 +42,13 @@ public final class People {
         return localProjection.apply(new LocalPersonRepository(context).loadContract());
     }
 
+    static PersonSnapshot localOverview(Context context) {
+        PersonSnapshot result = localProjection.apply(new LocalPersonRepository(context).loadOverview());
+        if (result == null || !PersonId.LOCAL.equals(result.id))
+            throw new IllegalStateException("Person identity mismatch");
+        return result;
+    }
+
     public static void installRemoteRepository(PersonRepository repository) { remote = repository; }
     public static void installConnectionUi(ConnectionUi ui) { connectionUi = ui; }
     public static ConnectionUi connectionUi() { return connectionUi; }

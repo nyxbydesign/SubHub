@@ -93,6 +93,20 @@ public final class LocalPersonRepository implements PersonRepository {
         return loadAllowances(new AppModeManager(context).getIncludedPackages());
     }
 
+    /** Sub Overview uses the contract owner and app-time rows. Session has its own live controls. */
+    PersonSnapshot loadOverview() {
+        SettingsRepository settings = new SettingsRepository(context);
+        ProfileData profile = ProfileStore.load(context, false);
+        PersonSnapshot local = new PersonSnapshot(PersonId.LOCAL, profile.name, Build.MODEL,
+                context.getString(R.string.role_local_configuration), "",
+                PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
+                localCapabilities(), List.of(), loadAllowances(), "", 0, 0, 0, 0, false,
+                new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
+                        PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "", ""))
+                .withProfile(profile, localConsent(), SubFeaturePolicy.hardcoreOverride(context));
+        return withContractOwner(local, settings);
+    }
+
     private int configuredAllowanceCount(Set<String> packages, SettingsRepository settings) {
         if (packages.isEmpty() || !SubFeaturePolicy.allowed(context, "limits")) return 0;
         AppTimerManager.Settings limits = AppTimerManager.forConfiguration(settings.preferences()).loadSettings();

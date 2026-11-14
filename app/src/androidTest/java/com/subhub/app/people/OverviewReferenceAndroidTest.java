@@ -268,11 +268,17 @@ public final class OverviewReferenceAndroidTest {
 
     @Test @SdkSuppress(minSdkVersion = 29)
     public void subOverviewUsesAuthorizedDomActualTimerOwnJournalAndConfiguredAppUsage() throws Exception {
+        String consentStore = com.subhub.app.security.SubFeaturePolicy.STORE;
+        android.content.SharedPreferences consent = context.getSharedPreferences(consentStore, 0);
+        originals.put(consentStore, new LinkedHashMap<>(consent.getAll()));
+        assertTrue(consent.edit().putBoolean("limits", true).commit());
         assertTrue(CommitmentManager.start(context, 5_040_000L, 5_040_000L, false));
         ControllerPinManager.enterSubMode();
         java.util.concurrent.CountDownLatch readEntered = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch releaseRead = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<PersonSnapshot> localOverview = new AtomicReference<>();
         People.installLocalProjection(person -> {
+            localOverview.compareAndSet(null, person);
             readEntered.countDown();
             try {
                 if (!releaseRead.await(15, java.util.concurrent.TimeUnit.SECONDS))
@@ -314,6 +320,17 @@ public final class OverviewReferenceAndroidTest {
                 ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
             assertTrue("Overview requested its local data", readEntered.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            PersonSnapshot local = localOverview.get();
+            assertEquals(PersonId.LOCAL, local.id);
+            assertEquals(ProfileStore.load(context, false), local.profile);
+            assertEquals(PersonSnapshot.Freshness.CURRENT, local.sync.contract);
+            assertEquals(PersonSnapshot.Freshness.UNKNOWN, local.sync.stats);
+            assertEquals(PersonSnapshot.Freshness.UNKNOWN, local.sync.runtime);
+            assertTrue("Overview does not request formatted Contract sections", local.sections.isEmpty());
+            Map<String, Integer> allowanceMinutes = new java.util.LinkedHashMap<>();
+            for (PersonSnapshot.Allowance allowance : local.allowances)
+                allowanceMinutes.put(allowance.packageName, allowance.dailyMinutes);
+            assertEquals(Map.of("com.android.chrome", 30, "com.android.vending", 20), allowanceMinutes);
             com.subhub.app.UiRefreshWitness.frame(activity);
             assertNull("No Overview card draws on its own while the first local read is held", firstFrameMissing.get());
             releaseRead.countDown();
