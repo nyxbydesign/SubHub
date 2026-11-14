@@ -154,6 +154,14 @@
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="Widget.SubHub.Card" parent="">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:paddingStart">@dimen/ui_card_padding</item>
+        <item name="android:paddingEnd">@dimen/ui_card_padding</item>
+        <item name="android:paddingTop">@dimen/ui_card_padding_vertical</item>
+        <item name="android:paddingBottom">@dimen/ui_card_padding_vertical</item>
+    </style>
+
     <style name="Widget.SubHub.SectionHeader" parent="">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
