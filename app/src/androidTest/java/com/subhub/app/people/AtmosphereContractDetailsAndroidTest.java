@@ -102,7 +102,7 @@ public final class AtmosphereContractDetailsAndroidTest {
         assertFalse(details.matches("(?s).*\\d.*"));
         assertFalse(details.contains("Private fixture"));
         assertFalse(details.contains("spawn"));
-        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGag Unknown"));
+        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGagging Unknown"));
     }
 
     @Test public void disabledEmptyAndCustomSettingsRemainExplicitWithoutInventedSelections() {
@@ -129,7 +129,7 @@ public final class AtmosphereContractDetailsAndroidTest {
         sections.put("gag", com.subhub.app.remote.GagContractFields.defaults().put("enabled", true));
         AtmosphereContractDetails activeGag =
                 AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT);
-        assertTrue(activeGag.summary.endsWith("\nGag On"));
+        assertTrue(activeGag.summary.endsWith("\nGagging On"));
         assertTrue(activeGag.details.endsWith("\n\nGag\nOn"));
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
@@ -140,15 +140,15 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         AtmosphereContractDetails blocked = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.CURRENT);
-        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGag Unknown", blocked.summary);
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGagging Unknown", blocked.summary);
         for (PersonSnapshot.Freshness freshness : PersonSnapshot.Freshness.values()) {
             AtmosphereContractDetails missing = AtmosphereContractDetails.remote(context, sections, Map.of(), freshness);
-            assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", missing.summary);
+            assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", missing.summary);
             assertTrue(missing.details.contains("Consent: Unknown"));
         }
         AtmosphereContractDetails stale = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.STALE);
-        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGag Unknown", stale.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", stale.summary);
         assertTrue(stale.details.contains("Consent: Last observed disabled by Sub"));
         assertTrue(stale.details.contains("Consent: Last observed allowed"));
     }
