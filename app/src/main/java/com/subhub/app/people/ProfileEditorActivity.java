@@ -81,11 +81,12 @@ public final class ProfileEditorActivity extends PreferencePage {
             avatar = ""; renderAvatar(); buttons();
         }, false);
         remove.setTag("profile_avatar_remove");
-        fieldLabel(form, getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name));
+        TextView nameLabel = fieldLabel(form, getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name));
+        nameLabel.setTag("profile_name_label");
         name = input(form, dom ? R.string.profile_dom_name : R.string.profile_sub_name,
                 android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         name.setTag(dom ? "profile_name:dom" : "profile_name:sub");
-        name.setContentDescription(getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name));
+        linkDraftLabel(nameLabel, name);
         name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileNames.MAX_LENGTH)});
         name.setText(state == null ? internal ? profile.name : ProfileNames.chosen(this, dom) : state.getString("profile_name", ""));
         com.subhub.app.util.FormRow details = new com.subhub.app.util.FormRow(this, null);
@@ -106,11 +107,13 @@ public final class ProfileEditorActivity extends PreferencePage {
         age.setId(R.id.profile_age_input); ageLabel.setLabelFor(age.getId()); age.setHint((CharSequence) null);
         com.subhub.app.util.InputBounds.limit(age, 3);
         age.setText(state == null ? profile.age == 0 ? "" : Integer.toString(profile.age) : state.getString("profile_age", ""));
-        fieldLabel(form, getString(R.string.profile_about_optional)).setTag("profile_about_label");
+        TextView aboutLabel = fieldLabel(form, getString(R.string.profile_about_optional));
+        aboutLabel.setTag("profile_about_label");
         about = input(form, R.string.profile_about, android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         about.setSingleLine(false); about.setMinLines(3); about.setGravity(android.view.Gravity.TOP);
-        about.setTag("profile_about"); about.setContentDescription(getString(R.string.profile_about_optional));
+        about.setTag("profile_about");
+        linkDraftLabel(aboutLabel, about);
         about.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileData.MAX_ABOUT_LENGTH)});
         about.setText(state == null ? profile.about : state.getString("profile_about", profile.about));
         if (!dom && !internal) {
@@ -131,6 +134,14 @@ public final class ProfileEditorActivity extends PreferencePage {
         PersonUi.action(formActions, android.R.string.cancel, this::finish, false).setTag("profile_cancel");
         renderAvatar(); buttons();
         com.subhub.app.util.InputFocusPolicy.openActivityForReading(this);
+    }
+
+    private static void linkDraftLabel(TextView label, EditText input) {
+        input.setId(View.generateViewId());
+        label.setLabelFor(input.getId());
+        input.setHint((CharSequence) null);
+        // Draft values already use the explicit profile Bundle keys.
+        input.setSaveEnabled(false);
     }
 
     private void renderAvatar() {

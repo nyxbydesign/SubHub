@@ -162,8 +162,7 @@ public final class ProfileAndroidTest {
             Intent edit = new Intent(context, ProfileEditorActivity.class).putExtra(ProfileEditorActivity.EXTRA_DOM, dom);
             try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
                 scenario.onActivity(a -> {
-                    TextView label = a.findViewById(android.R.id.content).findViewWithTag("profile_about_label");
-                    assertEquals(a.getString(R.string.profile_about_optional), label.getText().toString());
+                    assertProfileFieldLabels(a, dom);
                     java.util.ArrayList<View> obsolete = new java.util.ArrayList<>();
                     a.findViewById(android.R.id.content).findViewsWithText(obsolete,
                             a.getString(R.string.profile_optional_visibility), View.FIND_VIEWS_WITH_TEXT);
@@ -171,8 +170,12 @@ public final class ProfileAndroidTest {
                 });
                 onView(tag("profile_about")).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
                 scenario.recreate();
-                scenario.onActivity(a -> assertEquals("", ((TextView) a.findViewById(android.R.id.content)
-                        .findViewWithTag("profile_about")).getText().toString()));
+                scenario.onActivity(a -> {
+                    assertProfileFieldLabels(a, dom);
+                    assertFalse(a.getCurrentFocus() instanceof EditText);
+                    assertEquals("", ((EditText) a.findViewById(android.R.id.content)
+                            .findViewWithTag("profile_about")).getText().toString());
+                });
                 assertEquals(original, ProfileStore.load(context, dom));
                 onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
             }
@@ -191,6 +194,25 @@ public final class ProfileAndroidTest {
                         .findViewWithTag("profile_about")).getText().toString()));
             }
         }
+    }
+
+    private static void assertProfileFieldLabels(ProfileEditorActivity activity, boolean dom) {
+        View root = activity.findViewById(android.R.id.content);
+        TextView name = root.findViewWithTag("profile_name_label");
+        TextView about = root.findViewWithTag("profile_about_label");
+        assertEquals(activity.getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name),
+                name.getText().toString());
+        assertEquals(activity.getString(R.string.profile_about_optional), about.getText().toString());
+        assertProfileFieldLabel(name, root.findViewWithTag(dom ? "profile_name:dom" : "profile_name:sub"), root);
+        assertProfileFieldLabel(about, root.findViewWithTag("profile_about"), root);
+    }
+
+    private static void assertProfileFieldLabel(TextView label, EditText input, View root) {
+        assertNotEquals(View.NO_ID, input.getId());
+        assertSame(input, root.findViewById(label.getLabelFor()));
+        assertNull(input.getHint());
+        assertNull(input.getContentDescription());
+        assertFalse(input.isSaveEnabled());
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
