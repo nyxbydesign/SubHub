@@ -142,7 +142,7 @@ public class UiFollowupAndroidTest {
                 assertEquals("Disabled", ((TextView) a.findViewById(R.id.popup_storm_status)).getText().toString());
                 assertNotNull(a.findViewById(R.id.whispers_card));
                 assertNotNull(a.findViewById(R.id.popup_storm_card));
-                for (int id : new int[] {R.id.rituals_keyholder_card, R.id.rituals_packs_card,
+                for (int id : new int[] {R.id.rituals_keyholder_card,
                         R.id.rituals_gallery_card, R.id.achievements_home_card}) assertNull(a.findViewById(id));
                 capture(a, "atmosphere-effects");
             });

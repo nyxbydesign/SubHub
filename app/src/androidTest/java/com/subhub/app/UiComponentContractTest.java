@@ -2,8 +2,12 @@ package com.subhub.app;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.pm.PackageManager;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -41,11 +45,23 @@ public final class UiComponentContractTest {
             scenario.onActivity(activity -> {
                 assertTrue(activity.findViewById(R.id.whispers_card).isShown());
                 assertTrue(activity.findViewById(R.id.popup_storm_card).isShown());
-                for (int id : new int[] {R.id.rituals_packs_card, R.id.rituals_gallery_card,
+                for (int id : new int[] {R.id.rituals_gallery_card,
                         R.id.rituals_keyholder_card, R.id.achievements_home_card})
                     org.junit.Assert.assertNull(activity.findViewById(id));
                 assertTrue(activity.findViewById(R.id.nav_people).isSelected());
             });
+        }
+    }
+
+    @Test
+    public void retiredStudioAndPacksActivitiesAreNotRegistered() {
+        Context context = ApplicationProvider.getApplicationContext();
+        PackageManager packageManager = context.getPackageManager();
+        for (String activity : new String[] {
+                "com.subhub.app.studio.StudioActivity", "com.subhub.app.pack.PacksActivity"}) {
+            ComponentName component = new ComponentName(context.getPackageName(), activity);
+            assertThrows(PackageManager.NameNotFoundException.class,
+                    () -> packageManager.getActivityInfo(component, PackageManager.MATCH_DISABLED_COMPONENTS));
         }
     }
 

@@ -6,7 +6,6 @@
     <item name="person_duration_control" type="id" />
     <item name="person_editor_target" type="id" />
     <item name="settings_connection" type="id" />
-    <item name="rituals_packs_card" type="id" />
     <item name="rituals_gallery_card" type="id" />
     <item name="rituals_keyholder_card" type="id" />
     <item name="rituals_keyholder_status" type="id" />
