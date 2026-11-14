@@ -51,7 +51,9 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GagKeyboardService extends InputMethodService {
     private static final int MAX_WORD_LENGTH = 128;
     private static final String[] LETTER_ROWS = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
-    private static final String[] SYMBOL_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
+    private static final String[] ALTERNATE_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
+    private static final String[] SYMBOL_ROWS = {"1234567890", "@#$_&-+()/", "*\"':;!?"};
+    private static final String[] MORE_SYMBOL_ROWS = {"~`|•√π÷×§Δ", "£¢€¥^°={}\\", "%©®™✓[]"};
     private static final int LETTER_SURFACE = 0xb36a6a6a;
     private static final int MODIFIER_SURFACE = 0x88181818;
     private static final int RETURN_SURFACE = 0xff5e97f6;
@@ -61,6 +63,14 @@ public final class GagKeyboardService extends InputMethodService {
     private final StringBuilder word = new StringBuilder();
     private final List<LetterKey> letters = new ArrayList<>();
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final java.util.concurrent.ExecutorService spelling = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final Runnable requestSuggestions = this::requestSuggestions;
+    private java.util.concurrent.Future<?> suggestionTask;
+    private GagLexicon lexicon;
+    private boolean loadingLexicon;
+    private long suggestionGeneration;
+    private LinearLayout suggestionStrip;
+    private final List<TextView> suggestionViews = new ArrayList<>(3);
     private RemoteFeature backend;
     private AutoCloseable configurationObserver;
     private SharedPreferences participation;
@@ -71,11 +81,14 @@ public final class GagKeyboardService extends InputMethodService {
     private long rulesRevision = -1;
     private long editorEpoch;
     private GagRules rules;
-    private boolean shifted, capsLock, symbols, literalWord;
+    private boolean shifted, capsLock, literalWord;
+    private Page page = Page.LETTERS;
+    private int editorInputType;
     private long lastShiftTap;
     private LinearLayout keyboard;
     private Bitmap backdrop;
-    private boolean renderedSymbols;
+    private Page renderedPage;
+    private int renderedInputType;
     private boolean renderedShifted, renderedCapsLock;
     private int renderedEditorAction = -1;
     private ImageButton shiftKey;
@@ -87,6 +100,7 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean editorAllowed;
 
     private record LetterKey(Button button, String letter, String alternate) {}
+    private enum Page { LETTERS, SYMBOLS, MORE_SYMBOLS, NUMBERS }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -99,6 +113,8 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onDestroy() {
         if (configurationObserver != null) try { configurationObserver.close(); } catch (Exception ignored) { }
         participation.unregisterOnSharedPreferenceChangeListener(participationChanged);
+        clearSuggestions();
+        spelling.shutdownNow();
         main.removeCallbacksAndMessages(null);
         backend = null;
         word.setLength(0);
@@ -110,14 +126,15 @@ public final class GagKeyboardService extends InputMethodService {
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         keyboardAlreadyEnabled = GagParticipation.keyboardEnabled(this);
         word.setLength(0);
+        clearSuggestions();
         literalWord = false;
         shifted = false;
         capsLock = false;
         lastShiftTap = 0;
-        int inputClass = editor == null ? InputType.TYPE_NULL : editor.inputType & InputType.TYPE_MASK_CLASS;
-        symbols = inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE
-                || inputClass == InputType.TYPE_CLASS_DATETIME;
+        editorInputType = editor == null ? InputType.TYPE_NULL : editor.inputType;
+        page = numberEditor() ? Page.NUMBERS : Page.LETTERS;
         editorAllowed = GagEditorPolicy.allowsReplacement(editor, getPackageName());
+        if (editorAllowed) loadLexicon();
         editorEpoch++;
         requestedRevision = -1;
         rulesRevision = -1;
@@ -143,6 +160,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onFinishInput() {
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         word.setLength(0);
+        clearSuggestions();
         editorAllowed = false;
         editorEpoch++;
         requestedRevision = -1;
@@ -167,7 +185,7 @@ public final class GagKeyboardService extends InputMethodService {
         long revision = feature.gagRevision();
         boolean allowed = subWorkspace && GagParticipation.allowed(participation, keyboardAlreadyEnabled);
         if (!allowed || !editorAllowed || rulesRevision != revision) {
-            if (word.length() != 0) {
+            if (rules != null && word.length() != 0) {
                 leaveWordLiteral();
                 literalWord = true;
             }
@@ -191,6 +209,10 @@ public final class GagKeyboardService extends InputMethodService {
                     try {
                         GagSettings settings = GagSettings.from(value);
                         enabled = settings.enabled();
+                        if (enabled && word.length() != 0) {
+                            leaveWordLiteral();
+                            literalWord = true;
+                        }
                         rules = enabled ? settings.rules() : null;
                     } catch (org.json.JSONException | IllegalArgumentException ignored) { }
                 }
@@ -211,6 +233,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void leaveWordLiteral() {
+        clearSuggestions();
         if (word.length() == 0) return;
         word.setLength(0);
         InputConnection input = getCurrentInputConnection();
@@ -222,41 +245,43 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
-        boolean inWord = GagRules.wordCharacter(character)
-                || (word.length() > 0 || literalWord) && GagRules.apostrophe(character);
-        if (subWorkspace && rules != null && inWord && !literalWord) {
+        boolean inWord = (page == Page.LETTERS && GagRules.wordCharacter(character))
+                || ((word.length() > 0 || literalWord) && GagRules.apostrophe(character));
+        if (editorAllowed && (rules != null || lexicon != null) && inWord && !literalWord) {
             if (word.length() + text.length() <= MAX_WORD_LENGTH) {
                 word.append(text);
                 if (!input.setComposingText(word.toString(), 1)) {
                     leaveWordLiteral();
                     literalWord = true;
                     input.commitText(text, 1);
-                }
+                } else scheduleSuggestions();
             } else {
                 leaveWordLiteral();
                 literalWord = true;
                 input.commitText(text, 1);
             }
         } else {
-            completeWord(input, text);
-            if (!inWord) literalWord = false;
+            completeWord(input, text, null);
+            literalWord = inWord;
         }
-        if (!symbols && Character.isLetter(character)) lastShiftTap = 0;
-        if (shifted && !capsLock && !symbols && Character.isLetter(character)) {
+        if (page == Page.LETTERS && Character.isLetter(character)) lastShiftTap = 0;
+        if (shifted && !capsLock && page == Page.LETTERS && Character.isLetter(character)) {
             shifted = false;
             renderCase();
         }
     }
 
-    private void completeWord(InputConnection input, String suffix) {
+    private void completeWord(InputConnection input, String suffix, String suggestion) {
+        clearSuggestions();
         if (word.length() == 0) {
             if (!suffix.isEmpty()) input.commitText(suffix, 1);
             return;
         }
-        String completed = word.toString();
+        String original = word.toString();
+        String completed = suggestion == null ? original : suggestion;
         word.setLength(0);
         if (subWorkspace && rules != null)
-            completed = rules.complete(completed, bound -> ThreadLocalRandom.current().nextInt(bound));
+            completed = rules.complete(original, completed, bound -> ThreadLocalRandom.current().nextInt(bound));
         input.commitText(completed + suffix, 1);
     }
 
@@ -274,6 +299,7 @@ public final class GagKeyboardService extends InputMethodService {
                 literalWord = true;
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
             }
+            scheduleSuggestions();
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
         }
@@ -283,7 +309,7 @@ public final class GagKeyboardService extends InputMethodService {
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
-        completeWord(input, "");
+        completeWord(input, "", null);
         literalWord = false;
         if (!sendDefaultEditorAction(true)) input.commitText("\n", 1);
     }
@@ -347,8 +373,10 @@ public final class GagKeyboardService extends InputMethodService {
     private void renderKeysIfNeeded(EditorInfo editor) {
         int action = editor == null || (editor.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
                 ? EditorInfo.IME_ACTION_NONE : editor.imeOptions & EditorInfo.IME_MASK_ACTION;
-        if (renderedSymbols != symbols || renderedEditorAction != action) {
-            renderedSymbols = symbols;
+        int keyInputType = page == Page.NUMBERS ? editorInputType : InputType.TYPE_NULL;
+        if (renderedPage != page || renderedInputType != keyInputType || renderedEditorAction != action) {
+            renderedPage = page;
+            renderedInputType = keyInputType;
             renderedEditorAction = action;
             renderKeys(action);
         } else if (renderedShifted != shifted || renderedCapsLock != capsLock) {
@@ -362,40 +390,113 @@ public final class GagKeyboardService extends InputMethodService {
         letters.clear();
         shiftKey = null;
         renderToolbar();
-        String[] rows = symbols ? SYMBOL_ROWS : LETTER_ROWS;
+        if (page == Page.NUMBERS) {
+            renderNumberKeys(editorAction);
+            return;
+        }
+        String[] rows = switch (page) {
+            case SYMBOLS -> SYMBOL_ROWS;
+            case MORE_SYMBOLS -> MORE_SYMBOL_ROWS;
+            default -> LETTER_ROWS;
+        };
+        boolean lettersPage = page == Page.LETTERS;
         for (int rowIndex = 0; rowIndex < rows.length; rowIndex++) {
             LinearLayout row = row();
-            if (rowIndex == 1) spacer(row, .5f);
-            if (rowIndex == 2 && !symbols) {
-                shiftKey = iconKey(row, 1.5f, MODIFIER_SURFACE, R.drawable.ic_gag_shift,
-                        R.string.gag_keyboard_shift, this::shift, false);
-            }
-            if (rowIndex == 2 && symbols) {
-                key(row, "%", 1.5f, MODIFIER_SURFACE, 21, () -> type("%"));
+            if (lettersPage && rowIndex == 1) spacer(row, .5f);
+            if (rowIndex == 2) {
+                if (lettersPage) {
+                    shiftKey = iconKey(row, 1.5f, MODIFIER_SURFACE, R.drawable.ic_gag_shift,
+                            R.string.gag_keyboard_shift, this::shift, false);
+                } else if (page == Page.MORE_SYMBOLS) {
+                    pageKey(row, "?123", 1.5f, R.string.gag_keyboard_symbols, Page.SYMBOLS);
+                } else {
+                    pageKey(row, "=\\<", 1.5f, R.string.gag_keyboard_more_symbols, Page.MORE_SYMBOLS);
+                }
             }
             for (int index = 0; index < rows[rowIndex].length(); index++) {
                 String label = rows[rowIndex].substring(index, index + 1);
-                if (symbols) key(row, label, 1, LETTER_SURFACE, 26, () -> type(label));
-                else letter(row, label, SYMBOL_ROWS[rowIndex].substring(index, index + 1));
+                if (lettersPage) letter(row, label, ALTERNATE_ROWS[rowIndex].substring(index, index + 1));
+                else key(row, label, 1, LETTER_SURFACE, 26, () -> type(label));
             }
-            if (rowIndex == 2) {
-                iconKey(row, 1.5f, MODIFIER_SURFACE, R.drawable.ic_gag_backspace,
-                        R.string.gag_keyboard_delete, this::backspace, true);
-            }
-            if (rowIndex == 1) spacer(row, .5f);
+            if (rowIndex == 2) renderDelete(row, 1.5f);
+            if (lettersPage && rowIndex == 1) spacer(row, .5f);
         }
         LinearLayout bottom = row();
-        key(bottom, symbols ? "ABC" : "?123", 1.5f, MODIFIER_SURFACE, 17, () -> {
-            symbols = !symbols;
-            renderKeysIfNeeded(getCurrentInputEditorInfo());
-        });
-        key(bottom, ",", 1f, MODIFIER_SURFACE, 24, () -> type(","));
-        Button space = key(bottom, getString(R.string.gag_keyboard_language), 5f, LETTER_SURFACE, 13, () -> type(" "));
+        if (lettersPage) pageKey(bottom, "?123", 1.5f, R.string.gag_keyboard_symbols, Page.SYMBOLS);
+        else pageKey(bottom, "ABC", 1.5f, R.string.gag_keyboard_letters, Page.LETTERS);
+        String left = page == Page.MORE_SYMBOLS ? "<" : ",";
+        String right = page == Page.MORE_SYMBOLS ? ">" : ".";
+        key(bottom, left, 1f, MODIFIER_SURFACE, 24, () -> type(left));
+        if (!lettersPage) pageKey(bottom, "1 2\n3 4", 1f, R.string.gag_keyboard_numbers, Page.NUMBERS);
+        renderSpace(bottom, lettersPage ? 5f : 4f);
+        key(bottom, right, 1f, MODIFIER_SURFACE, 24, () -> type(right));
+        renderEnter(bottom, editorAction, 1.5f);
+        renderCase();
+    }
+
+    private boolean numberEditor() {
+        int inputClass = editorInputType & InputType.TYPE_MASK_CLASS;
+        return inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE
+                || inputClass == InputType.TYPE_CLASS_DATETIME;
+    }
+
+    private void renderNumberKeys(int editorAction) {
+        int inputClass = editorInputType & InputType.TYPE_MASK_CLASS;
+        boolean phone = inputClass == InputType.TYPE_CLASS_PHONE;
+        boolean dateTime = inputClass == InputType.TYPE_CLASS_DATETIME;
+        boolean number = inputClass == InputType.TYPE_CLASS_NUMBER;
+        LinearLayout first = row();
+        renderDigits(first, "123");
+        renderNumericSymbol(first, phone ? "+" : dateTime ? "/" :
+                !number || (editorInputType & InputType.TYPE_NUMBER_FLAG_SIGNED) != 0 ? "-" : "");
+        LinearLayout second = row();
+        renderDigits(second, "456");
+        renderNumericSymbol(second, phone ? "*" : dateTime ? ":" :
+                !number || (editorInputType & InputType.TYPE_NUMBER_FLAG_DECIMAL) != 0 ? "." : "");
+        LinearLayout third = row();
+        renderDigits(third, "789");
+        renderDelete(third, 1f);
+        LinearLayout bottom = row();
+        if (numberEditor()) renderNumericSymbol(bottom, phone ? "#" : "");
+        else pageKey(bottom, "ABC", 1f, R.string.gag_keyboard_letters, Page.LETTERS);
+        renderDigits(bottom, "0");
+        if (numberEditor()) renderNumericSymbol(bottom, dateTime ? "-" : "");
+        else renderSpace(bottom, 1f);
+        renderEnter(bottom, editorAction, 1f);
+    }
+
+    private void renderDigits(LinearLayout row, String digits) {
+        for (int i = 0; i < digits.length(); i++) {
+            String digit = digits.substring(i, i + 1);
+            key(row, digit, 1, LETTER_SURFACE, 26, () -> type(digit));
+        }
+    }
+
+    private void renderNumericSymbol(LinearLayout row, String symbol) {
+        if (symbol.isEmpty()) spacer(row, 1f);
+        else key(row, symbol, 1f, MODIFIER_SURFACE, 24, () -> type(symbol));
+    }
+
+    private void pageKey(LinearLayout row, String title, float weight, int description, Page target) {
+        Button button = key(row, title, weight, target == Page.NUMBERS ? LETTER_SURFACE : MODIFIER_SURFACE,
+                target == Page.NUMBERS && compact() ? 11 : 17, () -> {
+                    clearSuggestions();
+                    page = target;
+                    renderKeysIfNeeded(getCurrentInputEditorInfo());
+                });
+        if (target == Page.NUMBERS) button.setSingleLine(false);
+        button.setContentDescription(getString(description));
+    }
+
+    private void renderDelete(LinearLayout row, float weight) {
+        iconKey(row, weight, MODIFIER_SURFACE, R.drawable.ic_gag_backspace,
+                R.string.gag_keyboard_delete, this::backspace, true);
+    }
+
+    private void renderSpace(LinearLayout row, float weight) {
+        Button space = key(row, getString(R.string.gag_keyboard_language), weight, LETTER_SURFACE, 13, () -> type(" "));
         space.setContentDescription(getString(R.string.gag_keyboard_space));
         space.setOnLongClickListener(view -> { chooseKeyboard(); return true; });
-        key(bottom, ".", 1f, MODIFIER_SURFACE, 24, () -> type("."));
-        renderEnter(bottom, editorAction);
-        renderCase();
     }
 
     private void shift() {
@@ -415,11 +516,11 @@ public final class GagKeyboardService extends InputMethodService {
         renderCase();
     }
 
-    private void renderEnter(LinearLayout row, int action) {
+    private void renderEnter(LinearLayout row, int action, float weight) {
         switch (action) {
-            case EditorInfo.IME_ACTION_SEARCH -> iconKey(row, 1.5f, RETURN_SURFACE,
+            case EditorInfo.IME_ACTION_SEARCH -> iconKey(row, weight, RETURN_SURFACE,
                     R.drawable.ic_gag_search, R.string.gag_keyboard_search, this::enter, false);
-            case EditorInfo.IME_ACTION_DONE -> iconKey(row, 1.5f, RETURN_SURFACE,
+            case EditorInfo.IME_ACTION_DONE -> iconKey(row, weight, RETURN_SURFACE,
                     R.drawable.ic_gag_done, R.string.gag_keyboard_done, this::enter, false);
             case EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND,
                     EditorInfo.IME_ACTION_NEXT, EditorInfo.IME_ACTION_PREVIOUS -> {
@@ -429,9 +530,9 @@ public final class GagKeyboardService extends InputMethodService {
                     case EditorInfo.IME_ACTION_NEXT -> R.string.gag_keyboard_next;
                     default -> R.string.gag_keyboard_previous;
                 };
-                key(row, getString(label), 1.5f, RETURN_SURFACE, 11, this::enter);
+                key(row, getString(label), weight, RETURN_SURFACE, 11, this::enter);
             }
-            default -> iconKey(row, 1.5f, RETURN_SURFACE,
+            default -> iconKey(row, weight, RETURN_SURFACE,
                     R.drawable.ic_gag_return, R.string.gag_keyboard_enter, this::enter, false);
         }
     }
@@ -439,14 +540,119 @@ public final class GagKeyboardService extends InputMethodService {
     private void renderToolbar() {
         LinearLayout tools = row();
         tools.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout toolbar = new FrameLayout(tools.getContext());
+        tools.addView(toolbar, new LinearLayout.LayoutParams(0, dp(compact() ? 25 : 43), 1));
         status = new TextView(tools.getContext());
         statusLabel = 0;
         status.setTextColor(0xffc9c9c9);
         status.setTextSize(12);
         status.setPaddingRelative(dp(12), 0, 0, 0);
-        tools.addView(status, new LinearLayout.LayoutParams(0, dp(compact() ? 25 : 43), 1));
+        toolbar.addView(status, new FrameLayout.LayoutParams(-1, -1));
         status.setGravity(Gravity.CENTER_VERTICAL);
+        suggestionStrip = new LinearLayout(tools.getContext());
+        suggestionStrip.setVisibility(View.GONE);
+        toolbar.addView(suggestionStrip, new FrameLayout.LayoutParams(-1, -1));
+        suggestionViews.clear();
+        for (int index = 0; index < 3; index++) {
+            TextView choice = new TextView(tools.getContext());
+            choice.setTextColor(LABEL_COLOR);
+            choice.setTextSize(16);
+            choice.setGravity(Gravity.CENTER);
+            choice.setSingleLine();
+            choice.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            choice.setPadding(dp(6), 0, dp(6), 0);
+            choice.setBackground(keyFace(MODIFIER_SURFACE, 7));
+            choice.setOnTouchListener(new View.OnTouchListener() {
+                private long pressedGeneration;
+
+                @Override public boolean onTouch(View view, MotionEvent event) {
+                    if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        pressedGeneration = suggestionGeneration;
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    }
+                    if (event.getActionMasked() == MotionEvent.ACTION_UP && pressedGeneration != suggestionGeneration) {
+                        view.setPressed(false);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+            suggestionStrip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
+            suggestionViews.add(choice);
+        }
         updateStatus();
+        scheduleSuggestions();
+    }
+
+    private void loadLexicon() {
+        if (lexicon != null || loadingLexicon) return;
+        loadingLexicon = true;
+        spelling.execute(() -> {
+            // Android's asset merger unwraps .gz and stores the resulting TSV in the APK.
+            try (java.io.InputStream source = getAssets().open("gag_words/words.tsv")) {
+                GagLexicon loaded = GagLexicon.read(source);
+                main.post(() -> { if (backend != null) lexicon = loaded; });
+            } catch (java.io.IOException | NumberFormatException invalid) {
+                // Invalid optional dictionary data must not interfere with literal typing.
+            }
+        });
+    }
+
+    private void scheduleSuggestions() {
+        clearSuggestions();
+        if (editorAllowed && lexicon != null && word.length() > 0 && page == Page.LETTERS)
+            main.postDelayed(requestSuggestions, 45);
+    }
+
+    private void clearSuggestions() {
+        suggestionGeneration++;
+        main.removeCallbacks(requestSuggestions);
+        if (suggestionTask != null) {
+            suggestionTask.cancel(false);
+            suggestionTask = null;
+        }
+        if (suggestionStrip != null && suggestionStrip.getVisibility() != View.GONE) {
+            for (TextView view : suggestionViews) {
+                view.setOnClickListener(null);
+                view.setText("");
+            }
+            suggestionStrip.setVisibility(View.GONE);
+            status.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void requestSuggestions() {
+        String token = word.toString();
+        long generation = suggestionGeneration;
+        GagLexicon source = lexicon;
+        if (!editorAllowed || source == null || token.isEmpty() || page != Page.LETTERS) return;
+        suggestionTask = spelling.submit(() -> {
+            List<String> candidates = source.suggestions(token);
+            main.post(() -> {
+                if (generation != suggestionGeneration || !editorAllowed || candidates.isEmpty()
+                        || suggestionStrip == null) return;
+                for (int index = 0; index < suggestionViews.size(); index++) {
+                    TextView view = suggestionViews.get(index);
+                    boolean available = index < candidates.size();
+                    view.setVisibility(available ? View.VISIBLE : View.INVISIBLE);
+                    if (!available) continue;
+                    String candidate = candidates.get(index);
+                    view.setText(candidate);
+                    view.setOnClickListener(key -> acceptSuggestion(generation, candidate));
+                }
+                status.setVisibility(View.INVISIBLE);
+                suggestionStrip.setVisibility(View.VISIBLE);
+            });
+        });
+    }
+
+    private void acceptSuggestion(long generation, String candidate) {
+        refreshReplacementAuthority();
+        InputConnection input = getCurrentInputConnection();
+        if (generation == suggestionGeneration && editorAllowed && word.length() != 0 && input != null) {
+            completeWord(input, " ", candidate);
+            literalWord = false;
+        }
     }
 
     private ImageButton iconKey(LinearLayout row, float weight, int surface, int icon, int label,

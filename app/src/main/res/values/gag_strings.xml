@@ -27,7 +27,11 @@
     <string name="gag_keyboard_send">Send</string>
     <string name="gag_keyboard_next">Next</string>
     <string name="gag_keyboard_previous">Previous</string>
-    <string name="gag_keyboard_language">EN</string>
+    <string name="gag_keyboard_language">EN · DE</string>
+    <string name="gag_keyboard_letters">Letters</string>
+    <string name="gag_keyboard_symbols">Symbols</string>
+    <string name="gag_keyboard_more_symbols">More symbols</string>
+    <string name="gag_keyboard_numbers">Numeric keypad</string>
     <string name="gag_keyboard_active">Gag on</string>
     <string name="gag_keyboard_inactive">Gag off</string>
     <string name="gag_keyboard_excluded">Literal typing</string>

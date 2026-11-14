@@ -182,6 +182,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/atmosphere/GagActivity.java": "main_atmosphere_gag_activity",
     b"app/src/main/java/com/subhub/app/atmosphere/GagEditorPolicy.java": "main_atmosphere_gag_editor_policy",
     b"app/src/main/java/com/subhub/app/atmosphere/GagKeyboardService.java": "main_atmosphere_gag_keyboard_service",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagLexicon.java": "main_atmosphere_gag_lexicon",
     b"app/src/main/java/com/subhub/app/atmosphere/GagParticipation.java": "main_atmosphere_gag_participation",
     b"app/src/main/java/com/subhub/app/atmosphere/GagRules.java": "main_atmosphere_gag_rules",
     b"app/src/main/java/com/subhub/app/atmosphere/GagSettings.java": "main_atmosphere_gag_settings",
@@ -883,6 +884,7 @@ JAVAC_MAIN_SOURCES = {
 }
 
 JAVAC_SOURCES = {
+    b"app/src/test/java/com/subhub/app/atmosphere/GagLexiconTest.java": "unit_gag_lexicon_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagRulesTest.java": "unit_gag_rules_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessFilesTest.java": "unit_full_access_files_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessForegroundUsageTest.java": "unit_full_access_foreground_usage_test",

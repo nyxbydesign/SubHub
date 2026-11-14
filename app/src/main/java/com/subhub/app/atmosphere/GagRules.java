@@ -23,10 +23,14 @@ final class GagRules {
     }
 
     String complete(String word, IntUnaryOperator choose) {
-        if (word.isEmpty() || replacements.isEmpty()) return word;
+        return complete(word, word, choose);
+    }
+
+    String complete(String word, String accepted, IntUnaryOperator choose) {
+        if (word.isEmpty() || replacements.isEmpty()) return accepted;
         int end = word.length();
         while (end > 0 && apostrophe(word.charAt(end - 1))) end--;
-        if (end == 0) return word;
+        if (end == 0) return accepted;
         String token = word.substring(0, end);
         boolean selected = switch (mode) {
             case ALL -> true;
@@ -36,7 +40,7 @@ final class GagRules {
             }
             case MATCH -> matches.contains(token.toLowerCase(Locale.ROOT));
         };
-        return selected ? replacements.get(choose.applyAsInt(replacements.size())) + word.substring(end) : word;
+        return selected ? replacements.get(choose.applyAsInt(replacements.size())) + word.substring(end) : accepted;
     }
 
     static boolean apostrophe(int codePoint) { return codePoint == '\'' || codePoint == '’'; }
