@@ -221,6 +221,9 @@ public final class AchievementManager {
             case "color_picker": case "text_filter_enabled": case "text_filter_catalog":
                 return current(id, new StatsRepository(context, false).retainedSnapshot());
             case "paypal_vault": return new PayPalCredentialStore(context).vaultState().isReady() ? 1 : 0;
+            case "wallet_keeper": return PenanceManager.observedEnabled(context) ? 1 : 0;
+            case "tribute_rulesmith": return PenanceManager.observedRuleCount(context);
+            case "paid_pause": return new PaidPauseManager(context).isEnabled() ? 1 : 0;
             default: return stats == null ? 0 : DomAchievementCatalog.current(id, stats);
         }
     }
@@ -418,22 +421,8 @@ public final class AchievementManager {
                         && config.getEnabledCategories().containsAll(TextSmutConfig.DEFAULT_CATEGORIES)
                         ? config.getEnabledCategories().size() : 0;
             }
-            case "wallet_keeper":
-                return (observedOnly ? PenanceManager.observedEnabled(context) : new PenanceManager(context).isEnabled()) ? 1 : 0;
-            case "tribute_rulesmith": {
-                if (observedOnly) return PenanceManager.observedRuleCount(context);
-                PenanceManager penance = new PenanceManager(context);
-                if (!penance.isEnabled()) return 0;
-                int enabledRules = 0;
-                for (PenanceInfraction infraction : PenanceInfraction.values()) {
-                    if (penance.isInfractionEnabled(infraction)) enabledRules++;
-                }
-                return enabledRules;
-            }
             case "paypal_vault":
                 return new PayPalCredentialStore(context).vaultState().isReady() ? 1 : 0;
-            case "paid_pause":
-                return new PaidPauseManager(context).isEnabled() ? 1 : 0;
             case "wallet_paid_10": case "wallet_paid_100":
             case "wallet_paid_500": case "wallet_paid_1000":
                 if (historicalPaid != null) return historicalPaid;
@@ -453,7 +442,7 @@ public final class AchievementManager {
         switch (id) {
             case "pact_sealed": case "pact_long_haul":
             case "hardcore_guardian": case "text_filter_enabled": case "text_filter_catalog":
-            case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault": case "paid_pause":
+            case "paypal_vault":
             case "wallet_paid_10": case "wallet_paid_100": case "wallet_paid_500": case "wallet_paid_1000":
                 return true;
             default: return false;
@@ -485,10 +474,8 @@ public final class AchievementManager {
             case "ntr_100": return 100;
             case "ntr_200": return 200;
             case "pact_sealed": case "hardcore_guardian":
-            case "text_filter_enabled": case "wallet_keeper":
-            case "paypal_vault": case "paid_pause": return 1;
+            case "text_filter_enabled": case "paypal_vault": return 1;
             case "text_filter_catalog": return 3;
-            case "tribute_rulesmith": return 3;
             case "wallet_paid_10": return 1_000;
             case "wallet_paid_100": return 25_000;
             case "wallet_paid_500": return 100_000;
@@ -552,9 +539,6 @@ public final class AchievementManager {
                 a("subliminal_100", R.string.achievement_subliminal_100, R.string.achievement_desc_subliminal_100, "◉", "subliminal", R.drawable.achievement_badge_subliminal_100, false),
                 a("subliminal_1000", R.string.achievement_subliminal_1000, R.string.achievement_desc_subliminal_1000, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1000, false),
                 a("subliminal_10000", R.string.achievement_subliminal_10000, R.string.achievement_desc_subliminal_10000, "◉", "subliminal", R.drawable.achievement_badge_subliminal_10000, false),
-                a("wallet_keeper", R.string.achievement_wallet_keeper, R.string.achievement_desc_wallet_keeper, "¤", "wallet", R.drawable.achievement_badge_wallet_keeper, false),
-                a("tribute_rulesmith", R.string.achievement_tribute_rulesmith, R.string.achievement_desc_tribute_rulesmith, "¤", "wallet", R.drawable.achievement_badge_tribute_rulesmith, false),
-                a("paid_pause", R.string.achievement_paid_pause, R.string.achievement_desc_paid_pause, "Ⅱ", "wallet", R.drawable.achievement_badge_paid_pause, false),
                 a("wallet_paid_10", R.string.achievement_wallet_paid_10, R.string.achievement_desc_wallet_paid_10, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_10, false),
                 a("wallet_paid_100", R.string.achievement_wallet_paid_100, R.string.achievement_desc_wallet_paid_100, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_100, false),
                 a("wallet_paid_500", R.string.achievement_wallet_paid_500, R.string.achievement_desc_wallet_paid_500, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_500, false),

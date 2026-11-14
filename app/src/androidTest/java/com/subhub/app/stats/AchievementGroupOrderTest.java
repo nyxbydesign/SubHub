@@ -46,7 +46,8 @@ public final class AchievementGroupOrderTest {
         assertFalse(groups.containsKey("packs"));
         assertFalse(groups.containsKey("app_mode"));
         assertFalse(groups.containsKey("limits"));
-        assertTrue(categories.indexOf("wallet_setup") < categories.indexOf("wallet_payments"));
+        assertFalse(groups.containsKey("wallet_setup"));
+        assertTrue(groups.containsKey("wallet_payments"));
         for (AchievementManager.Achievement achievement : catalog) {
             assertTrue(groups.get(AchievementsActivity.displayCategory(achievement))
                     .contains(achievement));
@@ -60,9 +61,10 @@ public final class AchievementGroupOrderTest {
         Map<String, List<AchievementManager.Achievement>> groups =
                 AchievementsActivity.orderedGroups(DomAchievementCatalog.all());
         assertEquals(List.of("dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor",
-                "dom_appearance", "app_mode", "limits", "dom_wallet", "dom_hardcore"), new ArrayList<>(groups.keySet()));
+                "dom_appearance", "app_mode", "limits", "wallet_setup", "dom_wallet", "dom_hardcore"), new ArrayList<>(groups.keySet()));
         assertEquals(List.of("app_mode_guardian", "app_assignment_curator"), ids(groups.get("app_mode")));
         assertEquals(List.of("limits_setter", "limits_dual_guard"), ids(groups.get("limits")));
+        assertEquals(List.of("wallet_keeper", "tribute_rulesmith", "paid_pause"), ids(groups.get("wallet_setup")));
         assertEquals(List.of("first_custom_phrase", "phrase_library"), ids(groups.get("dom_phrases")));
         assertEquals(List.of("paypal_vault", "dom_tribute_10", "dom_tribute_250",
                 "dom_tribute_1000", "dom_tribute_10000"), ids(groups.get("dom_wallet")));

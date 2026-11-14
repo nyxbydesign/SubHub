@@ -42,10 +42,10 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private boolean active;
     private static final String[] CATEGORY_ORDER = {
             "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor", "dom_appearance",
-            "app_mode", "limits", "dom_wallet", "dom_hardcore",
+            "app_mode", "limits", "wallet_setup", "dom_wallet", "dom_hardcore",
             "sessions", "time", "streaks", "pact", "hardcore",
             "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
-            "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
+            "export", "subliminal", "wallet_payments", "wallet",
             "control", "hidden"
     };
     private ActivityAchievementsBinding binding;
@@ -280,8 +280,6 @@ final class AchievementsPane extends android.content.ContextWrapper {
             case "dom_tribute_10": case "dom_tribute_250":
             case "dom_tribute_1000": case "dom_tribute_10000": return "dom_wallet";
             case "pack_curator": return "packs";
-            case "wallet_keeper": case "tribute_rulesmith":
-            case "paid_pause": return "wallet_setup";
             case "wallet_paid_10": case "wallet_paid_100":
             case "wallet_paid_500": case "wallet_paid_1000": return "wallet_payments";
             default: return achievement.getCategory();
