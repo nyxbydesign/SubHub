@@ -63,7 +63,7 @@ public final class GagKeyboardPickerAndroidTest {
             assertEquals(editorText, findEditor(device).getText());
 
             openPicker(device, title, space);
-            assertTrue(device.pressBack());
+            device.executeShellCommand("input keyevent KEYCODE_BACK");
             assertTrue(device.wait(Until.gone(By.text(title)), TIMEOUT));
             assertEquals(gagKeyboard, selectedIme(device));
             assertEquals(editorText, findEditor(device).getText());
