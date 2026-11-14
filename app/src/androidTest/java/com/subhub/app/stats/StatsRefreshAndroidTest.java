@@ -202,7 +202,10 @@ public final class StatsRefreshAndroidTest {
             await(() -> containsText(current.get().findViewById(android.R.id.content)
                     .findViewWithTag(rowTag), "8 / 10"));
             ControllerPinManager.enterSubMode();
-            await(() -> page.getState() == androidx.lifecycle.Lifecycle.State.DESTROYED);
+            long closeDeadline = SystemClock.uptimeMillis() + 8_000;
+            while (page.getState() != androidx.lifecycle.Lifecycle.State.DESTROYED
+                    && SystemClock.uptimeMillis() < closeDeadline) SystemClock.sleep(50);
+            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, page.getState());
         }
     }
 
