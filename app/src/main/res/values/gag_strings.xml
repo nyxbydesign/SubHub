@@ -18,6 +18,7 @@
     <string name="gag_replacements_error">Enter at least one replacement.</string>
     <string name="gag_android_keyboard_settings">Android keyboard settings</string>
     <string name="gag_choose_keyboard">Choose keyboard</string>
+    <string name="gag_keyboard_change">Change keyboard</string>
     <string name="gag_keyboard_shift">Shift</string>
     <string name="gag_keyboard_delete">Delete</string>
     <string name="gag_keyboard_space">Space, hold to switch keyboards</string>

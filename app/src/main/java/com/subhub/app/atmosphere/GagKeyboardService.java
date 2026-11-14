@@ -1,6 +1,8 @@
 package com.subhub.app.atmosphere;
 
+import android.app.AlertDialog;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -21,7 +23,9 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.inputmethodservice.InputMethodService;
+import android.os.Build;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -29,11 +33,14 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -99,6 +106,7 @@ public final class GagKeyboardService extends InputMethodService {
     private long lastShiftTap;
     private LinearLayout keyboard;
     private GagKeyAlternativesPopup keyAlternatives;
+    private AlertDialog keyboardPicker;
     private LinearLayout keyboardHost;
     private LinearLayout clipboardPanel;
     private ClipboardManager clipboardManager;
@@ -121,6 +129,7 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean editorAllowed;
 
     private record LetterKey(Button button, String letter, String alternate) {}
+    private record KeyboardChoice(InputMethodInfo method, InputMethodSubtype subtype, CharSequence label) {}
     private enum Page { LETTERS, SYMBOLS, MORE_SYMBOLS, NUMBERS, EMOJI }
 
     @Override public void onCreate() {
@@ -132,6 +141,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onDestroy() {
+        dismissKeyboardPicker();
         dismissAlternatives();
         stopClipboard();
         if (configurationObserver != null) try { configurationObserver.close(); } catch (Exception ignored) { }
@@ -145,6 +155,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onStartInput(EditorInfo editor, boolean restarting) {
+        dismissKeyboardPicker();
         suggestionSpace = null;
         stopClipboard();
         super.onStartInput(editor, restarting);
@@ -186,6 +197,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        dismissKeyboardPicker();
         dismissAlternatives();
         suggestionSpace = null;
         stopClipboard();
@@ -198,6 +210,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onFinishInput() {
+        dismissKeyboardPicker();
         dismissAlternatives();
         suggestionSpace = null;
         stopClipboard();
@@ -712,7 +725,7 @@ public final class GagKeyboardService extends InputMethodService {
     private void renderSpace(LinearLayout row, float weight) {
         Button space = key(row, getString(R.string.gag_keyboard_language), weight, LETTER_SURFACE, 13, () -> type(" "));
         space.setContentDescription(getString(R.string.gag_keyboard_space));
-        space.setOnLongClickListener(view -> { chooseKeyboard(); return true; });
+        space.setOnLongClickListener(view -> { chooseKeyboard(view); return true; });
     }
 
     private void shift() {
@@ -1228,12 +1241,106 @@ public final class GagKeyboardService extends InputMethodService {
         }
     }
 
-    private void chooseKeyboard() {
+    private void chooseKeyboard(View anchor) {
+        if (keyboardPicker != null || anchor.getWindowToken() == null) return;
+        InputMethodManager manager = getSystemService(InputMethodManager.class);
+        if (manager == null) return;
+
+        ComponentName ownService = new ComponentName(this, GagKeyboardService.class);
+        InputMethodSubtype currentSubtype = manager.getCurrentInputMethodSubtype();
+        List<KeyboardChoice> choices = new ArrayList<>();
+        int checked = -1;
+        for (InputMethodInfo method : manager.getEnabledInputMethodList()) {
+            boolean ownKeyboard = ownService.equals(method.getComponent());
+            CharSequence name = method.loadLabel(getPackageManager());
+            if (TextUtils.isEmpty(name)) name = method.getPackageName();
+            List<InputMethodSubtype> subtypes = manager.getEnabledInputMethodSubtypeList(method, true);
+            if (subtypes.isEmpty()) {
+                if (ownKeyboard) checked = choices.size();
+                choices.add(new KeyboardChoice(method, null, name));
+                continue;
+            }
+            if (Build.VERSION.SDK_INT < 28 && subtypes.size() > 1) {
+                showSystemKeyboardPicker(manager);
+                return;
+            }
+            for (InputMethodSubtype subtype : subtypes) {
+                if (ownKeyboard && (subtype.equals(currentSubtype) || subtypes.size() == 1)) {
+                    checked = choices.size();
+                }
+                CharSequence language = subtype.getDisplayName(this, method.getPackageName(),
+                        method.getServiceInfo().applicationInfo);
+                CharSequence label = ownKeyboard || TextUtils.isEmpty(language) || TextUtils.equals(language, name)
+                        ? name : TextUtils.concat(language, "\n", name);
+                choices.add(new KeyboardChoice(method, subtype, label));
+            }
+        }
+        if (checked == -1) {
+            showSystemKeyboardPicker(manager);
+            return;
+        }
+
+        int currentChoice = checked;
+        CharSequence[] labels = choices.stream().map(KeyboardChoice::label).toArray(CharSequence[]::new);
+        AlertDialog picker = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(R.string.gag_keyboard_change)
+                .setSingleChoiceItems(labels, currentChoice, (dialog, position) -> {
+                    dialog.dismiss();
+                    if (position != currentChoice) switchKeyboard(manager, choices.get(position));
+                })
+                .create();
+        picker.setCanceledOnTouchOutside(true);
+        picker.setOnDismissListener(dialog -> {
+            if (keyboardPicker == picker) keyboardPicker = null;
+        });
+        Window window = picker.getWindow();
+        if (window == null) {
+            showSystemKeyboardPicker(manager);
+            return;
+        }
+        WindowManager.LayoutParams attributes = window.getAttributes();
+        attributes.token = anchor.getWindowToken();
+        attributes.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
+        attributes.gravity = Gravity.CENTER;
+        window.setAttributes(attributes);
+        window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        keyboardPicker = picker;
+        try {
+            picker.show();
+        } catch (WindowManager.BadTokenException detached) {
+            keyboardPicker = null;
+            if (isInputViewShown()) showSystemKeyboardPicker(manager);
+        }
+    }
+
+    private void dismissKeyboardPicker() {
+        if (keyboardPicker == null) return;
+        keyboardPicker.dismiss();
+        keyboardPicker = null;
+    }
+
+    private void switchKeyboard(InputMethodManager manager, KeyboardChoice choice) {
+        prepareKeyboardSwitch();
+        try {
+            if (Build.VERSION.SDK_INT >= 28 && choice.subtype() != null) {
+                switchInputMethod(choice.method().getId(), choice.subtype());
+            } else {
+                switchInputMethod(choice.method().getId());
+            }
+        } catch (IllegalArgumentException | SecurityException unavailable) {
+            manager.showInputMethodPicker();
+        }
+    }
+
+    private void showSystemKeyboardPicker(InputMethodManager manager) {
+        prepareKeyboardSwitch();
+        manager.showInputMethodPicker();
+    }
+
+    private void prepareKeyboardSwitch() {
         suggestionSpace = null;
         if (word.length() != 0) literalWord = true;
         leaveWordLiteral();
-        InputMethodManager manager = getSystemService(InputMethodManager.class);
-        if (manager != null) manager.showInputMethodPicker();
     }
 
     private LinearLayout row() {
