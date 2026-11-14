@@ -3,12 +3,6 @@
     <string name="diagnostics_replacement_candidate">Replacement engine</string>
     <string name="diagnostics_replacement_candidate_desc">Reconnect Accessibility to apply. Scroll tracking is not qualified.</string>
     <string name="tour_wallet_rules">Wallet rules</string>
-    <string name="tour_wallet_graphic">Wallet with tribute coins</string>
-    <string name="tour_wallet_amount_invalid">Use an amount from %1$s to %2$s.</string>
-    <string name="tour_wallet_timing_invalid">Use a value from %1$d to %2$d.</string>
-    <string name="tour_wallet_every">Every</string>
-    <string name="tour_wallet_censors">censors</string>
-    <string name="tour_wallet_seconds_still">seconds still</string>
     <string name="tour_wallet_cooldown">Cooldown</string>
     <string name="tour_wallet_minutes">min</string>
     <string name="app_timer_choose_apps">Choose apps</string>

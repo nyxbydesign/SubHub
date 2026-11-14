@@ -39,7 +39,6 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE daily(day TEXT NOT NULL, metric TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(day,metric))");
         db.execSQL("CREATE TABLE checkpoint(name TEXT PRIMARY KEY, value INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE receipts(id TEXT PRIMARY KEY)");
-        db.execSQL("CREATE TABLE clock(id INTEGER PRIMARY KEY, process TEXT, mono INTEGER, wall INTEGER, zone TEXT, session INTEGER)");
         db.execSQL("CREATE TABLE metadata(name TEXT PRIMARY KEY,value TEXT)");
         db.execSQL("INSERT INTO metadata VALUES('since',?)", new Object[] {LocalDate.now().toString()});
         db.execSQL("INSERT INTO metadata VALUES('collection_started_ms',?)", new Object[] {Long.toString(System.currentTimeMillis())});
@@ -331,23 +330,6 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
             ContentValues id = new ContentValues(); id.put("id", receipt);
             if (db.insertWithOnConflict("receipts", null, id, SQLiteDatabase.CONFLICT_IGNORE) != -1)
                 add(db, Instant.ofEpochMilli(wall).atZone(ZoneId.of(zone)).toLocalDate().toString(), metric, 1);
-            db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
-    }
-    /** Elapsed realtime prevents clock changes from adding time; process identity excludes downtime. */
-    synchronized void heartbeat(String process, long session, long wall, long mono, String zone) {
-        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
-        try {
-            try (Cursor c = db.rawQuery("SELECT process,mono,wall,zone,session FROM clock WHERE id=1", null)) {
-                boolean exists = c.moveToFirst();
-                if (exists && process.equals(c.getString(0)) && mono < c.getLong(1)) { db.setTransactionSuccessful(); return; }
-                if (exists && process.equals(c.getString(0)) && c.getLong(4) > 0
-                        && (session == c.getLong(4) || session == 0) && mono >= c.getLong(1)) {
-                    for (Map.Entry<String, Long> part : DailyTimeSlices.split(c.getLong(2), mono - c.getLong(1), ZoneId.of(c.getString(3))).entrySet())
-                        add(db, part.getKey(), "service_ms", part.getValue());
-                }
-            }
-            db.execSQL("INSERT OR REPLACE INTO clock VALUES(1,?,?,?,?,?)", new Object[]{process,mono,wall,zone,session});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
