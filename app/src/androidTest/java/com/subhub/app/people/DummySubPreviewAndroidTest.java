@@ -785,6 +785,60 @@ public final class DummySubPreviewAndroidTest {
         return false;
     }
 
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void internalPopupEditorDoesNotQueuePhysicalPreviewStatus() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent atmosphereRoute = authorizedSectionIntent(authorizedProfileIntent(), "atmosphere");
+        try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> scenario =
+                     ActivityScenario.launch(atmosphereRoute)) {
+            AtomicReference<com.subhub.app.atmosphere.AtmosphereActivity> atmosphere = new AtomicReference<>();
+            scenario.onActivity(atmosphere::set);
+            await(() -> resumed(atmosphere.get()));
+            Map<String, Map<String, ?>> before = realPreferences();
+            Map<String, List<String>> rows = endpoint.snapshot();
+            history.capture(true);
+            previewTransportBaseline = endpoint.transportCalls();
+
+            Class<com.subhub.app.popup.PopupStormActivity> type = com.subhub.app.popup.PopupStormActivity.class;
+            java.lang.reflect.Field handler = type.getDeclaredField("ui");
+            java.lang.reflect.Field updater = type.getDeclaredField("statusUpdater");
+            handler.setAccessible(true);
+            updater.setAccessible(true);
+            Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(type.getName(), null, false);
+            try {
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.popup_storm_card))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                Activity popup = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
+                assertNotNull("Atmosphere must open the nested Popup editor", popup);
+                assertEquals(type, popup.getClass());
+                await(() -> resumed(popup));
+                assertInternalBackend(popup);
+                instrumentation.runOnMainSync(() -> {
+                    assertTrue(DummySubPreview.isAllowed(popup));
+                    assertEquals(View.GONE, popup.findViewById(com.subhub.app.R.id.button_preview).getVisibility());
+                    assertEquals(View.GONE, popup.findViewById(com.subhub.app.R.id.button_stop).getVisibility());
+                    View saveStatus = tagged(popup, "internal_configuration_save_status");
+                    assertNotNull("Popup retains its autosave feedback view", saveStatus);
+                    assertEquals("The idle Popup editor should not show a save confirmation",
+                            View.GONE, saveStatus.getVisibility());
+                    try {
+                        assertFalse("Internal Popup must not queue physical preview status",
+                                ((android.os.Handler) handler.get(popup)).hasCallbacks((Runnable) updater.get(popup)));
+                    } catch (IllegalAccessException inaccessible) {
+                        throw new AssertionError(inaccessible);
+                    }
+                });
+                capture(popup, "internal-popup-preview-status");
+                assertRealState(before, rows);
+                nativeBack(popup);
+                await(() -> resumed(atmosphere.get()));
+                assertRealState(before, rows);
+            } finally {
+                instrumentation.removeMonitor(monitor);
+            }
+        }
+    }
+
     @Test public void internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration() throws Exception {
         assertTrue(DummySubPreview.toggle(context));String generation=internalFixture.data.acknowledged().generation;
         Intent original=DummySubPreview.taskNotificationIntent(context,generation);

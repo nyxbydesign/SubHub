@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -58,7 +59,7 @@ public final class PopupStormActivity extends FeatureEditorActivity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable statusUpdater = new Runnable() {
         @Override public void run() {
-            if (binding == null) return;
+            if (binding == null || FeatureEditorSession.remote(PopupStormActivity.this)) return;
             refreshStatus();
             ui.postDelayed(this, 500);
         }
@@ -138,9 +139,11 @@ public final class PopupStormActivity extends FeatureEditorActivity {
         if (editMode != null) editMode.refresh();
         else applyEditState();
         FeatureEditorSession.decorate(this);
-        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         ui.removeCallbacks(statusUpdater);
-        ui.post(statusUpdater);
+        if (!FeatureEditorSession.remote(this)) {
+            PopupStormManager.get().reloadSettings(this);
+            ui.post(statusUpdater);
+        }
         mainDelayRefresh();
     }
 
@@ -602,11 +605,11 @@ public final class PopupStormActivity extends FeatureEditorActivity {
 
     private void refreshStatus() {
         if (FeatureEditorSession.remote(this)) return;
-        if (PopupStormManager.get().isPreviewing()) {
-            long remaining = PopupStormManager.get().remainingPreviewMillis();
-            binding.buttonPreview.setText(getString(R.string.popup_preview_active,
-                    (int) ((remaining + 999L) / 1000L)));
-        } else binding.buttonPreview.setText(R.string.popup_preview);
+        PopupStormManager manager = PopupStormManager.get();
+        CharSequence label = manager.isPreviewing()
+                ? getString(R.string.popup_preview_active, (int) ((manager.remainingPreviewMillis() + 999L) / 1000L))
+                : getText(R.string.popup_preview);
+        if (!TextUtils.equals(binding.buttonPreview.getText(), label)) binding.buttonPreview.setText(label);
     }
 
     private void mainDelayRefresh() {

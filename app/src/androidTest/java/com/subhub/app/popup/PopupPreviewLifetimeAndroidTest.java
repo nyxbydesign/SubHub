@@ -80,20 +80,42 @@ public final class PopupPreviewLifetimeAndroidTest {
             });
         }
     }
-    @Test public void previewExpiryLeavesItsEditorResumedInsteadOfReturningHome() {
+    @Test public void previewExpiryLeavesItsEditorResumedInsteadOfReturningHome() throws Exception {
         PopupStormManager manager = PopupStormManager.get();
         try (ActivityScenario<PopupStormActivity> scenario = ActivityScenario.launch(PopupStormActivity.class)) {
             AtomicReference<PopupStormActivity> editor = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicInteger idleWrites = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicBoolean idleLabel = new java.util.concurrent.atomic.AtomicBoolean();
             scenario.onActivity(activity -> {
                 editor.set(activity);
-                activity.findViewById(R.id.button_preview).performClick();
+                android.widget.TextView preview = activity.findViewById(R.id.button_preview);
+                String idle = activity.getString(R.string.popup_preview);
+                assertEquals(idle, preview.getText().toString());
+                preview.addTextChangedListener(new android.text.TextWatcher() {
+                    @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+
+                    @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                        if (idle.contentEquals(text)) idleWrites.incrementAndGet();
+                        idleLabel.set(idle.contentEquals(text));
+                    }
+
+                    @Override public void afterTextChanged(android.text.Editable text) {}
+                });
+                preview.performClick();
                 assertTrue(manager.isPreviewing());
+                assertFalse("Preview start must show a countdown", idle.contentEquals(preview.getText()));
             });
             await(manager::isRunning, 3_000);
             await(() -> !manager.isPreviewing(), manager.remainingPreviewMillis() + 2_000);
             assertFalse(manager.isRunning());
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            await(idleLabel::get, 2_000);
+            // The expiry status pass already queued its next 500 ms poll. Observe a later main-queue turn.
+            java.util.concurrent.CountDownLatch afterPoll = new java.util.concurrent.CountDownLatch(1);
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(afterPoll::countDown, 550);
+            assertTrue("Main queue remained active across an idle status poll",
+                    afterPoll.await(3, java.util.concurrent.TimeUnit.SECONDS));
             scenario.onActivity(activity -> {
+                assertEquals("Expiry updates the idle label once", 1, idleWrites.get());
                 assertEquals(editor.get(), activity);
                 assertFalse(activity.isFinishing());
                 assertTrue(androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
