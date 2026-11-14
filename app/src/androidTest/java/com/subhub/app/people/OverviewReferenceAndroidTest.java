@@ -271,7 +271,13 @@ public final class OverviewReferenceAndroidTest {
         try (AutoCloseable relationship = localDomFixture();
                 ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
-            await(() -> hasText(activity.findViewById(R.id.home_sub_summary), "Today's progress"));
+            await(() -> tagged(activity, "home_tasks") != null);
+            onMain(() -> {
+                View journal = tagged(activity, "home_journal:sub");
+                assertNotNull(journal);
+                assertTrue(hasText(journal, "Today's progress"));
+                assertNotNull(tagged(activity, "achievement_next"));
+            });
             await(() -> tagged(activity, "home_contract_dom_name") != null);
             onMain(() -> assertFalse(hasText(tagged(activity, "home_journal:sub"), "A little progress today.")));
             onMain(() -> activity.findViewById(R.id.home_service_widget).setTag("overview_session_card"));

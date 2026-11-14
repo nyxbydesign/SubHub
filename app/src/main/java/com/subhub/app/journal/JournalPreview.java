@@ -51,8 +51,13 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
     }
 
     public static void add(LinearLayout parent, boolean dom, PersonId target, Runnable open, Initial initial) {
+        addPreview(parent, dom, target, open, false, initial);
+    }
+
+    private static void addPreview(LinearLayout parent, boolean dom, PersonId target, Runnable open,
+            boolean overview, Initial initial) {
         if (!(parent.getContext() instanceof Activity activity) || !(activity instanceof LifecycleOwner)) return;
-        JournalPreview view = new JournalPreview(activity, dom, target, open);
+        JournalPreview view = new JournalPreview(activity, dom, target, open, overview, false);
         if (initial != null) {
             if (initial.available()) view.showEntry(initial.entry());
             else view.showUnavailable();
@@ -62,8 +67,11 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
     }
 
     public static void addOverview(LinearLayout parent, boolean dom, Runnable open) {
-        if (!(parent.getContext() instanceof Activity) || !(parent.getContext() instanceof LifecycleOwner)) return;
-        parent.addView(new JournalPreview((Activity) parent.getContext(), dom, PersonId.LOCAL, open, true, false), new LayoutParams(-1, -2));
+        addOverview(parent, dom, open, null);
+    }
+
+    public static void addOverview(LinearLayout parent, boolean dom, Runnable open, Initial initial) {
+        addPreview(parent, dom, PersonId.LOCAL, open, true, initial);
     }
 
     public static void addSharedLink(LinearLayout parent, boolean dom, PersonId target, Runnable open) {

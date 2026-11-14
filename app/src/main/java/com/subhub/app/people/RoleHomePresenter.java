@@ -12,10 +12,12 @@ import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
 import com.subhub.app.help.HelpActivity;
+import com.subhub.app.journal.JournalPreview;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderProvider;
 import com.subhub.app.stats.StatsActivity;
+import com.subhub.app.stats.HomeAchievementPreview;
 import com.subhub.app.stats.StatsSnapshot;
 import com.subhub.app.util.AsyncUiScope;
 import java.util.ArrayList;
@@ -195,6 +197,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         long controllerRevision = ControllerPinManager.domWorkspaceRevision();
         long requestRevision = extraTime.revision();
+        boolean firstSubComposition = !dom && (subAchievements == null || subAchievements.getParent() != subBody);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
             com.subhub.app.relationships.RelationshipPresentation.Access access = null;
@@ -220,8 +223,13 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 requests = new com.subhub.app.remote.ExtraTimeRequests(application, PersonId.LOCAL)
                         .snapshot(System.currentTimeMillis());
             } catch (Exception unavailable) { /* The Overview remains readable when request availability cannot be read. */ }
+            JournalPreview.Initial journal = firstSubComposition
+                    ? JournalPreview.loadInitial(application, false, PersonId.LOCAL) : null;
+            HomeAchievementPreview achievements = null;
+            if (firstSubComposition) try { achievements = HomeAchievementPreview.load(application, null); }
+            catch (RuntimeException unavailable) { /* The rest of Overview does not depend on achievement history. */ }
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
-                    access, relationshipUnavailable, generation, requests, requestRevision);
+                    access, relationshipUnavailable, generation, requests, requestRevision, journal, achievements);
         }, loaded -> {
             try {
                 if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
@@ -246,7 +254,10 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                     taskSummary = loaded.tasks;
                     subFormal = !current || !loaded.access.legacy;
                     subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
-                    renderSub(loaded.people.get(0), current ? loaded.dom : null);
+                    renderSub(loaded.people.get(0), current ? loaded.dom : null, loaded.journal);
+                    if (loaded.achievements != null) subAchievements.render(loaded.achievements);
+                    else if (firstSubComposition) subAchievements.unavailable();
+                    else subAchievements.load(data, "home-achievement-preview");
                 }
             } finally { finishRefresh(); }
         }, failure -> {
@@ -540,8 +551,12 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
+        renderSub(person, dom, null);
+    }
+
+    private void renderSub(PersonSnapshot person, AssignedDom dom, JournalPreview.Initial journal) {
         subPerson = person; subDom = dom;
-        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
+        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections(journal);
         List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId,
                 person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
                 dom == null ? null : dom.name, dom == null ? null : dom.profile,
@@ -589,15 +604,14 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         if (!usageSignature.equals(renderedUsage)) {
             renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person);
         }
-        subAchievements.load(data, "home-achievement-preview");
         observeRemoteChanges();
     }
 
-    private void ensureSubSections() {
+    private void ensureSubSections(JournalPreview.Initial journal) {
         subBody.removeAllViews();
         renderedUsage = null; renderedRelationship = null;
         com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(subBody), false,
-                () -> com.subhub.app.journal.JournalRoutes.own(activity, false));
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, false), journal);
         LinearLayout tasks = OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_nav_tasks,
                 activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
                     if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
@@ -619,7 +633,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
         size.bottomMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         parent.addView(preview, size);
-        preview.load(data, "home-achievement-preview");
+        if (parent == domBody) preview.load(data, "home-achievement-preview");
         return preview;
     }
 
@@ -774,13 +788,17 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         final String internalGeneration;
         final com.subhub.app.remote.ExtraTimeRequests.Snapshot requests;
         final long requestRevision;
+        final JournalPreview.Initial journal;
+        final HomeAchievementPreview achievements;
         HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks,
                 com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable,
-                String internalGeneration, com.subhub.app.remote.ExtraTimeRequests.Snapshot requests, long requestRevision) {
+                String internalGeneration, com.subhub.app.remote.ExtraTimeRequests.Snapshot requests, long requestRevision,
+                JournalPreview.Initial journal, HomeAchievementPreview achievements) {
             this.people = people; this.dom = dom; this.tasks = tasks;
             this.access = access; this.relationshipUnavailable = relationshipUnavailable;
             this.internalGeneration = internalGeneration;
             this.requests = requests; this.requestRevision = requestRevision;
+            this.journal = journal; this.achievements = achievements;
         }
     }
 }
