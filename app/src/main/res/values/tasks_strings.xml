@@ -40,6 +40,10 @@
     <string name="tasks_refused">Refused</string>
     <string name="tasks_series_refused">Series cancelled</string>
     <string name="tasks_window">%1$s – %2$s</string>
+    <string name="tasks_window_with_days">%1$s · %2$s</string>
+    <string name="tasks_all_week">All Week</string>
+    <string name="tasks_weekdays_label">Weekdays</string>
+    <string name="tasks_weekends">Weekends</string>
     <string name="tasks_request">Request completion</string>
     <string name="tasks_send">Send request</string>
     <string name="tasks_proof">Completion text</string>

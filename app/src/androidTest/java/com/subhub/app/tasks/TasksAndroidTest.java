@@ -503,6 +503,7 @@ public final class TasksAndroidTest {
     }
 
     @Test public void subRequestsCompletionWithNativeTextThenDomAcceptsTheExactSubmission() throws Exception {
+        assertRecurrenceLabels();
         titlePrefix = "Practice task: ";
         ZoneId zone = ZoneId.of("Europe/Berlin");
         LocalDateTime start = LocalDateTime.now(zone).minusMinutes(2).withSecond(0).withNano(0);
@@ -521,17 +522,17 @@ public final class TasksAndroidTest {
         assertEquals(start.toLocalDate(), end.toLocalDate());
         String expectedWindow = context.getString(R.string.tasks_window,
                 dateTime.format(task.start(start.toLocalDate()).atZone(zone)), time.format(end));
-        String expectedDays = String.join(" · ", context.getResources().getStringArray(R.array.tasks_weekdays));
+        expectedWindow = context.getString(R.string.tasks_window_with_days, expectedWindow, "All Week");
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
             String id = occurrenceId(task);
             openTask(page, task);
             awaitTag(page, "request:" + id);
-            assertCompactSchedule(page, task, expectedWindow, expectedDays);
+            assertCompactSchedule(page, task, expectedWindow);
             capture("sub-task-detail-schedule");
             tap("request:" + id);
             awaitTag(page, "tasks_send");
-            assertCompactSchedule(page, task, expectedWindow, expectedDays);
+            assertCompactSchedule(page, task, expectedWindow);
             capture("sub-task-request-schedule");
             edit("tasks_text", "Synthetic completion proof");
             page.recreate(); awaitTag(page, "tasks_send");
@@ -556,25 +557,28 @@ public final class TasksAndroidTest {
         }
     }
 
-    private void assertCompactSchedule(ActivityScenario<TasksActivity> page, TaskDefinition task, String window, String days) {
+    private void assertRecurrenceLabels() {
+        assertEquals("All Week", TasksUi.scheduleDays(context, EnumSet.allOf(DayOfWeek.class)));
+        assertEquals("Weekdays", TasksUi.scheduleDays(context, EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY)));
+        assertEquals("Weekends", TasksUi.scheduleDays(context, EnumSet.range(DayOfWeek.FRIDAY, DayOfWeek.SUNDAY)));
+        assertEquals("Weekends", TasksUi.scheduleDays(context, EnumSet.range(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)));
+        assertEquals("Mon · Wed · Sun", TasksUi.scheduleDays(context,
+                EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.SUNDAY)));
+    }
+
+    private void assertCompactSchedule(ActivityScenario<TasksActivity> page, TaskDefinition task, String window) {
         String id = occurrenceId(task);
         page.onActivity(activity -> {
             View root = activity.findViewById(android.R.id.content);
-            android.widget.TextView first = root.findViewWithTag("task_window:" + id);
-            android.widget.TextView second = root.findViewWithTag("task_weekdays:" + id);
-            assertNotNull(first);
-            assertNotNull(second);
-            assertEquals(window, first.getText().toString());
-            assertEquals(days, second.getText().toString());
-            assertSame(first.getParent(), second.getParent());
-            assertEquals(1, first.getLineCount());
-            assertEquals(1, second.getLineCount());
-            ViewGroup card = (ViewGroup) second.getParent();
-            assertEquals(card.indexOfChild(first) + 1, card.indexOfChild(second));
-            View divider = card.getChildAt(card.indexOfChild(second) + 1);
+            android.widget.TextView schedule = root.findViewWithTag("task_window:" + id);
+            assertNotNull(schedule);
+            assertEquals(window, schedule.getText().toString());
+            assertEquals(1, schedule.getLineCount());
+            ViewGroup card = (ViewGroup) schedule.getParent();
+            View divider = card.getChildAt(card.indexOfChild(schedule) + 1);
             assertFalse(divider instanceof android.widget.TextView);
             android.widget.TextView instructions = (android.widget.TextView)
-                    card.getChildAt(card.indexOfChild(second) + 2);
+                    card.getChildAt(card.indexOfChild(schedule) + 2);
             assertEquals(task.text, instructions.getText().toString());
         });
     }
@@ -760,13 +764,13 @@ public final class TasksAndroidTest {
             store.append(scope, historyAction(refused, TaskAction.Kind.REFUSE_ONCE, at - 10_000L, ""), false, false);
             store.append(scope, historyAction(skipped, TaskAction.Kind.SKIP, at - 10_000L, ""), false, false);
         }
-        String requested = completionRequestText(approved, approvedProof.at);
+        String requested = submissionTimeText(approved, approvedProof.at);
         List<String> expected = new ArrayList<>(List.of(occurrenceId(approved), occurrenceId(declined), occurrenceId(cancelled)));
         List<String> tied = new ArrayList<>(List.of(occurrenceId(refused), occurrenceId(skipped)));
         java.util.Collections.sort(tied); expected.addAll(tied);
         try (ActivityScenario<TasksActivity> page = launch()) {
             openTask(page, approved);
-            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
+            assertCompletionText(page, approved, requested);
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "tasks_history"); tap("tasks_history");
             onView(withTagValue(is("task_completion_time:" + occurrenceId(approved)))).check(doesNotExist());
@@ -789,15 +793,15 @@ public final class TasksAndroidTest {
             assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
             assertCompletionText(page, approved, requested);
             openTask(page, approved);
-            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
+            assertCompletionText(page, approved, requested);
             assertSubmissionVerdict(page, occurrenceId(approved), approvedProof.id, R.string.tasks_accepted);
             page.recreate();
-            assertCompletionText(page, approved, completionDetailText(approved, approvedProof.at));
+            assertCompletionText(page, approved, requested);
             captureHistoryView(page, "approved-detail", "task_submission:" + occurrenceId(approved));
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "tasks_history");
             openTask(page, declined);
-            assertCompletionText(page, declined, completionDetailText(declined, declinedProof.at));
+            assertCompletionText(page, declined, submissionTimeText(declined, declinedProof.at));
             assertSubmissionVerdict(page, occurrenceId(declined), declinedProof.id, R.string.tasks_denied);
             captureHistoryView(page, "declined-detail", "task_submission:" + occurrenceId(declined));
             androidx.test.espresso.Espresso.pressBack();
@@ -828,17 +832,10 @@ public final class TasksAndroidTest {
                 at, kind == TaskAction.Kind.SUBMIT ? "Synthetic completion proof" : "", submission, List.of(), null);
     }
 
-    private String completionRequestText(TaskDefinition task, long at) {
-        return context.getString(R.string.tasks_completion_requested_at, formattedCompletionTime(task, at));
-    }
-
-    private String completionDetailText(TaskDefinition task, long at) {
-        return context.getString(R.string.tasks_submission_timestamp, formattedCompletionTime(task, at));
-    }
-
-    private String formattedCompletionTime(TaskDefinition task, long at) {
-        return java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
+    private String submissionTimeText(TaskDefinition task, long at) {
+        String dateTime = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
                 .withZone(task.zone).format(java.time.Instant.ofEpochMilli(at));
+        return context.getString(R.string.tasks_submission_timestamp, dateTime);
     }
 
     private void assertCompletionText(ActivityScenario<TasksActivity> page, TaskDefinition task, String expected) throws Exception {
@@ -874,7 +871,7 @@ public final class TasksAndroidTest {
         onView(withTagValue(is(declinedTag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
         assertLayoutText(page, declinedTag, "Declined");
         assertLayoutText(page, "task_preview_status:" + occurrenceId(cancelled), context.getString(R.string.tasks_cancelled));
-        assertCompletionText(page, declined, completionRequestText(declined, row(declined).submission.at));
+        assertCompletionText(page, declined, submissionTimeText(declined, row(declined).submission.at));
     }
 
     private void assertLayoutText(ActivityScenario<TasksActivity> page, String tag, String expected) throws Exception {

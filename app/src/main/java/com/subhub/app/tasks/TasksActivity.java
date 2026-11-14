@@ -445,7 +445,7 @@ public final class TasksActivity extends RolePage {
                         .setTag("task_submission_verdict:" + occurrence.submission.id);
             else if (occurrence.status == TaskEngine.Status.PENDING)
                 TasksUi.inlineBadge(heading, getString(R.string.tasks_pending));
-            completionTime(submission, occurrence, R.string.tasks_submission_timestamp);
+            completionTime(submission, occurrence);
             int headerChildren = submission.getChildCount();
             TasksUi.divider(submission);
             if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
@@ -552,13 +552,9 @@ public final class TasksActivity extends RolePage {
     }
 
     private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence) {
-        completionTime(card, occurrence, R.string.tasks_completion_requested_at);
-    }
-
-    private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence, int label) {
         if (occurrence.submission == null) return;
         DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
-        PersonUi.text(card, getString(label,
+        PersonUi.text(card, getString(R.string.tasks_submission_timestamp,
                 display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at))), false)
                 .setTag("task_completion_time:" + occurrence.id);
     }
