@@ -12,7 +12,8 @@ public abstract class FeatureEditorActivity extends AppCompatActivity {
 
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state)) {
+            super.onRestoreInstanceState(state);
+        }
     }
 }

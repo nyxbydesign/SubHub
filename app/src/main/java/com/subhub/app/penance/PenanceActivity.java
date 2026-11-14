@@ -147,7 +147,7 @@ public final class PenanceActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (com.subhub.app.people.DummySubPreview.isRequested(intent)
-                && !FeatureEditorSession.preview(this) && !FeatureEditorSession.internal(this)) { finish(); return; }
+                && !FeatureEditorSession.internal(this)) { finish(); return; }
         if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canView(this, "wallet")) finish(); return; }
         if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
@@ -311,8 +311,8 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override
     protected void onRestoreInstanceState(Bundle state) {
         // Raw input survives only while the same retained draft and authority are still current.
-        if (FeatureEditorSession.preview(this) || (FeatureEditorSession.internal(this)
-                && !FeatureEditorSession.restoreInternalWidgets(this, state))) return;
+        if (FeatureEditorSession.internal(this)
+                && !FeatureEditorSession.restoreInternalWidgets(this, state)) return;
         // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
         populatingRules = true;
         try {
@@ -331,7 +331,6 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);

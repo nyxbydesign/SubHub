@@ -135,9 +135,6 @@ public final class PopupStormActivity extends FeatureEditorActivity {
     @Override protected void onResume() {
         super.onResume();
         if (binding == null) return;
-        if (FeatureEditorSession.preview(this) && !FeatureEditorSession.canView(this, "popup")) {
-            finish(); return;
-        }
         if (editMode != null) editMode.refresh();
         else applyEditState();
         FeatureEditorSession.decorate(this);

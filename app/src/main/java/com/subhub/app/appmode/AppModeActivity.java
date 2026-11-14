@@ -94,7 +94,7 @@ public final class AppModeActivity extends AppCompatActivity {
                         com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE))
                 : new AppTimerManager(FeatureEditorSession.context(this));
         appData = AsyncUiScope.forPage(this);
-        if (savedInstanceState != null && !FeatureEditorSession.preview(this)
+        if (savedInstanceState != null
                 && (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, savedInstanceState))) {
             restoredDrafts = savedInstanceState.getBundle("allowance_drafts");
             dirtyTimers = savedInstanceState.getBoolean("timer_drafts_dirty", false);
@@ -172,7 +172,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
+        if (FeatureEditorSession.remote(this)) return;
         if (ControllerPinManager.isSessionUnlocked()) {
             FeatureEditorSession.leaveEditor(this);
         } else ControllerPinGate.unlock(this, this::applyEditState, false);
@@ -618,8 +618,9 @@ public final class AppModeActivity extends AppCompatActivity {
     }
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state)) {
+            super.onRestoreInstanceState(state);
+        }
     }
 
 }
