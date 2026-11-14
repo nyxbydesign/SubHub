@@ -25,7 +25,8 @@
         android:paddingTop="@dimen/ui_gap_control" android:paddingBottom="20dp">
         <androidx.appcompat.widget.AppCompatButton android:id="@id/tour_next"
             style="@style/Widget.SubHub.PrimaryButton" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:minHeight="52dp" android:textAllCaps="false" />
+            android:layout_height="wrap_content" android:minHeight="52dp" android:textAllCaps="false"
+            android:background="@drawable/bg_primary_button" android:textColor="@color/control_text" />
         <TextView android:id="@id/tour_skip" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center"
             android:text="@string/tour_skip" android:textSize="@dimen/ui_text_body" android:textColor="@color/text_secondary"
