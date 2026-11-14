@@ -13,7 +13,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.GridView;
 import android.widget.LinearLayout;
 
 import androidx.test.core.app.ActivityScenario;
@@ -81,9 +83,10 @@ public final class GagEmojiPickerAndroidTest {
         }
     }
 
-    @Test public void recentOpensFirstAndPersistsOnlySuccessfulInsertionsNewestFirst() {
+    @Test public void recentOpensFirstAndPersistsOnlySuccessfulInsertionsNewestFirst() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         Context target = instrumentation.getTargetContext();
+        GagEmojiCatalog catalog = GagEmojiCatalog.load(target);
         String prefsName = "gag_emoji_fixture_" + UUID.randomUUID();
         SharedPreferences preferences = target.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
         List<String> inserted = new ArrayList<>();
@@ -96,7 +99,7 @@ public final class GagEmojiPickerAndroidTest {
             for (int pass = 0; pass < 2; pass++) {
                 int stage = pass;
                 host.onActivity(activity -> {
-                    GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, false,
+                    GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, catalog, false,
                             emoji -> !rejected.equals(emoji) && inserted.add(emoji), () -> closed.add(true));
                     activity.setContentView(picker, new LinearLayout.LayoutParams(320, 256));
                     reference.set(picker);
@@ -112,14 +115,14 @@ public final class GagEmojiPickerAndroidTest {
                         assertTrue(emojiTiles(picker).isEmpty());
                         assertTrue(all.performClick());
                         assertTrue(all.isSelected());
-                        assertTrue(button(picker, first).performClick());
-                        assertTrue(button(picker, second).performClick());
-                        Button rejectedTile = button(picker, rejected);
+                        assertTrue(tile(picker, first).performClick());
+                        assertTrue(tile(picker, second).performClick());
+                        Button rejectedTile = tile(picker, rejected);
                         assertFalse(rejectedTile.isLongClickable());
                         assertTrue(rejectedTile.performClick());
                         assertTrue(recent.performClick());
                         assertEquals(List.of(second, first), emojiTiles(picker));
-                        assertTrue(button(picker, first).performClick());
+                        assertTrue(tile(picker, first).performClick());
                         assertEquals(List.of(first, second), emojiTiles(picker));
                         assertEquals(List.of(first, second, first), inserted);
                     } else {
@@ -135,15 +138,16 @@ public final class GagEmojiPickerAndroidTest {
         }
     }
 
-    @Test public void recentHistoryDropsTheOldestEntryAtCapacity() {
+    @Test public void recentHistoryDropsTheOldestEntryAtCapacity() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         Context target = instrumentation.getTargetContext();
+        GagEmojiCatalog catalog = GagEmojiCatalog.load(target);
         String prefsName = "gag_emoji_fixture_" + UUID.randomUUID();
         SharedPreferences preferences = target.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
         try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
             AtomicReference<GagEmojiPicker> reference = new AtomicReference<>();
             host.onActivity(activity -> {
-                GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, false, emoji -> true, () -> {});
+                GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, catalog, false, emoji -> true, () -> {});
                 activity.setContentView(picker, new LinearLayout.LayoutParams(320, 256));
                 reference.set(picker);
             });
@@ -151,10 +155,10 @@ public final class GagEmojiPickerAndroidTest {
             host.onActivity(activity -> {
                 GagEmojiPicker picker = reference.get();
                 assertTrue(button(picker, target.getString(R.string.gag_emoji_tab)).performClick());
-                List<String> catalog = emojiTiles(picker);
-                for (String emoji : catalog.subList(0, 33)) assertTrue(button(picker, emoji).performClick());
+                List<String> entries = emojiTiles(picker);
+                for (String emoji : entries.subList(0, 33)) assertTrue(tile(picker, emoji).performClick());
                 assertTrue(button(picker, target.getString(R.string.gag_emoji_recent)).performClick());
-                List<String> expected = new ArrayList<>(catalog.subList(1, 33));
+                List<String> expected = new ArrayList<>(entries.subList(1, 33));
                 java.util.Collections.reverse(expected);
                 assertEquals(expected, emojiTiles(picker));
             });
@@ -163,17 +167,72 @@ public final class GagEmojiPickerAndroidTest {
         }
     }
 
-    private static List<String> emojiTiles(GagEmojiPicker picker) {
-        List<String> labels = new ArrayList<>();
-        ViewGroup scroll = (ViewGroup) picker.getChildAt(1);
-        ViewGroup grid = (ViewGroup) scroll.getChildAt(0);
-        for (int rowIndex = 0; rowIndex < grid.getChildCount(); rowIndex++) {
-            if (!(grid.getChildAt(rowIndex) instanceof ViewGroup row)) continue;
-            for (int column = 0; column < row.getChildCount(); column++) {
-                labels.add(((Button) row.getChildAt(column)).getText().toString());
-            }
+    @Test public void unicodeCatalogKeepsAllGroupsAndRecyclesTheGrid() throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        Context target = instrumentation.getTargetContext();
+        GagEmojiCatalog catalog = GagEmojiCatalog.load(target);
+        assertEquals(List.of(172, 2430, 9, 161, 132, 221, 85, 268, 224, 270),
+                catalog.groups.stream().map(group -> group.entries().size()).collect(java.util.stream.Collectors.toList()));
+        String england = new String(new int[]{0x1F3F4, 0xE0067, 0xE0062, 0xE0065, 0xE006E, 0xE0067, 0xE007F}, 0, 7);
+        for (String emoji : List.of("🧑🏿‍💻", "🇩🇪", "🏿", "#️⃣", "🫫", england))
+            assertEquals(emoji, catalog.entry(emoji).sequence());
+
+        String prefsName = "gag_emoji_fixture_" + UUID.randomUUID();
+        SharedPreferences preferences = target.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
+        AtomicReference<GagEmojiPicker> reference = new AtomicReference<>();
+        List<String> inserted = new ArrayList<>();
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, catalog, false,
+                        inserted::add, () -> {});
+                activity.setContentView(picker, new LinearLayout.LayoutParams(320, 256));
+                reference.set(picker);
+            });
+            instrumentation.waitForIdleSync();
+            host.onActivity(activity -> {
+                GagEmojiPicker picker = reference.get();
+                assertTrue(button(picker, target.getString(R.string.gag_emoji_tab)).performClick());
+                assertTrue(button(picker, "People & Body").performClick());
+            });
+            instrumentation.waitForIdleSync();
+            host.onActivity(activity -> {
+                GridView grid = grid(reference.get());
+                BaseAdapter adapter = (BaseAdapter) grid.getAdapter();
+                assertEquals(2430, adapter.getCount());
+                assertTrue(grid.getChildCount() > 0 && grid.getChildCount() < 96);
+                View recycled = adapter.getView(0, null, grid);
+                assertTrue(recycled == adapter.getView(1, recycled, grid));
+                String name = ((GagEmojiCatalog.Entry) adapter.getItem(1)).name();
+                assertEquals(name, recycled.getContentDescription());
+                assertTrue(tile(reference.get(), "🧑🏿‍💻").performClick());
+                assertEquals(List.of("🧑🏿‍💻"), inserted);
+                assertTrue(button(reference.get(), "Flags").performClick());
+                assertEquals(270, adapter.getCount());
+                assertTrue(tile(reference.get(), "🇩🇪").performClick());
+                assertEquals(List.of("🧑🏿‍💻", "🇩🇪"), inserted);
+            });
+        } finally {
+            target.deleteSharedPreferences(prefsName);
         }
+    }
+
+    private static GridView grid(GagEmojiPicker picker) {
+        return (GridView) picker.getChildAt(2);
+    }
+
+    private static List<String> emojiTiles(GagEmojiPicker picker) {
+        BaseAdapter adapter = (BaseAdapter) grid(picker).getAdapter();
+        List<String> labels = new ArrayList<>();
+        for (int position = 0; position < adapter.getCount(); position++)
+            labels.add(((GagEmojiCatalog.Entry) adapter.getItem(position)).sequence());
         return labels;
+    }
+
+    private static Button tile(GagEmojiPicker picker, String emoji) {
+        GridView grid = grid(picker);
+        int position = emojiTiles(picker).indexOf(emoji);
+        assertTrue(position >= 0);
+        return (Button) grid.getAdapter().getView(position, null, grid);
     }
 
     private static Button button(View view, String text) {

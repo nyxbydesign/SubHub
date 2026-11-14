@@ -159,8 +159,19 @@ public final class GagPersonalDictionary {
             if (match.isEmpty()) {
                 rankLearned(ranked, openings, match, 2);
             } else {
-                if (custom.containsKey(match) || words.containsKey(match) || containsWord(generic, match))
+                boolean genericExact = containsWord(generic, match);
+                if (custom.containsKey(match) || words.containsKey(match) || genericExact)
                     ranked.put(match, prefix);
+                // Keep one strong spelling alternate alongside the literal, even with personal completions.
+                if (genericExact) {
+                    for (String candidate : generic) {
+                        String valid = word(candidate);
+                        if (valid != null && !key(valid).startsWith(match)) {
+                            ranked.put(key(valid), valid);
+                            break;
+                        }
+                    }
+                }
                 for (Map.Entry<String, String> candidate : custom.entrySet()) {
                     if (matches(candidate.getKey(), match))
                         ranked.put(candidate.getKey(), withInitialCase(normalized, candidate.getValue()));

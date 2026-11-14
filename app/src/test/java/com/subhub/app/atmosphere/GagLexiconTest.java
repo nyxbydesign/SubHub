@@ -3,10 +3,13 @@ package com.subhub.app.atmosphere;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.GZIPInputStream;
 
 import org.junit.Test;
 
@@ -30,7 +33,22 @@ public final class GagLexiconTest {
         assertTrue(words.suggestions("teH").isEmpty());
     }
 
-    @Test public void exactWordsAvoidTypoSuggestions() {
+    @Test public void shippedLexiconSuggestsStrongEarlyEditsWithoutReplacingTheTypedWord() throws Exception {
+        Path source = Path.of("src/main/assets/gag_words/words.tsv.gz");
+        GagLexicon bundled = GagLexicon.read(new GZIPInputStream(Files.newInputStream(source)));
+        assertTrue(bundled.isKnownWord("hose"));
+        assertEquals(List.of("those", "house"), bundled.suggestions("hose").subList(0, 2));
+        assertEquals("Those", bundled.suggestions("Hose").get(0));
+        assertEquals("from", bundled.suggestions("form").get(0));
+        assertTrue(bundled.suggestions("whise").contains("whose"));
+        for (String ordinary : List.of("hello", "home", "play", "plan", "quiet", "quite")) {
+            assertTrue(bundled.suggestions(ordinary).stream().allMatch(word -> word.startsWith(ordinary)));
+        }
+        assertTrue(bundled.suggestions("192.168.1.1").isEmpty());
+        assertTrue(bundled.suggestions("1234").isEmpty());
+    }
+
+    @Test public void comparableExactWordsAvoidTypoSuggestions() {
         assertTrue(words.suggestions("schon").isEmpty());
         assertTrue(words.suggestions("schön").isEmpty());
         assertEquals(List.of("plan", "play"), words.suggestions("pla"));

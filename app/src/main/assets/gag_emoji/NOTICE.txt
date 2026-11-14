@@ -1,0 +1,9 @@
+Unicode Emoji 18.0 sequence and English name data
+Source: https://www.unicode.org/Public/18.0.0/emoji/emoji-test.txt
+Source SHA-256: 8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a
+Copyright © 1991-2026 Unicode, Inc. See UNICODE-LICENSE.txt.
+
+The catalog retains the source order for all fully-qualified sequences and
+standalone components. Generate it from the pinned source with:
+
+python scripts/build_gag_emoji_catalog.py emoji-test.txt app/src/main/assets/gag_emoji/catalog.tsv.gz

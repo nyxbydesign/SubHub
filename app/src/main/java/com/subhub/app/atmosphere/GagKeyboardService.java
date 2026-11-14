@@ -92,6 +92,7 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean shifted, capsLock, literalWord;
     private Page page = Page.LETTERS;
     private Page pageBeforeEmoji = Page.LETTERS;
+    private GagEmojiCatalog emojiCatalog;
     private int editorInputType;
     private long lastShiftTap;
     private LinearLayout keyboard;
@@ -496,7 +497,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (page == Page.EMOJI) {
             int height = dp(compact() ? 25 : 43) + 4 * dp(compact() ? 39 : 64.3f);
             GagEmojiPicker picker = new GagEmojiPicker(keyboard.getContext(),
-                    getSharedPreferences(GagEmojiPicker.PREFS, MODE_PRIVATE), compact(),
+                    getSharedPreferences(GagEmojiPicker.PREFS, MODE_PRIVATE), emojiCatalog, compact(),
                     this::insertEmoji, this::closeEmojiPicker);
             keyboard.addView(picker, new LinearLayout.LayoutParams(-1, height));
             return;
@@ -550,6 +551,15 @@ public final class GagKeyboardService extends InputMethodService {
     private void openEmojiPicker() {
         if (!editorAllowed || getCurrentInputConnection() == null
                 || (page != Page.LETTERS && page != Page.SYMBOLS)) return;
+        if (emojiCatalog == null) {
+            try {
+                emojiCatalog = GagEmojiCatalog.load(this);
+            } catch (java.io.IOException unreadable) {
+                android.widget.Toast.makeText(this, R.string.gag_emoji_unavailable,
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         pageBeforeEmoji = page;
         clearSuggestions();
         page = Page.EMOJI;

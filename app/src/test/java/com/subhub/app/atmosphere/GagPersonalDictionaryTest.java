@@ -22,6 +22,18 @@ public final class GagPersonalDictionaryTest {
     }
 
     @Test
+    public void strongSpellingAlternateSharesSlotsWithTheLiteralAndPersonalCompletions() {
+        GagPersonalDictionary.Model model = new GagPersonalDictionary.Model();
+        assertTrue(model.addCustomWord("Hosepipe"));
+        assertTrue(model.addCustomWord("Hoseclamp"));
+        assertTrue(model.record("hosereel", null));
+        assertEquals(List.of("Hose", "Those", "Hosepipe"),
+                model.suggestions("Hose", List.of("Hose", "Those", "House"), 3));
+        assertEquals(List.of("hose", "Hosepipe", "Hoseclamp"),
+                model.suggestions("hose", List.of("hose", "hoseholder"), 3));
+    }
+
+    @Test
     public void unicodeWordsAreNormalizedAndPrivateLookingInputIsRejected() {
         GagPersonalDictionary.Model model = new GagPersonalDictionary.Model();
         assertTrue(model.addCustomWord("E\u0301lan"));

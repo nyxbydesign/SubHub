@@ -25,13 +25,19 @@ final class GagLexicon {
     private static final int MAX_SUGGESTIONS = 3;
     private static final int MAX_WORDS = 100_000;
     private static final int SUGGEST_MIN_COUNT = 40;
+    private static final int KNOWN_WORD_ALTERNATIVE_MIN_COUNT = 20_000;
+    private static final int KNOWN_WORD_ALTERNATIVE_RATIO = 30;
     private final Map<String, Integer> counts;
     private final String[] sorted;
+    private final int highestCount;
 
     GagLexicon(Map<String, Integer> counts) {
         this.counts = Map.copyOf(counts);
         sorted = counts.keySet().toArray(new String[0]);
         Arrays.sort(sorted);
+        int highest = 0;
+        for (int count : counts.values()) highest = Math.max(highest, count);
+        highestCount = highest;
     }
 
     static GagLexicon read(InputStream source) throws IOException {
@@ -76,7 +82,12 @@ final class GagLexicon {
     List<String> suggestions(String original) {
         String word = lookupWord(original);
         if (word == null) return List.of();
-        Map<String, Long> matches = typos(word);
+        Map<String, Long> edits = typos(word);
+        List<String> rankedEdits = counts.containsKey(word) ? ranked(edits) : List.of();
+        List<String> result = new ArrayList<>(MAX_SUGGESTIONS);
+        // A strong non-prefix alternative must survive the frequency ranking of completions.
+        if (!rankedEdits.isEmpty()) result.add(withCase(original, rankedEdits.get(0)));
+        Map<String, Long> matches = edits;
         int start = Arrays.binarySearch(sorted, word);
         if (start < 0) start = -start - 1;
         String[] prefixes = new String[MAX_SUGGESTIONS];
@@ -99,9 +110,11 @@ final class GagLexicon {
         for (int rank = 0; rank < MAX_SUGGESTIONS && prefixes[rank] != null; rank++)
             matches.putIfAbsent(prefixes[rank], (long) frequencies[rank]);
         List<String> ranked = ranked(matches);
-        List<String> result = new ArrayList<>(MAX_SUGGESTIONS);
-        for (String candidate : ranked.subList(0, Math.min(MAX_SUGGESTIONS, ranked.size())))
-            result.add(withCase(original, candidate));
+        for (String candidate : ranked) {
+            if (result.size() == MAX_SUGGESTIONS) break;
+            if (rankedEdits.isEmpty() || !candidate.equals(rankedEdits.get(0)))
+                result.add(withCase(original, candidate));
+        }
         return List.copyOf(result);
     }
 
@@ -113,18 +126,26 @@ final class GagLexicon {
 
     private Map<String, Long> typos(String word) {
         Map<String, Long> result = new HashMap<>();
-        if (word.length() < 3 || counts.containsKey(word)) return result;
+        if (word.length() < 3) return result;
+        Integer exactCount = counts.get(word);
+        long minimumCount = SUGGEST_MIN_COUNT;
+        if (exactCount != null) {
+            if (word.length() < 4) return result;
+            minimumCount = Math.max(KNOWN_WORD_ALTERNATIVE_MIN_COUNT,
+                    (long) exactCount * KNOWN_WORD_ALTERNATIVE_RATIO);
+            if (minimumCount > highestCount) return result;
+        }
         for (int i = 0; i <= word.length(); i++) {
             String head = word.substring(0, i);
             String tail = word.substring(i);
             for (int key = 0; key < ALPHABET.length(); key++)
-                add(result, head + ALPHABET.charAt(key) + tail, 2);
+                add(result, head + ALPHABET.charAt(key) + tail, 2, minimumCount);
             if (tail.isEmpty()) continue;
             char current = tail.charAt(0);
             String rest = tail.substring(1);
-            add(result, head + rest, 2);
+            add(result, head + rest, 2, minimumCount);
             if (tail.length() > 1 && current != tail.charAt(1))
-                add(result, head + tail.charAt(1) + current + tail.substring(2), 8);
+                add(result, head + tail.charAt(1) + current + tail.substring(2), 8, minimumCount);
             String nearby = current >= 'a' && current <= 'z' ? NEIGHBORS[current - 'a'] : "";
             nearby += switch (current) {
                 case 'a' -> "ä"; case 'o' -> "ö"; case 'u' -> "ü";
@@ -132,14 +153,14 @@ final class GagLexicon {
                 default -> "";
             };
             for (int key = 0; key < nearby.length(); key++)
-                add(result, head + nearby.charAt(key) + rest, 3);
+                add(result, head + nearby.charAt(key) + rest, 3, minimumCount);
         }
         return result;
     }
 
-    private void add(Map<String, Long> result, String word, int weight) {
+    private void add(Map<String, Long> result, String word, int weight, long minimumCount) {
         Integer count = counts.get(word);
-        if (count != null && count >= SUGGEST_MIN_COUNT)
+        if (count != null && count >= minimumCount)
             result.merge(word, (long) count * weight, Math::max);
     }
 

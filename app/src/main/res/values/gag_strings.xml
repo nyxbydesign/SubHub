@@ -55,4 +55,5 @@
     <string name="gag_emoji_recent">Recent</string>
     <string name="gag_emoji_back_to_keyboard">Back to keyboard</string>
     <string name="gag_emoji_recent_empty">No recent emoji</string>
+    <string name="gag_emoji_unavailable">Could not open emoji</string>
 </resources>
