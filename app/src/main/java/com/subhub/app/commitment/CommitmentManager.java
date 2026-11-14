@@ -177,11 +177,6 @@ public final class CommitmentManager {
             throw new SecurityException("Managed pact requires installed physical ownership");
     }
 
-    /** Compatibility for older callers; keeper codes are no longer part of a pact. */
-    public static boolean start(Context context, long requestedDurationMs, String ignoredCode) {
-        return start(context, requestedDurationMs);
-    }
-
     public static boolean isActive(Context context) {
         synchronized (RuntimeSessionIdentity.LOCK) {
             SharedPreferences values = preferences(context);
@@ -218,10 +213,6 @@ public final class CommitmentManager {
     public static String countdownLabel(Context context) {
         return isCountdownHidden(context) ? context.getString(com.subhub.app.R.string.pact_time_hidden)
                 : CommitmentActivity.formatDuration(remainingMillis(context));
-    }
-
-    public static boolean verifyAndRelease(Context context, String code) {
-        return !isActive(context);
     }
 
     /** Dom mode may release the pact without the separate keeper code. */
