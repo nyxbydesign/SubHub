@@ -11,5 +11,4 @@
 <string name="settings_overlay">Display Over Other Apps</string>
 <string name="settings_battery">Battery Optimisation</string>
 <string name="settings_notifications">Notifications</string>
-<string name="settings_privacy_permissions">Privacy &amp; Permissions</string>
 </resources>

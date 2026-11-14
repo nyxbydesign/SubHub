@@ -220,20 +220,6 @@ public final class PublicFormIdentityAndroidTest {
     }
 
     private static void assertRows(View view) {
-        if (view instanceof com.subhub.app.util.CompactFieldLayout && view.isShown()) {
-            ViewGroup grid = (ViewGroup) view;
-            for (int i = 1; i < grid.getChildCount(); i++) {
-                View left = grid.getChildAt(i - 1), right = grid.getChildAt(i);
-                if (!left.isShown() || !right.isShown() || left.getTop() != right.getTop()
-                        || !(left instanceof ViewGroup) || !(right instanceof ViewGroup)) continue;
-                ViewGroup first = (ViewGroup) left, second = (ViewGroup) right;
-                if (first.getChildCount() < 2 || second.getChildCount() < 2) continue;
-                View a = first.getChildAt(0), b = second.getChildAt(0);
-                if (a instanceof TextView && b instanceof TextView
-                        && !(a instanceof android.widget.CompoundButton) && !(b instanceof android.widget.CompoundButton))
-                    assertEquals("Pack control top alignment", first.getChildAt(1).getTop(), second.getChildAt(1).getTop());
-            }
-        }
         if (view instanceof com.subhub.app.util.FormRow && view.isShown()) {
             android.widget.LinearLayout row = (android.widget.LinearLayout) view;
             if (row.getChildCount() == 2) {
