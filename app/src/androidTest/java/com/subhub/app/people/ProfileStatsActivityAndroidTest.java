@@ -478,7 +478,7 @@ public final class ProfileStatsActivityAndroidTest {
                     assertTrue(stats.findViewById(R.id.button_back).isShown());
                     TextView subtitle = stats.findViewById(R.id.primary_header_subtitle);
                     assertTrue(subtitle.isShown());
-                    assertEquals(context.getString(R.string.role_this_device), subtitle.getText().toString());
+                    assertEquals(ProfileNames.get(context, false), subtitle.getText().toString());
                     TextView title = stats.findViewById(R.id.primary_header_title);
                     assertEquals(context.getString(R.string.role_stats), title.getText().toString());
                     assertEquals("Stats remains on one line", 1, title.getLineCount());
