@@ -481,9 +481,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         totalsDetails.removeAllViews();
         heading(totalsDetails, R.string.profile_stats_feature_totals);
         row(totalsDetails, R.string.statistics_longest, duration(stats.getLongestSessionSeconds()));
-        int streakDays = stats.getCurrentStreak();
-        row(totalsDetails, R.string.statistics_current_streak,
-                getResources().getQuantityString(R.plurals.stats_days_value, streakDays, streakDays));
+        row(totalsDetails, R.string.statistics_current_streak, days(stats.getCurrentStreak()));
         row(
                 totalsDetails,
                 R.string.stats_limited_app_time,
@@ -768,7 +766,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         }
     }
 
-    private void heading(LinearLayout parent, int title) {
+    void heading(LinearLayout parent, int title) {
         TextView label = text(parent, getString(title), 16, false);
         int icon = title == R.string.stats_recent_sessions || title == R.string.profile_stats_current_session
                 || title == R.string.dom_stats_current ? R.drawable.ic_overview_clock
@@ -778,7 +776,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
     }
 
-    private LinearLayout row(LinearLayout parent, int label, String value) {
+    LinearLayout row(LinearLayout parent, int label, String value) {
         LinearLayout line = new LinearLayout(this);
         line.setGravity(Gravity.CENTER_VERTICAL);
         parent.addView(line, new LinearLayout.LayoutParams(-1, -2));
@@ -790,13 +788,17 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         return line;
     }
 
-    private String duration(long seconds) {
+    String duration(long seconds) {
         return seconds > 0 && seconds < 60
                 ? getString(R.string.stats_seconds_value, seconds)
                 : StatsSnapshot.formatDuration(seconds);
     }
 
-    private String number(long value) {
+    String days(int days) {
+        return getResources().getQuantityString(R.plurals.stats_days_value, days, days);
+    }
+
+    String number(long value) {
         return java.text.NumberFormat.getIntegerInstance().format(value);
     }
 }

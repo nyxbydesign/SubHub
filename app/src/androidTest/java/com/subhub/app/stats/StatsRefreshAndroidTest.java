@@ -142,7 +142,8 @@ public final class StatsRefreshAndroidTest {
         }
     }
 
-    @Test public void openCatalogRefreshesProgressAndDetailsWithoutNavigation() throws Exception {
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void openCatalogRefreshesProgressAndDetailsWithoutNavigation() throws Exception {
         ControllerPinManager.enterDomMode();
         new StatsRepository(context, false).setCustomPhrasesCount(3);
         try (ActivityScenario<AchievementsActivity> page = ActivityScenario.launch(AchievementsActivity.class)) {
@@ -171,7 +172,12 @@ public final class StatsRefreshAndroidTest {
             new StatsRepository(context, false).setCustomPhrasesCount(7);
             await(() -> containsText(current.get().findViewById(android.R.id.content)
                     .findViewWithTag(rowTag), "7 / 10"));
-            onView(withTagValue(is(rowTag))).perform(NativeUiActions.revealAboveNavigation(), click());
+            onView(withTagValue(is(rowTag))).perform(NativeUiActions.revealAboveNavigation())
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));
+            UiRefreshWitness.capture(current.get(), "dom-achievement-catalog");
+            onView(withTagValue(is(rowTag))).perform(click());
+            onView(withId(R.id.achievement_detail_name)).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                    org.hamcrest.Matchers.allOf(isDisplayed(), withText(R.string.achievement_phrase_library))));
             onView(withId(R.id.achievement_detail_progress)).check(androidx.test.espresso.assertion.ViewAssertions.matches(
                     withText(context.getString(R.string.achievement_progress_detail, "7 / 10"))));
             new StatsRepository(context, false).setCustomPhrasesCount(8);
@@ -185,6 +191,9 @@ public final class StatsRefreshAndroidTest {
                 } catch (AssertionError notYet) { SystemClock.sleep(50); }
             } while (!updated && SystemClock.uptimeMillis() < end);
             assertTrue("The open detail dialog must receive current progress", updated);
+            onView(withId(R.id.achievement_detail_progress)).check(
+                    androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));
+            UiRefreshWitness.capture(current.get(), "dom-achievement-detail");
             onView(withId(R.id.achievement_detail_close)).perform(click());
             await(() -> current.get().hasWindowFocus()
                     && current.get().getLifecycle().getCurrentState() == androidx.lifecycle.Lifecycle.State.RESUMED);

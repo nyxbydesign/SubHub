@@ -749,6 +749,10 @@ public final class DummySubPreviewAndroidTest {
             await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
             scenario.recreate();scenario.onActivity(stats::set);await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
             assertTrue(DummySubPreview.isAllowed(stats.get()));assertNotNull(tagged(stats.get(),"internal_statistics"));
+            assertInternalStatisticsRows(stats.get());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_lifetime_summary))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+            capture(stats.get(), "internal-stats-summary");
             for(String field:new String[]{"remote","localFacts"}){
                 java.lang.reflect.Field value=com.subhub.app.stats.StatsActivity.class.getDeclaredField(field);value.setAccessible(true);
                 assertNull("Internal Stats must not acquire physical or remote facts",value.get(stats.get()));
@@ -756,6 +760,29 @@ public final class DummySubPreviewAndroidTest {
         }
         assertRejected(new Intent(context,com.subhub.app.stats.StatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,DummySubPreview.ID.value()));
         assertRealState(before,rows);
+    }
+
+    private void assertInternalStatisticsRows(Activity stats) {
+        com.subhub.app.stats.StatsSnapshot snapshot = internalFixture.data
+                .loadRuntimePresentation(context, internalFixture.data.acknowledged()).statistics();
+        String sessions = java.text.NumberFormat.getIntegerInstance().format(snapshot.getSessions());
+        int days = snapshot.getCurrentStreak();
+        String streak = stats.getResources().getQuantityString(com.subhub.app.R.plurals.stats_days_value, days, days);
+        await(() -> hasStatisticsRow(stats.findViewById(com.subhub.app.R.id.stats_lifetime_summary),
+                        stats.getString(com.subhub.app.R.string.stats_sessions), sessions)
+                && hasStatisticsRow(stats.findViewById(com.subhub.app.R.id.stats_totals_details),
+                        stats.getString(com.subhub.app.R.string.statistics_current_streak), streak));
+    }
+
+    private static boolean hasStatisticsRow(View container, String label, String value) {
+        if (!(container instanceof ViewGroup group)) return false;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            if (group.getChildAt(index) instanceof android.widget.LinearLayout row
+                    && row.getOrientation() == android.widget.LinearLayout.HORIZONTAL
+                    && row.getChildCount() == 2
+                    && hasText(row.getChildAt(0), label) && hasText(row.getChildAt(1), value)) return true;
+        }
+        return false;
     }
 
     @Test public void internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration() throws Exception {
