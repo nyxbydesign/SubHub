@@ -969,7 +969,7 @@
     <string name="update_history_preview">Preview Build</string>
     <string name="update_history_preview_date">Preview · %1$s</string>
     <string name="update_history_published">Published Release</string>
-    <string name="update_history_open">Open the SubHub %1$s changelog</string>
+    <string name="update_history_heading">%1$s, %2$s</string>
     <string name="update_notes_unavailable">This release does not include a user-facing changelog.</string>
     <string name="update_download_options">Download Format</string>
     <string name="update_download_guide">SubHub selected %1$s, the smallest compatible build for this device. For a manual GitHub download, choose Universal when you are unsure.</string>

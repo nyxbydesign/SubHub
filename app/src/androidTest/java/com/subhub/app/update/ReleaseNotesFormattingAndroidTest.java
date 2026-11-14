@@ -54,7 +54,7 @@ public final class ReleaseNotesFormattingAndroidTest {
             scenario.onActivity(activity -> {
                 TextView details = activity.findViewById(R.id.release_details);
                 assertNotNull(details);
-                ((View) details.getParent()).performClick();
+                activity.findViewById(R.id.release_item_heading).performClick();
                 assertEquals(View.VISIBLE, details.getVisibility());
                 assertFormatting(details);
             });

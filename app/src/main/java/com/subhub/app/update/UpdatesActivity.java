@@ -245,6 +245,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         for (ReleaseHistoryItem item : history) {
             View row = inflater.inflate(R.layout.item_release_history,
                     binding.releaseHistoryList, false);
+            View heading = row.findViewById(R.id.release_item_heading);
             TextView version = row.findViewById(R.id.release_version);
             TextView meta = row.findViewById(R.id.release_meta);
             TextView details = row.findViewById(R.id.release_details);
@@ -253,23 +254,32 @@ public final class UpdatesActivity extends AppCompatActivity {
             meta.setText(historyMeta(item, candidate));
             details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
-            boolean expanded = expandedHistory.contains(item.tag);
-            details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            chevron.setRotation(expanded ? 90f : 0f);
-            androidx.core.view.ViewCompat.setStateDescription(row,
-                    getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
-            row.setContentDescription(getString(R.string.update_history_open, item.versionName));
-            row.setOnClickListener(view -> {
+            heading.setContentDescription(getString(R.string.update_history_heading, version.getText(), meta.getText()));
+            androidx.core.view.ViewCompat.setScreenReaderFocusable(heading, true);
+            androidx.core.view.ViewCompat.setAccessibilityDelegate(heading,
+                    new androidx.core.view.AccessibilityDelegateCompat() {
+                        @Override public void onInitializeAccessibilityNodeInfo(View host,
+                                androidx.core.view.accessibility.AccessibilityNodeInfoCompat info) {
+                            super.onInitializeAccessibilityNodeInfo(host, info);
+                            info.setClassName(android.widget.Button.class.getName());
+                        }
+                    });
+            renderHistoryDisclosure(heading, details, chevron, expandedHistory.contains(item.tag));
+            heading.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
-                details.setVisibility(show ? View.VISIBLE : View.GONE);
-                chevron.setRotation(show ? 90f : 0f);
-                androidx.core.view.ViewCompat.setStateDescription(row,
-                        getString(show ? R.string.section_expanded : R.string.section_collapsed));
+                renderHistoryDisclosure(heading, details, chevron, show);
                 if (show) expandedHistory.add(item.tag);
                 else expandedHistory.remove(item.tag);
             });
             binding.releaseHistoryList.addView(row);
         }
+    }
+
+    private void renderHistoryDisclosure(View heading, TextView details, View chevron, boolean expanded) {
+        details.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        chevron.setRotation(expanded ? 90f : 0f);
+        androidx.core.view.ViewCompat.setStateDescription(heading,
+                getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
     }
 
     private String historyMeta(ReleaseHistoryItem item, UpdateCandidate candidate) {

@@ -228,6 +228,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 assertEquals(activity.getString(R.string.update_history_preview_date, "2026-10-08"), meta(rows, 2).getText().toString());
                 assertEquals(activity.getString(R.string.update_automatic_dev_toggle),
                         ((TextView) activity.findViewById(R.id.automatic_checks)).getText().toString());
+                assertReleaseDisclosure(activity, rows.getChildAt(0));
             });
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             scenario.onActivity(activity -> {
@@ -244,6 +245,8 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 row.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
                 row.layout(0, 0, width, row.getMeasuredHeight()); assertFits(caption);
+                assertTrue(row.findViewById(R.id.release_item_heading).getHeight()
+                        >= themed.getResources().getDimensionPixelSize(R.dimen.control_min_height));
                 export(row, "preview-timestamp-280dp-font130.png");
             });
             state.setDevUpdates(false); state.setAutomaticChecks(false); scenario.recreate();
@@ -296,6 +299,44 @@ public final class DevelopmentUpdateScheduleAndroidTest {
     }
 
     private static TextView meta(LinearLayout rows, int index) { return rows.getChildAt(index).findViewById(R.id.release_meta); }
+
+    private static void assertReleaseDisclosure(UpdatesActivity activity, View row) {
+        View heading = row.findViewById(R.id.release_item_heading);
+        TextView version = row.findViewById(R.id.release_version);
+        TextView meta = row.findViewById(R.id.release_meta);
+        TextView details = row.findViewById(R.id.release_details);
+        assertFalse(row.isClickable());
+        assertFalse(row.isFocusable());
+        assertNull(row.getContentDescription());
+        assertTrue(heading.isFocusable());
+        assertTrue(heading.isClickable());
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, version.getImportantForAccessibility());
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, meta.getImportantForAccessibility());
+        assertSame(row, details.getParent());
+        assertEquals(View.GONE, details.getVisibility());
+        assertReleaseHeadingNode(activity, heading, version, meta, R.string.section_collapsed);
+
+        assertTrue(heading.performClick());
+        assertEquals(View.VISIBLE, details.getVisibility());
+        assertReleaseHeadingNode(activity, heading, version, meta, R.string.section_expanded);
+        assertFalse(details.isClickable());
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES, details.getImportantForAccessibility());
+        assertEquals("Fixture release notes", details.createAccessibilityNodeInfo().getText().toString());
+
+        assertTrue(heading.performClick());
+        assertEquals(View.GONE, details.getVisibility());
+        assertReleaseHeadingNode(activity, heading, version, meta, R.string.section_collapsed);
+    }
+
+    private static void assertReleaseHeadingNode(UpdatesActivity activity, View heading,
+            TextView version, TextView meta, int stateDescription) {
+        var node = androidx.core.view.accessibility.AccessibilityNodeInfoCompat.wrap(
+                heading.createAccessibilityNodeInfo());
+        assertEquals(android.widget.Button.class.getName(), node.getClassName().toString());
+        assertEquals(activity.getString(R.string.update_history_heading, version.getText(), meta.getText()),
+                node.getContentDescription().toString());
+        assertEquals(activity.getString(stateDescription), node.getStateDescription().toString());
+    }
 
     private static void assertFits(TextView text) {
         assertNotNull(text.getLayout()); assertTrue(text.getLayout().getLineCount() > 0);
