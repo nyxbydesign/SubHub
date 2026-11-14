@@ -124,13 +124,13 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         assertTrue(preferences.edit().putStringSet(SubliminalSettingsRepository.KEY_PACKS, Set.of("beta"))
                 .putString(PopupStormSettings.K_POSITION_MODE, "random").commit());
-        assertEquals(expectedAtmosphere() + "\n\nGag\nUnknown", AtmosphereContractDetails.remote(context, sections,
+        assertEquals(expectedAtmosphere() + "\n\nGagging\nUnknown", AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", true, "popup", true), PersonSnapshot.Freshness.CURRENT).details);
         sections.put("gag", com.subhub.app.remote.GagContractFields.defaults().put("enabled", true));
         AtmosphereContractDetails activeGag =
                 AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT);
         assertTrue(activeGag.summary.endsWith("\nGagging On"));
-        assertTrue(activeGag.details.endsWith("\n\nGag\nOn"));
+        assertTrue(activeGag.details.endsWith("\n\nGagging\nOn"));
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
                 .details.contains("Categories: Findom"));
