@@ -150,8 +150,9 @@ public final class GagActivity extends AppCompatActivity {
     }
 
     private void updateFields() {
-        interval.setVisibility(modes.getCheckedRadioButtonId() == R.id.gag_every_n ? View.VISIBLE : View.GONE);
-        words.setVisibility(modes.getCheckedRadioButtonId() == R.id.gag_specific ? View.VISIBLE : View.GONE);
+        int mode = modes.getCheckedRadioButtonId();
+        findViewById(R.id.gag_interval_field).setVisibility(mode == R.id.gag_every_n ? View.VISIBLE : View.GONE);
+        findViewById(R.id.gag_words_field).setVisibility(mode == R.id.gag_specific ? View.VISIBLE : View.GONE);
     }
 
     private void rulesChanged() {

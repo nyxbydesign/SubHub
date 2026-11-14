@@ -16,59 +16,131 @@
 
         <include layout="@layout/view_primary_header" />
 
-        <include
-            android:id="@+id/gag_enabled"
-            layout="@layout/view_form_toggle"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/ui_gap_group" />
+            android:layout_marginTop="@dimen/ui_gap_section"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingHorizontal="@dimen/ui_card_padding"
+            android:paddingVertical="@dimen/ui_card_padding_vertical">
 
-        <RadioGroup
-            android:id="@+id/gag_modes"
+            <include
+                android:id="@+id/gag_enabled"
+                layout="@layout/view_form_toggle" />
+
+            <TextView
+                style="@style/Widget.SubHub.FieldLabel"
+                android:accessibilityHeading="true"
+                android:text="@string/gag_when_to_replace" />
+
+            <RadioGroup
+                android:id="@+id/gag_modes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/ui_gap_control"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/gag_all"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_quality_radio"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_every_word" />
+
+                <RadioButton
+                    android:id="@+id/gag_every_n"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/ui_gap_inline"
+                    android:background="@drawable/bg_quality_radio"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_every_n_words" />
+
+                <RadioButton
+                    android:id="@+id/gag_specific"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/ui_gap_inline"
+                    android:background="@drawable/bg_quality_radio"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_specific_words" />
+            </RadioGroup>
+
+            <LinearLayout
+                android:id="@+id/gag_interval_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:labelFor="@+id/gag_interval"
+                    android:text="@string/gag_interval" />
+
+                <EditText
+                    android:id="@id/gag_interval"
+                    style="@style/Widget.SubHub.Input"
+                    android:inputType="number"
+                    android:maxLength="3" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/gag_words_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:labelFor="@+id/gag_words"
+                    android:text="@string/gag_words" />
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldHelp"
+                    android:text="@string/gag_one_per_line" />
+
+                <EditText
+                    android:id="@id/gag_words"
+                    style="@style/Widget.SubHub.Input"
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine"
+                    android:maxLength="2048"
+                    android:maxLines="6"
+                    android:minLines="2" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
-            <RadioButton
-                android:id="@+id/gag_all"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/gag_every_word" />
-            <RadioButton
-                android:id="@+id/gag_every_n"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/gag_every_n_words" />
-            <RadioButton
-                android:id="@+id/gag_specific"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/gag_specific_words" />
-        </RadioGroup>
+            android:layout_marginTop="@dimen/ui_gap_group"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingHorizontal="@dimen/ui_card_padding"
+            android:paddingVertical="@dimen/ui_card_padding_vertical">
 
-        <EditText
-            android:id="@+id/gag_interval"
-            style="@style/Widget.SubHub.Input"
-            android:hint="@string/gag_interval"
-            android:inputType="number"
-            android:maxLength="3" />
+            <TextView
+                style="@style/Widget.SubHub.SectionHeader"
+                android:accessibilityHeading="true"
+                android:labelFor="@+id/gag_replacements"
+                android:text="@string/gag_replacements" />
 
-        <EditText
-            android:id="@+id/gag_words"
-            style="@style/Widget.SubHub.Input"
-            android:hint="@string/gag_words"
-            android:inputType="textMultiLine"
-            android:maxLength="2048"
-            android:maxLines="6"
-            android:minLines="2" />
+            <TextView
+                style="@style/Widget.SubHub.FieldHelp"
+                android:text="@string/gag_one_per_line" />
 
-        <EditText
-            android:id="@+id/gag_replacements"
-            style="@style/Widget.SubHub.Input"
-            android:hint="@string/gag_replacements"
-            android:inputType="textMultiLine"
-            android:maxLength="2048"
-            android:maxLines="6"
-            android:minLines="2" />
-
+            <EditText
+                android:id="@id/gag_replacements"
+                style="@style/Widget.SubHub.Input"
+                android:gravity="top|start"
+                android:inputType="textMultiLine"
+                android:maxLength="2048"
+                android:maxLines="6"
+                android:minLines="2" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

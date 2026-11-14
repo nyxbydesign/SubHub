@@ -247,10 +247,27 @@ public class RemoteEditorAndroidTest {
             androidx.test.uiautomator.BySelector toggle = androidx.test.uiautomator.By.res(
                     context.getPackageName(), "gag_enabled");
             assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(toggle), 5000));
+            String packageName = context.getPackageName();
+            var interval = androidx.test.uiautomator.By.res(packageName, "gag_interval");
+            var words = androidx.test.uiautomator.By.res(packageName, "gag_words");
+            var replacements = androidx.test.uiautomator.By.res(packageName, "gag_replacements");
+            assertFalse(device.hasObject(androidx.test.uiautomator.By.res(packageName, "gag_keyboard_settings")));
+            assertFalse(device.hasObject(interval));
+            assertFalse(device.hasObject(words));
+            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_replacements))));
+            assertTrue(device.hasObject(replacements));
             device.findObject(toggle).click();
             await(() -> feature.store.latestCommand(peer.identity, generation) != null);
             JSONObject command = new JSONObject(feature.store.latestCommand(peer.identity, generation).body);
             assertTrue(GagContractFields.section(command.getJSONObject("configuration")).getBoolean("enabled"));
+            device.findObject(androidx.test.uiautomator.By.res(packageName, "gag_every_n")).click();
+            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(interval), 5000));
+            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_interval))));
+            assertFalse(device.hasObject(words));
+            device.findObject(androidx.test.uiautomator.By.res(packageName, "gag_specific")).click();
+            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(words), 5000));
+            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_words))));
+            assertFalse(device.hasObject(interval));
         } finally {
             if (device.hasObject(androidx.test.uiautomator.By.res(context.getPackageName(), "gag_enabled")))
                 device.pressBack();
