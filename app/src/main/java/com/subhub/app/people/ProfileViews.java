@@ -44,6 +44,11 @@ public final class ProfileViews {
 
     /** Presentation-only callers can omit the independently persisted journal. */
     static void identity(LinearLayout parent, PersonSnapshot person, boolean includeJournal) {
+        identity(parent, person, includeJournal, null);
+    }
+
+    static void identity(LinearLayout parent, PersonSnapshot person, boolean includeJournal,
+            com.subhub.app.journal.JournalPreview.Initial journal) {
         Context context = parent.getContext();
         LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
@@ -53,11 +58,14 @@ public final class ProfileViews {
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(hero, person, "person_connection:" + person.id.value(), true);
         if (includeJournal && context instanceof android.app.Activity) {
-            PersonId target = person.id.isLocal() ? new PersonId("journal_local_sub") : person.id;
             com.subhub.app.journal.JournalPreview.add(hero,
-                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), target,
-                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id));
+                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), journalTarget(person.id),
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id), journal);
         }
+    }
+
+    static PersonId journalTarget(PersonId id) {
+        return id.isLocal() ? new PersonId("journal_local_sub") : id;
     }
 
     public static LinearLayout person(LinearLayout parent, PersonSnapshot person, Runnable open) {

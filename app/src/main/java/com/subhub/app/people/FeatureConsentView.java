@@ -58,6 +58,18 @@ public final class FeatureConsentView extends ViewGroup {
     }
 
     public void readOnly(String key, int label, Boolean allowed) {
+        addReadOnly(key, label, allowed, R.string.remote_unknown);
+    }
+
+    public java.util.function.Consumer<Boolean> readOnlyPending(String key, int label) {
+        Cell cell = addReadOnly(key, label, null, R.string.overview_unknown);
+        return allowed -> {
+            cell.state(allowed);
+            cell.describe();
+        };
+    }
+
+    private Cell addReadOnly(String key, int label, Boolean allowed, int unknown) {
         Cell cell = new Cell(getContext(), label);
         TextView name = new TextView(getContext()); name.setText(getContext().getString(label));
         UiIdentity.textSize(name, R.dimen.ui_text_row_title);
@@ -66,17 +78,18 @@ public final class FeatureConsentView extends ViewGroup {
                 cell.statusWidth + PersonUi.dp(getContext(), 16), PersonUi.dp(getContext(), 4));
         cell.label = name; cell.addView(name, 0, new FrameLayout.LayoutParams(-1, -1));
         if (allowed == null) {
-            cell.status.setText(R.string.remote_unknown);
+            cell.status.setText(unknown);
             cell.statusWidth = Math.max(cell.statusWidth, (int) Math.ceil(cell.status.getPaint()
                     .measureText(cell.status.getText().toString())));
             name.setPaddingRelative(PersonUi.dp(getContext(), 8), PersonUi.dp(getContext(), 4),
                     cell.statusWidth + PersonUi.dp(getContext(), 16), PersonUi.dp(getContext(), 4));
         } else cell.state(allowed);
         cell.setTag("person_allowance:" + key);
-        cell.setContentDescription(getContext().getString(label) + ", " + cell.status.getText());
+        cell.describe();
         name.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         ViewCompat.setScreenReaderFocusable(cell, true);
         addView(cell, new LayoutParams(-1, -2));
+        return cell;
     }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
@@ -136,6 +149,7 @@ public final class FeatureConsentView extends ViewGroup {
             status.setText(allowed ? R.string.control_state_on : R.string.control_state_off);
             status.setTextColor(getContext().getColor(allowed ? R.color.control_checked_text : R.color.text_secondary));
         }
+        void describe() { setContentDescription(label.getText() + ", " + status.getText()); }
         int naturalWidth() {
             return (int) Math.ceil(android.text.Layout.getDesiredWidth(label.getText(), label.getPaint()))
                     + statusWidth + PersonUi.dp(getContext(), 24);

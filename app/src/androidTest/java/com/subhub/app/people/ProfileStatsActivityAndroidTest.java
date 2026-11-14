@@ -46,6 +46,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -135,8 +136,17 @@ public final class ProfileStatsActivityAndroidTest {
             await(() -> tag(profile, "person_tab:stats") != null);
             onView(withTagValue(is("person_tab:stats"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             StatsActivity stats = resumed(StatsActivity.class);
-            await(() -> stats.findViewById(R.id.profile_stats_allowances) != null
-                    && text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+            String streakLabel = context.getString(R.string.statistics_current_streak);
+            AtomicBoolean populated = new AtomicBoolean();
+            await(() -> {
+                onMain(() -> {
+                    if (!text(stats.findViewById(R.id.stats_totals_details)).contains(streakLabel)) return;
+                    assertTrue("App allowances are visible with the first populated totals",
+                            text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+                    populated.set(true);
+                });
+                return populated.get();
+            });
             onMain(() -> {
                 assertEquals(PersonId.LOCAL, PersonRoutes.requireId(stats.getIntent()));
                 assertNotNull(stats.findViewById(R.id.stats_lifetime_summary));
@@ -466,7 +476,10 @@ public final class ProfileStatsActivityAndroidTest {
             onView(withTagValue(is("person_tab:stats")))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             StatsActivity stats = resumed(StatsActivity.class);
-            await(() -> text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+            String streakLabel = context.getString(R.string.statistics_current_streak);
+            await(() -> text(stats.findViewById(R.id.stats_totals_details)).contains(streakLabel));
+            onMain(() -> assertTrue("App allowances are visible with the first populated totals",
+                    text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome")));
             try {
                 captureLocal(stats, "stats-top", null, () -> {
                     assertEquals(PersonId.LOCAL, PersonRoutes.requireId(stats.getIntent()));

@@ -7,6 +7,10 @@ import android.widget.*;
 
 import com.subhub.app.R;
 import com.subhub.app.penance.*;
+import com.subhub.app.people.LocalPersonRepository;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonSnapshot;
+import com.subhub.app.people.PersonUi;
 import com.subhub.app.util.PreferencePage;
 
 import java.text.DateFormat;
@@ -439,7 +443,10 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             HomeAchievementPreview preview = null;
             if (workspace == AchievementRole.SUB) preview = HomeAchievementPreview.loadLocal(app, facts);
             else HistoricalAchievementBackfill.local(app, new AchievementManager(app), facts);
-            return new LocalOverview(facts, preview);
+            List<PersonSnapshot.Allowance> appTime = null;
+            try { appTime = new LocalPersonRepository(app).loadAllowances(); }
+            catch (RuntimeException unavailable) { /* Keep totals available if allowance data cannot be read. */ }
+            return new LocalOverview(facts, preview, appTime);
         }, loaded -> {
             if (!workspace.accessible(this)) { finish(); return; }
             if (!identity.current()) { clearLocalStatistics(); return; }
@@ -448,6 +455,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             if (loaded.achievements != null) achievements.render(loaded.achievements);
             else achievements.setVisibility(android.view.View.GONE);
             bindLocalTotals(loaded.facts);
+            bindLocalAllowances(loaded.appTime);
             bindSessions();
         }, failure -> {
             if (localFacts != null && localFactsIdentity != null && localFactsIdentity.current()) return;
@@ -459,6 +467,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         localFacts = null; localFactsIdentity = null;
         lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
         currentSessionDetails.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
+        allowances.removeAllViews();
         text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
         bindSessions(); updateCurrentSessionVisibility();
     }
@@ -466,8 +475,10 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private static final class LocalOverview {
         final LocalRetainedStatistics facts;
         final HomeAchievementPreview achievements;
-        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements) {
-            this.facts = facts; this.achievements = achievements;
+        final List<PersonSnapshot.Allowance> appTime;
+        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements,
+                List<PersonSnapshot.Allowance> appTime) {
+            this.facts = facts; this.achievements = achievements; this.appTime = appTime;
         }
     }
 
@@ -649,17 +660,13 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             });
             return;
         }
-        android.content.Context app = getApplicationContext();
-        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(app);
-        data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
-            allowances.removeAllViews();
-            com.subhub.app.people.PersonUi.allowances(allowances, person);
-            updateCurrentSessionVisibility();
-        }, failure -> {
-            allowances.removeAllViews();
-            text(allowances, getString(R.string.role_unknown_data), 13, true);
-            updateCurrentSessionVisibility();
-        });
+    }
+
+    private void bindLocalAllowances(List<PersonSnapshot.Allowance> appTime) {
+        allowances.removeAllViews();
+        if (appTime != null) PersonUi.allowances(allowances, PersonId.LOCAL, appTime);
+        else text(allowances, getString(R.string.role_unknown_data), 13, true);
+        updateCurrentSessionVisibility();
     }
 
     /** Neither an idle session nor a metric refresh may hide or discard daily allowances. */

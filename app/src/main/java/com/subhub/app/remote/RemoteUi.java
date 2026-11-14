@@ -60,6 +60,23 @@ public final class RemoteUi implements ConnectionUi {
     }
 
     private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> configurationObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final java.util.concurrent.CopyOnWriteArrayList<java.util.function.Consumer<PersonId>> runtimeObservers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public static AutoCloseable observeRuntime(java.util.function.Consumer<PersonId> observer) {
+        runtimeObservers.addIfAbsent(java.util.Objects.requireNonNull(observer));
+        return () -> runtimeObservers.remove(observer);
+    }
+
+    static void runtimeConfirmed(PersonId person) {
+        if (runtimeObservers.isEmpty()) return;
+        iconMain.post(() -> {
+            for (var observer : runtimeObservers) {
+                try { observer.accept(person); } catch (RuntimeException ignored) { /* Observer owns its state. */ }
+            }
+        });
+    }
+
     private static final java.util.concurrent.atomic.AtomicBoolean configurationNotification=new java.util.concurrent.atomic.AtomicBoolean();
     /** Event-driven save/receipt updates; no new polling or network work. */
     public static AutoCloseable observeConfiguration(Runnable observer){

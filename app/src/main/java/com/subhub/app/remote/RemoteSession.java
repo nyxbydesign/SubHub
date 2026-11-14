@@ -46,6 +46,7 @@ public final class RemoteSession {
         default void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos)throws Exception {}
         void prepare(RemoteStore.Peer peer) throws Exception;
         void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception;
+        default void runtimeConfirmed(RemoteStore.Peer peer) {}
         List<AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception;
         RemoteAssets assets(RemoteStore.Peer peer) throws Exception;
         void complete(RemoteStore.Peer peer) throws Exception;
@@ -612,6 +613,7 @@ public final class RemoteSession {
                     bulk=(Boolean)queued;
                 }
                 store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"),activity);
+                if (peer.localRole == RemoteProtocol.Role.DOM && phase <= 0) hooks.runtimeConfirmed(peer);
                 receivePresence(connection, frame);
                 break;
             }

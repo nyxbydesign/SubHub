@@ -12,5 +12,9 @@
         <activity android:name="com.subhub.app.censor.android.ProjectionTargetFixtureActivity" android:exported="true"
             android:launchMode="singleTask" android:configChanges="orientation|screenSize"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity android:name="com.subhub.app.atmosphere.GagEditorFixtureActivity"
+            android:exported="true" android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
     </application>
 </manifest>

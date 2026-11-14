@@ -185,11 +185,14 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/atmosphere/GagEmojiCatalog.java": "main_atmosphere_gag_emoji_catalog",
     b"app/src/main/java/com/subhub/app/atmosphere/GagEmojiPicker.java": "main_atmosphere_gag_emoji_picker",
     b"app/src/main/java/com/subhub/app/atmosphere/GagKeyboardService.java": "main_atmosphere_gag_keyboard_service",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagKeyAlternatives.java": "main_atmosphere_gag_key_alternatives",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagKeyAlternativesPopup.java": "main_atmosphere_gag_key_alternatives_popup",
     b"app/src/main/java/com/subhub/app/atmosphere/GagKeyPress.java": "main_atmosphere_gag_key_press",
     b"app/src/main/java/com/subhub/app/atmosphere/GagLexicon.java": "main_atmosphere_gag_lexicon",
     b"app/src/main/java/com/subhub/app/atmosphere/GagClipboard.java": "main_atmosphere_gag_clipboard",
     b"app/src/main/java/com/subhub/app/atmosphere/GagNextWords.java": "main_atmosphere_gag_next_words",
     b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionContext.java": "main_atmosphere_gag_suggestion_context",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionSpace.java": "main_atmosphere_gag_suggestion_space",
     b"app/src/main/java/com/subhub/app/atmosphere/GagParticipation.java": "main_atmosphere_gag_participation",
     b"app/src/main/java/com/subhub/app/atmosphere/GagPersonalDictionary.java": "main_atmosphere_gag_personal_dictionary",
     b"app/src/main/java/com/subhub/app/atmosphere/GagPunctuation.java": "main_atmosphere_gag_punctuation",
@@ -890,6 +893,7 @@ JAVAC_MAIN_SOURCES = {
 
 JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/remote/DummyPreviewConfiguration.java": "unit_remote_dummy_preview_configuration",
+    b"app/src/test/java/com/subhub/app/atmosphere/GagKeyAlternativesTest.java": "unit_gag_key_alternatives_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagLexiconTest.java": "unit_gag_lexicon_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagNextWordsTest.java": "unit_gag_next_words_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagPersonalDictionaryTest.java": "unit_gag_personal_dictionary_test",

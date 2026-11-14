@@ -268,6 +268,7 @@ public final class ProfileAndroidTest {
     @Test public void subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation() {
         java.util.Map<String, ?> baseline = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> {
                 assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features"));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor"));
@@ -280,6 +281,7 @@ public final class ProfileAndroidTest {
                 if (back) androidx.test.espresso.Espresso.pressBack();
                 else onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
                 resumed(ProfileActivity.class);
+                awaitOwnSubProfile(scenario);
                 assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
             }
             onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
@@ -292,9 +294,11 @@ public final class ProfileAndroidTest {
             assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
             onView(tag("profile_save")).perform(revealAboveNavigation(), click());
             resumed(ProfileActivity.class);
+            awaitOwnSubProfile(scenario);
             assertFalse(SubFeaturePolicy.chosen(context, "censor"));
             assertFalse(ControllerPinManager.isDomModeActive());
             scenario.recreate();
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features")));
         }
     }
@@ -304,6 +308,7 @@ public final class ProfileAndroidTest {
         assertTrue(ProfileStore.save(context, false, "Milo", "A steady routine and clear communication.", ""));
         assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", true).commit());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup hero = root.findViewWithTag("self_profile:sub");
                 View features = root.findViewWithTag("self_profile_features"); View preview = root.findViewWithTag("profile_preview:sub");
@@ -340,6 +345,10 @@ public final class ProfileAndroidTest {
             });
             onView(tag("profile_cancel")).perform(revealAboveNavigation(), click()); resumed(ProfileActivity.class);
         }
+    }
+
+    private static void awaitOwnSubProfile(ActivityScenario<ProfileActivity> scenario) {
+        await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("self_profile:sub") != null);
     }
 
     @Test public void gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup() {

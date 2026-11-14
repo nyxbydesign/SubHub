@@ -108,6 +108,16 @@ public final class JournalRuntime {
         }
     }
 
+    JournalEntry latest(boolean dom, PersonId target) throws Exception {
+        synchronized (authority) {
+            requireScreen(dom);
+            boolean local = localShared(target);
+            if (local) requireLocalShared(dom, target);
+            String relationship = local || target.isLocal() ? null : scope(peer(target, dom));
+            return entries.latest(dom, relationship, local);
+        }
+    }
+
     public JournalEntry entry(boolean dom, PersonId target, String id) throws Exception {
         synchronized (authority) {
             requireScreen(dom);

@@ -38,15 +38,19 @@ public final class AchievementPreviewView extends LinearLayout {
         data.load(key, () -> HomeAchievementPreview.load(app, stats), this::render, failure -> {
             rendered = null;
             removeAllViews();
-            com.subhub.app.util.UiIdentity.sectionIcon(
-                PersonUi.text(this, getContext().getString(R.string.achievements_title), true),
-                R.drawable.ic_overview_achievement);
+            unavailable();
         });
     }
 
     public void load(AsyncUiScope data, String key) { load(data, key, null); }
 
-    void render(HomeAchievementPreview preview) {
+    public void unavailable() {
+        com.subhub.app.util.UiIdentity.sectionIcon(
+                PersonUi.text(this, getContext().getString(R.string.achievements_title), true),
+                R.drawable.ic_overview_achievement);
+    }
+
+    public void render(HomeAchievementPreview preview) {
         if (!preview.achievements.isAccessible()) { rendered = null; removeAllViews(); return; }
         java.util.List<Object> signature = new java.util.ArrayList<>();
         java.util.Collections.addAll(signature, preview.fingerprint, preview.achievements.getTotalCount(),

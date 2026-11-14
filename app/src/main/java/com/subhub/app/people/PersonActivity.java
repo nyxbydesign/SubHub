@@ -13,6 +13,7 @@ import com.subhub.app.appmode.DeviceStartResultRegistry;
 import com.subhub.app.appmode.DeviceStartViewModel;
 import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.configuration.FeatureEditorSession;
+import com.subhub.app.journal.JournalPreview;
 import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.security.ControllerPinManager;
@@ -32,7 +33,8 @@ public final class PersonActivity extends RolePage {
     private final java.util.Map<String, java.util.List<Object>> signatures = new java.util.HashMap<>();
     private final java.util.Map<String, Integer> positions = new java.util.HashMap<>();
     private boolean observing;
-    private AutoCloseable appIconObserver, presenceObserver;
+    private AutoCloseable appIconObserver, presenceObserver, runtimeObserver;
+    private boolean runtimeRefreshPending;
     private long appIconEpoch;
     private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
     private com.subhub.app.security.KeyholderProvider appIconAuthority;
@@ -248,6 +250,11 @@ public final class PersonActivity extends RolePage {
         if (!expected.isLocal()) appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
             if (canRefreshRemote(request, expected, provider, authority)) refresh();
         });
+        if (!expected.isLocal()) runtimeObserver = com.subhub.app.remote.RemoteUi.observeRuntime(person -> {
+            if (!expected.equals(person) || !canRefreshRemote(request, expected, provider, authority)) return;
+            runtimeRefreshPending = true;
+            observePerson();
+        });
     }
 
     private boolean canRefreshRemote(long request, PersonId expected,
@@ -261,10 +268,12 @@ public final class PersonActivity extends RolePage {
 
     private void stopRemoteChanges() {
         ++appIconEpoch;
-        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver})
+        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver, runtimeObserver})
             if (observer != null) try { observer.close(); } catch (Exception ignored) { /* The epoch fences callbacks. */ }
         appIconObserver = null;
         presenceObserver = null;
+        runtimeObserver = null;
+        runtimeRefreshPending = false;
     }
 
     private void observePerson() {
@@ -276,6 +285,7 @@ public final class PersonActivity extends RolePage {
             currentCountdown.setText(com.subhub.app.commitment.CommitmentManager.countdownLabel(this));
         }
         if (data.isPending("person") || data.isPending("person-observe")) return;
+        runtimeRefreshPending = false;
         PersonId requested = personId;
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
@@ -290,6 +300,7 @@ public final class PersonActivity extends RolePage {
             if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
             com.subhub.app.appmode.ExtraTimeEntry.refresh(body, requested);
             render(person);
+            if (runtimeRefreshPending) observePerson();
         }, failure -> {
             if (guardTarget() && observing && provider == com.subhub.app.relationships.RelationshipUi.provider()
                     && authority == People.keyholder()) { renderedSection = null; unavailable(); }
@@ -386,14 +397,22 @@ public final class PersonActivity extends RolePage {
         PersonRepository repository = People.repository(app);
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
+        boolean includeJournal = ("profile".equals(section) || "stats".equals(section))
+                && !"profile".equals(renderedSection);
+        boolean dom = com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(this);
         data.load("person", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
-            return repository.load(requested);
-        }, person -> {
+            PersonSnapshot person = repository.load(requested);
+            JournalPreview.Initial journal = includeJournal && requested.equals(person.id)
+                    ? JournalPreview.loadInitial(app, dom, ProfileViews.journalTarget(requested)) : null;
+            return new ProfileLoad(person, journal);
+        }, loaded -> {
             if (!guardTarget() || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
+            PersonSnapshot person = loaded.person();
             if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
-            render(person);
+            render(person, loaded.journal());
+            if (runtimeRefreshPending) observePerson();
         }, failure -> { if (guardTarget() && provider == com.subhub.app.relationships.RelationshipUi.provider()
                 && authority == People.keyholder()) { renderedSection = null; unavailable(); } });
     }
@@ -429,11 +448,15 @@ public final class PersonActivity extends RolePage {
         });
     }
 
-    private void render(PersonSnapshot person) {
+    private record ProfileLoad(PersonSnapshot person, JournalPreview.Initial journal) {}
+
+    private void render(PersonSnapshot person) { render(person, null); }
+
+    private void render(PersonSnapshot person, JournalPreview.Initial journal) {
         if (!guardTarget() || !personId.equals(person.id)) return;
         if ("stats".equals(section)) {
             section = "profile";
-            render(person);
+            render(person, journal);
             openStats(person);
             return;
         }
@@ -445,7 +468,7 @@ public final class PersonActivity extends RolePage {
             if ("profile".equals(section)) {
                 title(R.string.role_profile);
                 reconcile("identity", java.util.Arrays.asList(person.profile), parent -> {
-                    ProfileViews.identity(parent, person, !internal);
+                    ProfileViews.identity(parent, person, !internal, journal);
                     if (internal) {
                         boolean writable = InternalSubData.get(this).ownerDataReady();
                         TextView edit = PersonUi.action(parent, R.string.internal_sub_edit_profile, () -> {
