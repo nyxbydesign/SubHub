@@ -687,11 +687,7 @@ final class FullAccessViewer implements AutoCloseable {
         if (!session.folders.isEmpty()) {
             Folder folder = session.folders.peek();
             PersonUi.text(card, folder.title, true);
-            BlackmailViews.action(card, R.string.full_access_folder_up, () -> {
-                if (!current(session) || session.working) return;
-                session.folders.pop();
-                resetDirectory(session);
-            }, false);
+            addFolderUp(session);
         }
         JSONArray rows = page.optJSONArray("items");
         int count = rows == null ? 0 : rows.length();
@@ -796,28 +792,20 @@ final class FullAccessViewer implements AutoCloseable {
         if (group.loading || !current(session) || session.group != group) return;
         group.loading = true;
         if (!group.pages.hasHead) showList(session);
-        queuedPages.addFirst(new PageRequest(session, complete -> {
-            if (session.group != group) { complete.run(); return; }
-            read(session, "group", group.id, cursor, response -> {
-                if (!current(session) || session.group != group) return;
-                group.loading = false;
-                String status = response.optString("status");
-                if ("ok".equals(status) && retireObsoleteNotificationPreviews(session, response)) {
-                    showList(session);
-                    loadPage(session, "");
-                    return;
-                }
-                if ("ok".equals(status)) group.pages.accept(response, cursor, false);
-                else group.pages.fail(cursor, statusLabel(status));
+        queueNestedPage(session, group, "group", cursor, () -> session.group == group, response -> {
+            String status = response.optString("status");
+            if ("ok".equals(status) && retireObsoleteNotificationPreviews(session, response)) {
                 showList(session);
-            }, () -> {
-                if (!current(session) || session.group != group) return;
-                group.loading = false;
-                group.pages.fail(cursor, R.string.full_access_unavailable);
-                showList(session);
-            }, complete);
-        }));
-        requestNextPage();
+                loadPage(session, "");
+                return;
+            }
+            if ("ok".equals(status)) group.pages.accept(response, cursor, false);
+            else group.pages.fail(cursor, statusLabel(status));
+            showList(session);
+        }, () -> {
+            group.pages.fail(cursor, R.string.full_access_unavailable);
+            showList(session);
+        });
     }
 
     private void addGroupRows(List<BlackmailList.Row> entries, Section session, NotificationGroup group) {
@@ -874,29 +862,38 @@ final class FullAccessViewer implements AutoCloseable {
         Continuous pages = thread.pages;
         if (pages.list == null && conversationPanel.getChildCount() == 0)
             PersonUi.text(conversationPanel, activity.getText(R.string.blackmail_loading_entries), false);
-        queuedPages.addFirst(new PageRequest(session, complete -> {
-            if (conversation != thread) { complete.run(); return; }
-            read(session, "thread", thread.id, cursor, response -> {
-                if (!current(session) || conversation != thread) return;
-                thread.loading = false;
-                String status = response.optString("status");
-                if ("ok".equals(status)) {
-                    boolean first = !pages.hasHead;
-                    if (pages.accept(response, cursor, true) || pages.list == null)
-                        showConversation(session, thread, first, !cursor.isEmpty());
-                    if (cursor.isEmpty()) scheduleConversationRefresh(session, thread);
-                } else {
-                    int label = statusLabel(status);
-                    pages.fail(cursor, label);
-                    showConversation(session, thread, false, false);
-                    if (label == R.string.blackmail_refresh_unavailable && pages.hasHead)
-                        scheduleConversationRefresh(session, thread);
-                }
-            }, () -> {
-                if (!current(session) || conversation != thread) return;
-                thread.loading = false;
-                pages.fail(cursor, R.string.full_access_unavailable);
+        queueNestedPage(session, thread, "thread", cursor, () -> conversation == thread, response -> {
+            String status = response.optString("status");
+            if ("ok".equals(status)) {
+                boolean first = !pages.hasHead;
+                if (pages.accept(response, cursor, true) || pages.list == null)
+                    showConversation(session, thread, first, !cursor.isEmpty());
+                if (cursor.isEmpty()) scheduleConversationRefresh(session, thread);
+            } else {
+                int label = statusLabel(status);
+                pages.fail(cursor, label);
                 showConversation(session, thread, false, false);
+                if (label == R.string.blackmail_refresh_unavailable && pages.hasHead)
+                    scheduleConversationRefresh(session, thread);
+            }
+        }, () -> {
+            pages.fail(cursor, R.string.full_access_unavailable);
+            showConversation(session, thread, false, false);
+        });
+    }
+
+    private void queueNestedPage(Section session, NestedPage page, String operation, String cursor,
+            BooleanSupplier selected, Consumer<JSONObject> received, Runnable failed) {
+        queuedPages.addFirst(new PageRequest(session, complete -> {
+            if (!selected.getAsBoolean()) { complete.run(); return; }
+            read(session, operation, page.id, cursor, response -> {
+                if (!current(session) || !selected.getAsBoolean()) return;
+                page.loading = false;
+                received.accept(response);
+            }, () -> {
+                if (!current(session) || !selected.getAsBoolean()) return;
+                page.loading = false;
+                failed.run();
             }, complete);
         }));
         requestNextPage();
@@ -997,13 +994,16 @@ final class FullAccessViewer implements AutoCloseable {
         BlackmailViews.action(session.panel, R.string.role_retry, () -> {
             if (current(session) && !session.working) resetDirectory(session);
         }, false);
-        BlackmailViews.action(session.panel, R.string.full_access_folder_up, () -> {
-            if (current(session) && !session.working) {
-                session.folders.pop();
-                resetDirectory(session);
-            }
-        }, false);
+        addFolderUp(session);
         addClose(session);
+    }
+
+    private void addFolderUp(Section session) {
+        BlackmailViews.action(session.panel, R.string.full_access_folder_up, () -> {
+            if (!current(session) || session.working) return;
+            session.folders.pop();
+            resetDirectory(session);
+        }, false);
     }
 
     private void preview(Section session, String id, String title) {
@@ -1413,22 +1413,24 @@ final class FullAccessViewer implements AutoCloseable {
         }
     }
 
-    private static final class Conversation {
+    private abstract static class NestedPage {
         final String id;
         final Continuous pages = new Continuous();
-        Runnable refresh;
         boolean loading;
 
-        Conversation(String id) { this.id = id; }
+        NestedPage(String id) { this.id = id; }
     }
 
-    private static final class NotificationGroup {
-        final String id;
-        final Continuous pages = new Continuous();
-        String edgeKey;
-        boolean loading;
+    private static final class Conversation extends NestedPage {
+        Runnable refresh;
 
-        NotificationGroup(String id) { this.id = id; }
+        Conversation(String id) { super(id); }
+    }
+
+    private static final class NotificationGroup extends NestedPage {
+        String edgeKey;
+
+        NotificationGroup(String id) { super(id); }
     }
 
     private final class Section {
