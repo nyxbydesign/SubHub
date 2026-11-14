@@ -9,6 +9,7 @@ import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.util.LowercaseHex;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -269,7 +270,7 @@ public final class LegacyPackMigration {
             selection.update((image.getName() + '\u0000' + digest + '\n').getBytes(StandardCharsets.UTF_8));
         }
         // A changed source selection gets a different directory, including after a failed attempt.
-        File target = new File(parent, hex(selection.digest()));
+        File target = new File(parent, LowercaseHex.encode(selection.digest()));
         if (!inside(target, files) || !target.getCanonicalFile().equals(target)) throw new IOException("Invalid artwork destination");
         if (!target.mkdirs() && !target.isDirectory()) throw new IOException("Artwork storage is unavailable");
         File[] existing = target.listFiles();
@@ -339,12 +340,6 @@ public final class LegacyPackMigration {
             int count;
             while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count);
         }
-        return hex(hash.digest());
-    }
-
-    private static String hex(byte[] bytes) {
-        StringBuilder encoded = new StringBuilder(64);
-        for (byte value : bytes) encoded.append(String.format(Locale.ROOT, "%02x", value & 255));
-        return encoded.toString();
+        return LowercaseHex.encode(hash.digest());
     }
 }
