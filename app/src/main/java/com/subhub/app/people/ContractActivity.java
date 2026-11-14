@@ -14,7 +14,6 @@ import android.widget.LinearLayout;
 import androidx.core.view.ViewCompat;
 import androidx.lifecycle.Lifecycle;
 import com.subhub.app.R;
-import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerPinManager;
@@ -126,22 +125,9 @@ public final class ContractActivity extends RolePage {
                     enabled = SubFeaturePolicy.allowed(context, "censor")
                             && settings.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true);
                     break;
-                case "limits":
-                    enabled = SubFeaturePolicy.allowed(context, "limits")
-                            && settings.getBoolean(FeatureModuleManager.KEY_LIMITS_ENABLED, true)
-                            && (settings.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
-                            || settings.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false));
-                    if (enabled) result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
-                            section.summary, new LocalContractDetails(context).subLimitsDetails()));
-                    break;
                 case "wallet":
                     enabled = PenanceManager.observedEnabled(context);
                     break;
-                case "atmosphere":
-                    AtmosphereContractDetails atmosphere = AtmosphereContractDetails.subContract(context);
-                    result.put(section.key, new PersonSnapshot.Section(section.key, section.title,
-                            atmosphere.summary, atmosphere.details));
-                    continue;
                 default:
                     continue;
             }

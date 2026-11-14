@@ -351,8 +351,9 @@ public final class AtmosphereContractDetailsAndroidTest {
         for (boolean dom : new boolean[]{false, true}) {
             for (PersonSnapshot.Freshness freshness : List.of(PersonSnapshot.Freshness.STALE, PersonSnapshot.Freshness.UNKNOWN)) {
                 readyUi(dom);
+                List<PersonSnapshot.Section> savedSections = People.repository(context).load(PersonId.LOCAL).sections;
                 People.installLocalProjection(p -> new PersonSnapshot(p.id, p.name, p.device, p.contractName,
-                        p.serviceLabel, p.connection, p.freshness, p.lastSyncedAt, p.capabilities, p.sections,
+                        p.serviceLabel, p.connection, p.freshness, p.lastSyncedAt, p.capabilities, savedSections,
                         p.allowances, p.currency, p.protectedSeconds, p.activityEvents, p.tributeCents, p.sessions,
                         p.serviceActive, new PersonSnapshot.SyncState(freshness, p.sync.stats, p.sync.runtime, "", ""))
                         .withContractDom(ProfileData.empty("Dom"), null));
@@ -370,6 +371,11 @@ public final class AtmosphereContractDetailsAndroidTest {
                         } else {
                             assertTrue(copy.contains(expected()));
                             assertTrue(text(tagged(a, "person_contract_scope")).contains(context.getString(R.string.role_stale_data)));
+                            if (!dom) {
+                                assertTrue(text(tagged(a, headerTag)).contains(context.getResources()
+                                        .getQuantityString(R.plurals.atmosphere_effects_active, 2, 2)));
+                                assertNotNull(tagged(a, "contract_details:limits"));
+                            }
                         }
                     });
                 }

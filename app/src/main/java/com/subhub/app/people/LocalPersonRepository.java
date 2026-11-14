@@ -11,6 +11,7 @@ import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
+import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.settings.FeatureModuleManager;
@@ -60,7 +61,7 @@ public final class LocalPersonRepository implements PersonRepository {
         List<PersonSnapshot.Allowance> allowances = loadAllowances(packages);
         PenanceManager wallet = new PenanceManager(context);
         List<PersonSnapshot.Section> sections = contractSections(settings, modules, apps.isAllApps(),
-                packages, allowances.size(), wallet, false);
+                packages, allowances.size(), wallet, null);
         StatsSnapshot stats = new StatsRepository(context).load();
         boolean paused = new PaidPauseManager(context).isActive();
         boolean active = paused || CommitmentManager.isActive(context) || apps.isArmed()
@@ -111,13 +112,14 @@ public final class LocalPersonRepository implements PersonRepository {
     /** The Sub Contract reads configured values without opening usage/history or session stores. */
     PersonSnapshot loadContract() {
         SettingsRepository settings = new SettingsRepository(context);
-        AppTimerManager.Settings limits = AppTimerManager.forConfiguration(settings.preferences()).loadSettings();
+        AppTimerManager timers = AppTimerManager.forConfiguration(settings.preferences());
+        AppTimerManager.Settings limits = timers.loadSettings();
         AppModeManager apps = new AppModeManager(context);
         Set<String> packages = apps.getIncludedPackages();
-        int allowances = !com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits") ? 0
-                : (limits.perAppEnabled ? packages.size() : 0) + (limits.totalEnabled && !packages.isEmpty() ? 1 : 0);
+        int allowances = (limits.perAppEnabled ? packages.size() : 0)
+                + (limits.totalEnabled && !packages.isEmpty() ? 1 : 0);
         List<PersonSnapshot.Section> sections = contractSections(settings, new FeatureModuleManager(context),
-                apps.isAllApps(), packages, allowances, new PenanceManager(context), true);
+                apps.isAllApps(), packages, allowances, new PenanceManager(context), new SubLimits(timers, limits));
         return withContractOwner(new PersonSnapshot(PersonId.LOCAL, context.getString(R.string.header_subtitle_sub),
                 Build.MODEL, context.getString(R.string.role_local_configuration), "",
                 PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0, localCapabilities(), sections,
@@ -125,7 +127,8 @@ public final class LocalPersonRepository implements PersonRepository {
     }
 
     private List<PersonSnapshot.Section> contractSections(SettingsRepository settings, FeatureModuleManager modules,
-            boolean allApps, Set<String> packages, int allowanceCount, PenanceManager wallet, boolean contractOnly) {
+            boolean allApps, Set<String> packages, int allowanceCount, PenanceManager wallet,
+            SubLimits subLimits) {
         LocalContractDetails descriptions = new LocalContractDetails(context);
         List<PersonSnapshot.App> apps = new ArrayList<>();
         if (!allApps) for (String name : packages) apps.add(new PersonSnapshot.App(name, appLabel(name)));
@@ -145,10 +148,15 @@ public final class LocalPersonRepository implements PersonRepository {
                 modules.isCensorEnabled() ? context.getString(R.string.role_filter_count, filterCount)
                         : context.getString(R.string.role_disabled),
                 descriptions.forSection("censor")));
-        sections.add(new PersonSnapshot.Section("limits", context.getString(R.string.sub_limits_title),
-                allowanceCount == 0 ? context.getString(R.string.role_no_app_limits)
-                        : context.getResources().getQuantityString(R.plurals.sub_limits_selected, allowanceCount, allowanceCount),
-                contractOnly ? descriptions.observedLimitsDetails() : descriptions.forSection("limits")));
+        boolean limitsEnabled = subLimits == null || (SubFeaturePolicy.allowed(context, "limits")
+                && settings.preferences().getBoolean(FeatureModuleManager.KEY_LIMITS_ENABLED, true)
+                && (subLimits.settings.perAppEnabled || subLimits.settings.totalEnabled));
+        String limitsSummary = !limitsEnabled ? context.getString(R.string.role_disabled)
+                : allowanceCount == 0 ? context.getString(R.string.role_no_app_limits)
+                : context.getResources().getQuantityString(R.plurals.sub_limits_selected, allowanceCount, allowanceCount);
+        sections.add(new PersonSnapshot.Section("limits", context.getString(R.string.sub_limits_title), limitsSummary,
+                subLimits == null ? descriptions.forSection("limits")
+                        : limitsEnabled ? descriptions.subLimitsDetails(subLimits.timers, subLimits.settings) : ""));
 
         int rules = 0;
         for (PenanceInfraction rule : PenanceInfraction.values()) {
@@ -158,13 +166,22 @@ public final class LocalPersonRepository implements PersonRepository {
                 wallet.isEnabled() ? context.getString(R.string.role_wallet_rule_count, rules)
                         : context.getString(R.string.role_disabled),
                 descriptions.forSection("wallet")));
-        boolean whispers = modules.isSubliminalEnabled(), popup = PopupStormSettings.load(context).isEnabled();
-        int effects = (whispers ? 1 : 0) + (popup ? 1 : 0);
+        String atmosphereSummary, atmosphereDetails;
+        if (subLimits == null) {
+            int effects = (modules.isSubliminalEnabled() ? 1 : 0) + (PopupStormSettings.load(context).isEnabled() ? 1 : 0);
+            atmosphereSummary = context.getResources().getQuantityString(R.plurals.atmosphere_effects_active, effects, effects);
+            atmosphereDetails = descriptions.forSection("atmosphere");
+        } else {
+            AtmosphereContractDetails atmosphere = AtmosphereContractDetails.subContract(context);
+            atmosphereSummary = atmosphere.summary;
+            atmosphereDetails = atmosphere.details;
+        }
         sections.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
-                context.getResources().getQuantityString(R.plurals.atmosphere_effects_active, effects, effects),
-                descriptions.forSection("atmosphere")));
+                atmosphereSummary, atmosphereDetails));
         return sections;
     }
+
+    private record SubLimits(AppTimerManager timers, AppTimerManager.Settings settings) {}
 
     private static EnumSet<PersonSnapshot.Capability> localCapabilities() {
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
