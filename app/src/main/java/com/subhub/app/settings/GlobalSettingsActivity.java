@@ -12,6 +12,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.atmosphere.GagActivity;
 import com.subhub.app.databinding.ActivityGlobalSettingsBinding;
 import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.help.HelpActivity;
@@ -49,6 +50,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private boolean updatingHardcore, restoreSubAfterHardcore, hardcoreAwaitingAndroid;
     private String requestedGroup;
     private TextView reviewConsent;
+    private TextView gagSetup;
     private HardcoreReviewState hardcoreReview;
     private AsyncUiScope consentWork;
     private com.subhub.app.security.KeyholderProvider connectionProvider;
@@ -162,6 +164,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                         android.net.Uri.parse("package:" + getPackageName()))));
         action(localPermissions, R.string.settings_battery,
                 () -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
+        gagSetup = action(localPermissions, R.string.gag_keyboard_setup, () -> {
+            if (GagActivity.canSetUp(this)) startActivity(new Intent(this, GagActivity.class));
+        });
+        gagSetup.setTag("settings_gag_setup");
 
         heading(body, R.string.device_settings_app, "app");
         LinearLayout app = PersonUi.card(body);
@@ -284,6 +290,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         permissionsHeading.setVisibility(local ? View.VISIBLE : View.GONE);
         permissions.setVisibility(local ? View.VISIBLE : View.GONE);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
+        gagSetup.setVisibility(GagActivity.canSetUp(this) ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);
         if (local && !DeviceRolePreferences.isDomWorkspace(this)) {
             int position = binding.settingsSections.indexOfChild(privacy) + 1;

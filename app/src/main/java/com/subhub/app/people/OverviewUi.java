@@ -10,6 +10,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
+import com.subhub.app.util.UiIdentity;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,13 +19,7 @@ public final class OverviewUi {
     private OverviewUi() { }
 
     public static LinearLayout card(LinearLayout parent) {
-        LinearLayout card = PersonUi.column(parent.getContext());
-        card.setBackgroundResource(R.drawable.bg_overview_card);
-        com.subhub.app.util.UiIdentity.cardPadding(card);
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        parent.addView(card, size);
-        return card;
+        return UiIdentity.addCard(parent, parent.getContext(), R.drawable.bg_overview_card);
     }
 
     public static LinearLayout compactCard(LinearLayout parent) {

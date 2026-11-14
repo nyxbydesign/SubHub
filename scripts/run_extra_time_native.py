@@ -183,6 +183,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "remoteSnapshotsCannotContainLocalConsentOrHardcoreAuthority",
         "optingOutOfOneFeatureStillAllowsAnUnrelatedDurationChange",
         "disabledLimitsAlsoRefuseChangesToIndividualAllowances",
+        "gagRulesRequireNegotiationAndAnAppliedCommandFromTheCurrentPairing",
         "contractDomProfileFollowsAppliedOwnerDespiteOtherRelationshipsAndUpdates",
         "rePairingCannotAttributeRetainedContractToTheNextDomOrGeneration",
         "optionalNotificationChoicesDoNotChangeAppliedWriterReceiptsOrReplay",
@@ -195,6 +196,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
@@ -347,6 +349,10 @@ DEVICE_PASS_NATIVE = {
 }
 DEVICE_PASS_SOURCE_ONLY = {
     **BATTERY_SOURCE_ONLY,
+    # This regression needs an explicitly owned paired fixture, with its opt-in runner argument.
+    "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
+        "subContractOmitsDisabledDetailsAndKeepsEnabledSiblings",
+    ],
     "com.subhub.app.appmode.LimitsUiAndroidTest": [
         "recordedUsageAndDistinctAllowancesHaveReadableGeometry",
         "invalidDraftSurvivesTicksAndRecreationThenPersistsWhenValid",
@@ -415,6 +421,8 @@ DEVICE_PASS_SOURCE_ONLY = {
         "editsSaveAtomicallyAndCancelledDraftsLeaveBothRoleProfilesUnchanged",
         "subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation",
         "subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal",
+        "gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace",
+        "gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup",
         "nativeRoleSwitchesKeepDomAndSubIdentitySeparate",
         "returningToProfileAfterAnotherWorkspaceChangeUsesTheCurrentRoleOnFirstResume",
         "domOnlyOwnProfileStaysEditableWhileStatisticsRequireTheExistingPin",
@@ -723,6 +731,7 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "automaticSaveRetainsTheFocusedEditorAndCursor",
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",

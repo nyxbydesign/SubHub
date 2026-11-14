@@ -1109,7 +1109,6 @@
     <string name="permission_accessibility_name">accessibility</string>
     <string name="permission_accessibility_guidance">In Accessibility, open SubHub and turn on “Use SubHub”.</string>
     <string name="permission_device_admin_name">Device Admin</string>
-    <string name="studio_title">Contracts</string>
     <plurals name="apps_included_count"><item quantity="one">%d included app</item><item quantity="other">%d included apps</item></plurals>
     <string name="app_include_accessibility">Include %1$s</string>
     <string name="wallet_safety_title">Safety &amp; caps</string>
@@ -1128,13 +1127,6 @@
     <string name="wallet_weekly_cap">Weekly cap</string>
     <string name="wallet_recent_activity">Recent activity</string>
     <string name="wallet_settings">Wallet settings</string>
-    <string name="rituals_packs">Packs</string>
-    <string name="rituals_no_packs">No packs imported</string>
-    <string name="rituals_import_pack">Import pack</string>
-    <string name="rituals_pack_library">Library</string>
-    <string name="rituals_pack_active">Active: %1$s</string>
-    <string name="rituals_pack_available">%1$s</string>
-    <string name="rituals_pack_count">%1$d saved</string>
     <string name="wallet_rules_caps_title">Rules &amp; caps</string>
     <string name="wallet_rules_caps_summary">%1$d rules · %2$s daily cap</string>
     <string name="wallet_checkout_label">At checkout</string>

@@ -608,14 +608,6 @@ public final class AchievementManager {
          * @return the generated illustrated badge drawable for this achievement.
          */
         public int getBadgeArtRes() { return badgeArtRes; }
-
-        /**
-         * Legacy asset accessor retained for binary/source compatibility.
-         *
-         * <p>Badges no longer use licensed asset filenames; callers should use {@link
-         * #getBadgeArtRes()} instead.
-         */
-        @Deprecated public String getBadge() { return null; }
         public boolean isHidden() { return hidden; }
     }
 

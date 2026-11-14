@@ -63,6 +63,15 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Resolve development release number
+        if: env.DEV_BUILD == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dev_sequence="$(python3 scripts/dev_release_cycle.py \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --run-number "$CI_RUN_NUMBER")"
+          echo "DEV_SEQUENCE=$dev_sequence" >> "$GITHUB_ENV"
       - name: Verify tag and version metadata
         id: version
         shell: bash
@@ -76,7 +85,7 @@ jobs:
             --replacement-lab-candidate "$REPLACEMENT_LAB_CANDIDATE"
           if [[ "$DEV_BUILD" == "true" ]]; then
             python3 scripts/release_version.py \
-              --ci-run-number "$CI_RUN_NUMBER" --dev-build \
+              --ci-run-number "$CI_RUN_NUMBER" --dev-build --dev-sequence "$DEV_SEQUENCE" \
               --github-output "${GITHUB_OUTPUT}"
           elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
             # A stable tag must identify the tested source on master, never an arbitrary branch.
@@ -128,6 +137,9 @@ jobs:
           build_args=("-PimmediateQualityExperiment=${IMMEDIATE_QUALITY_EXPERIMENT}" "-PreplacementLabCandidate=${REPLACEMENT_LAB_CANDIDATE}" "-PdevBuild=$DEV_BUILD")
           if [[ "$PUBLISH_RELEASE" == "true" || "$REPLACEMENT_LAB_CANDIDATE" == "true" ]]; then
             build_args+=("-PciRunNumber=$CI_RUN_NUMBER")
+          fi
+          if [[ "$DEV_BUILD" == "true" ]]; then
+            build_args+=("-PdevSequence=$DEV_SEQUENCE")
           fi
           if [[ "$PUBLISH_RELEASE" == "true" ]]; then
             # Canonical CI already checked this exact default-profile source; only the release variant remains.
@@ -244,13 +256,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft' > release-draft.txt 2>/dev/null; then
-            test "$(cat release-draft.txt)" = "true"
+          if gh release view "${RELEASE_TAG}" --json isDraft,isPrerelease,targetCommitish > release-draft.json 2>/dev/null; then
+            jq -e '.isDraft == true' release-draft.json >/dev/null
+            if [[ "$DEV_BUILD" == "true" ]]; then
+              jq -e --arg sha "$(git rev-parse HEAD)" \
+                '.isPrerelease == true and .targetCommitish == $sha' release-draft.json >/dev/null
+            fi
             gh release edit "${RELEASE_TAG}" \
               --notes-file dist/release-notes.md \
               --title "SubHub ${VERSION_NAME}"
           else
             if [[ "$DEV_BUILD" == "true" ]]; then
+              tag_status=0
+              git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" >/dev/null || tag_status=$?
+              test "$tag_status" -eq 2
               gh release create "$RELEASE_TAG" --draft --prerelease --latest=false \
                 --target "$(git rev-parse HEAD)" --notes-file dist/release-notes.md \
                 --title "SubHub ${VERSION_NAME}"

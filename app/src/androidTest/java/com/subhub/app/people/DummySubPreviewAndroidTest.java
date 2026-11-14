@@ -187,6 +187,22 @@ public final class DummySubPreviewAndroidTest {
 
     @Test public void rosterPreviewBrowsesEverySectionWithoutRealStateMutation() throws Exception {
         assertTrue(DummySubPreview.toggle(context));
+        Map<String, Integer> allowances = Map.of("com.android.chrome", 15, "com.android.settings", 40);
+        var data = internalFixture.data;
+        var base = data.acknowledged();
+        var draft = data.configuration.edit(base);
+        var limits = draft.preferences(SettingsRepository.PREFERENCES_NAME).edit()
+                .putStringSet("app_included_packages_v1", allowances.keySet())
+                .putBoolean("app_timer_per_app_enabled", true);
+        for (Map.Entry<String, Integer> allowance : allowances.entrySet()) {
+            context.getPackageManager().getApplicationInfo(allowance.getKey(), 0);
+            limits.putInt(com.subhub.app.internal.InternalConfigurationStore.ALLOWANCE_PREFIX + allowance.getKey(),
+                    allowance.getValue());
+        }
+        limits.apply();
+        var prepared = data.configuration.prepare(draft);
+        data.ownerData().submitEditor(base.generation, ControllerPinManager.domWorkspaceRevision(),
+                access -> data.configuration.flushPrepared(prepared)).get(10, java.util.concurrent.TimeUnit.SECONDS);
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
             AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
             await(() -> tagged(host.get(), "person:dummy_sub_preview") != null);
@@ -203,7 +219,8 @@ public final class DummySubPreviewAndroidTest {
                 assertTrue("Internal Tasks has an explicit owned route", tagged(profile, "person_tab:tasks").isClickable());
                 instrumentation.runOnMainSync(() -> {
                     assertScopedControls(profile.findViewById(android.R.id.content));
-                    assertFalse(profile.findViewById(com.subhub.app.R.id.person_session_action).isEnabled());
+                    android.widget.TextView start = profile.findViewById(com.subhub.app.R.id.person_session_action);
+                    assertEquals(context.getString(com.subhub.app.R.string.role_start_session), start.getText().toString());
                     assertNotNull(profile.findViewById(com.subhub.app.R.id.person_duration_control));
                 });
                 capture(profile, "dummy-preview-profile");
@@ -211,14 +228,27 @@ public final class DummySubPreviewAndroidTest {
                 assertScopedControls(profile.findViewById(android.R.id.content));
                 nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
                 tapTag("person_tab:contracts");
+                await(() -> tagged(profile, "person_section:atmosphere") != null);
+                assertNotNull(tagged(profile, "person_allowed_features"));
+                assertNotNull(tagged(profile, "person_contract_scope"));
+                assertNotNull(tagged(profile, "person_contract_features"));
+                assertNull(tagged(profile, "person_duration"));
+                instrumentation.runOnMainSync(() -> {
+                    View details = tagged(profile, "person_contract_features");
+                    assertNotNull(details);
+                    assertTrue(hasText(details, context.getString(com.subhub.app.R.string.arrangement_detail_line,
+                            context.getString(com.subhub.app.R.string.gag_title),
+                            context.getString(com.subhub.app.R.string.control_state_off))));
+                });
                 for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
                     Class<? extends Activity> expected = PersonRoutes.sectionActivity(section);
                     Instrumentation.ActivityMonitor pageMonitor = instrumentation.addMonitor(expected.getName(), null, false);
                     try {
                         if ("duration".equals(section)) {
-                            nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
+                            nativeBack(profile);
+                            await(() -> tagged(profile, "person_duration") != null);
                         }
-                        tapTag(sectionTag(section));
+                        openContractEditor(profile, section);
                         Activity page = instrumentation.waitForMonitorWithTimeout(pageMonitor, 5000);
                         assertNotNull("Native section did not open: " + section, page);
                         assertEquals(expected, page.getClass()); await(() -> resumed(page));
@@ -228,8 +258,11 @@ public final class DummySubPreviewAndroidTest {
                             if ("censor".equals(section)) browseCensorDetails(page);
                             exerciseNativeInput(page);
                         }
-                        if ("limits".equals(section)) onView(androidx.test.espresso.matcher.ViewMatchers.withId(
-                                com.subhub.app.R.id.per_app_allowances_list)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+                        if ("limits".equals(section)) {
+                            instrumentation.runOnMainSync(() -> allowances.forEach((app, minutes) ->
+                                    assertEquals(minutes.toString(), ((EditText) tagged(page, "limit:" + app)).getText().toString())));
+                            onView(tag("limit:com.android.chrome")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+                        }
                         capture(page, "dummy-preview-" + section);
                         assertRealState(before, rows);
                         nativeBack(page); await(() -> resumed(profile));
@@ -251,7 +284,8 @@ public final class DummySubPreviewAndroidTest {
         instrumentation.waitForIdleSync(); long work = endpoint.completedEndpointWork();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(route)) {
             AtomicReference<PersonActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
-            await(() -> resumed(host.get())); tapTag("person_tab:contracts");
+            await(() -> resumed(host.get()) && tagged(host.get(), "person_tab:contracts") != null);
+            tapTag("person_tab:contracts");
             scenario.recreate(); scenario.onActivity(host::set); await(() -> resumed(host.get()));
             assertNotNull(tagged(host.get(), "person_contract_scope"));
             nativeBack(host.get()); await(() -> tagged(host.get(), "person_tab:contracts") != null);
@@ -443,7 +477,28 @@ public final class DummySubPreviewAndroidTest {
         });
         PersonSnapshot first = data.loadPresentation(context, before);
         instrumentation.runOnMainSync(() -> assertSame(first, data.peekPresentation()));
-        com.subhub.app.internal.InternalSubRecord after = data.store.saveProfile(before,
+        String defaultDetails = sectionDetails(first, "censor");
+        assertTrue(defaultDetails.contains(context.getString(com.subhub.app.R.string.pack_field_confidence_threshold_percent) + ": 25"));
+        assertTrue(defaultDetails.contains(context.getString(com.subhub.app.R.string.pack_choice_detection_preset_medium)));
+
+        var draft = data.configuration.edit(before);
+        draft.preferences(SettingsRepository.PREFERENCES_NAME).edit()
+                .putInt("detection_confidence_percent", 37)
+                .putString("detection_quality", "high")
+                .putString("error_popup_title", "Synthetic title")
+                .putStringSet("custom_phrases", Set.of("Synthetic phrase"))
+                .apply();
+        var prepared = data.configuration.prepare(draft);
+        var customized = data.ownerData().submitEditor(before.generation, ControllerPinManager.domWorkspaceRevision(), access -> {
+            assertEquals(before, access.record());
+            return data.configuration.flushPrepared(prepared);
+        }).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        String customizedDetails = sectionDetails(data.loadPresentation(context, customized), "censor");
+        assertTrue(customizedDetails.contains(context.getString(com.subhub.app.R.string.pack_field_confidence_threshold_percent) + ": 37"));
+        assertTrue(customizedDetails.contains(context.getString(com.subhub.app.R.string.pack_choice_detection_preset_high)));
+        assertTrue(customizedDetails.contains("Synthetic title"));
+        assertTrue(customizedDetails.contains("Synthetic phrase"));
+        com.subhub.app.internal.InternalSubRecord after = data.store.saveProfile(customized,
                 new com.subhub.app.internal.InternalProfile("Updated internal", "", "", "", 0));
         instrumentation.runOnMainSync(() -> assertNull(data.peekPresentation()));
         data.loadPresentation(context, before); // An older worker result cannot become current again.
@@ -456,19 +511,38 @@ public final class DummySubPreviewAndroidTest {
         assertTrue(ControllerPinManager.verify(context, "2468"));
     }
 
+    private static String sectionDetails(PersonSnapshot snapshot, String key) {
+        for (PersonSnapshot.Section section : snapshot.sections) if (section.key.equals(key)) return section.details;
+        throw new AssertionError("Missing contract section: " + key);
+    }
+
     @Test public void internalFavoriteAndTasksOverviewRetainIdentityAcrossRecreation() throws Exception {
         assertTrue(DummySubPreview.toggle(context));
+        var ownedRecord = InternalSubData.get(context).acknowledged();
+        Map<String, List<String>> rows = endpoint.snapshot();
+        history.capture(true);
+        previewTransportBaseline = endpoint.transportCalls();
         Map<String, ?> favoriteBefore = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
         try {
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), Collections.emptyMap());
             try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
                 AtomicReference<PeopleActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
                 await(() -> tagged(page.get(), "person:dummy_sub_preview") != null);
+                Map<String, Map<String, ?>> realBefore = realPreferences();
                 onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
                         androidx.test.espresso.action.ViewActions.longClick());
                 await(() -> FavoriteSubStore.identity(DummySubPreview.ID).equals(new FavoriteSubStore(context).identity()));
                 scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
                 await(() -> tagged(page.get(), "people_favorite:dummy_sub_preview") != null);
+                onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.longClick());
+                await(() -> new FavoriteSubStore(context).identity().isEmpty()
+                        && tagged(page.get(), "people_favorite:dummy_sub_preview") == null);
+                assertEquals(ownedRecord, InternalSubData.get(context).acknowledged());
+                assertStateAfterNormalRosterReturn(realBefore, rows);
+                onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.longClick());
+                await(() -> FavoriteSubStore.identity(DummySubPreview.ID).equals(new FavoriteSubStore(context).identity()));
             }
             try (ActivityScenario<com.subhub.app.MainActivity> scenario = ActivityScenario.launch(com.subhub.app.MainActivity.class)) {
                 AtomicReference<com.subhub.app.MainActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
@@ -713,10 +787,14 @@ public final class DummySubPreviewAndroidTest {
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
             AtomicReference<PersonActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
             await(() -> resumed(host.get()));
-            if (!"duration".equals(section)) tapTag("person_tab:contracts");
+            if (!"duration".equals(section)) {
+                await(() -> tagged(host.get(), "person_tab:contracts") != null);
+                tapTag("person_tab:contracts");
+            }
             Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(PersonRoutes.sectionActivity(section).getName(), null, false);
             try {
-                tapTag(sectionTag(section));
+                if ("duration".equals(section)) tapTag("person_duration");
+                else openContractEditor(host.get(), section);
                 Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
                 assertNotNull(page); await(() -> resumed(page));
                 Intent route = new Intent(page.getIntent());
@@ -733,8 +811,14 @@ public final class DummySubPreviewAndroidTest {
             assertEquals("Untrusted preview route must finish", androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.getState());
         }
     }
-    private static String sectionTag(String section) {
-        return "apps".equals(section) ? "person_apps" : "duration".equals(section) ? "person_duration" : "person_section:" + section;
+    private void openContractEditor(Activity profile, String section) {
+        String route = switch (section) {
+            case "apps" -> "person_apps";
+            case "duration" -> "person_duration";
+            default -> "person_section:" + section;
+        };
+        await(() -> tagged(profile, route) != null);
+        tapTag(route);
     }
     private void tapTag(String value) {
         onView(tag(value)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
@@ -845,6 +929,36 @@ public final class DummySubPreviewAndroidTest {
                 nativeBack(recreatedPage); await(() -> resumed(atmosphere));
             } finally { instrumentation.removeMonitor(monitor); }
         }
+        browseGag(atmosphere);
+    }
+
+    private void browseGag(Activity atmosphere) {
+        int replacements = com.subhub.app.R.id.gag_replacements;
+        String synthetic = "fixture replacement";
+        Class<?> type = com.subhub.app.atmosphere.GagActivity.class;
+        Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(type.getName(), null, false);
+        try {
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.gag_card))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
+            assertNotNull(page);
+            await(() -> resumed(page));
+            assertInternalBackend(page);
+            assertNull(page.findViewById(com.subhub.app.R.id.gag_keyboard_settings));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(replacements))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                            androidx.test.espresso.action.ViewActions.replaceText(synthetic),
+                            androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+            await(() -> {
+                Map<String, Object> rules = internalFixture.data.store.read().configuration().get("gag");
+                return rules != null && synthetic.equals(rules.get("replacements"));
+            });
+            Activity recreatedPage = exerciseNestedRecreation(page, atmosphere);
+            instrumentation.runOnMainSync(() -> assertEquals(synthetic,
+                    ((android.widget.EditText) recreatedPage.findViewById(replacements)).getText().toString()));
+            nativeBack(recreatedPage);
+            await(() -> resumed(atmosphere));
+        } finally { instrumentation.removeMonitor(monitor); }
     }
     private Activity exerciseNestedRecreation(Activity original, Activity parent) {
         await(() -> resumed(original));
@@ -883,7 +997,9 @@ public final class DummySubPreviewAndroidTest {
                 assertScopedControls(page.findViewById(android.R.id.content));
             });
             assertInternalBackend(page);
-            if (!(page instanceof com.subhub.app.settings.CensorPresetsActivity)) {
+            if (page instanceof com.subhub.app.atmosphere.GagActivity) {
+                exerciseNativeInput(page);
+            } else if (!(page instanceof com.subhub.app.settings.CensorPresetsActivity)) {
                 exerciseNativeInput(page); attemptMaterialSlider(page);
             } else instrumentation.runOnMainSync(() -> assertTrue(tagged(page, "preset:save").isEnabled()));
             return page;

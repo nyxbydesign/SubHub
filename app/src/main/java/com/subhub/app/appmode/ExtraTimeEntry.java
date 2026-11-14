@@ -24,10 +24,11 @@ public final class ExtraTimeEntry {
                 ? operation.request : null;
         if (saved != null && snapshot.requests.stream().noneMatch(request -> request.id.equals(saved.id)))
             receipt(parent, snapshot, saved, true);
+        boolean latest = saved == null;
         for (ExtraTimeRequests.Request request : snapshot.requests) {
-            if (packageName.equals(request.packageName))
-                receipt(parent, snapshot, request, saved != null ? request.id.equals(saved.id)
-                        : app.latest != null && request.id.equals(app.latest.id));
+            if (!packageName.equals(request.packageName) || !snapshot.isOnSubDay(request)) continue;
+            receipt(parent, snapshot, request, latest || saved != null && request.id.equals(saved.id));
+            latest = false;
         }
         if (operation != null && operation.stage == ExtraTimeOverviewController.Stage.BUSY) {
             TextView busy = PersonUi.action(parent, R.string.extra_time_inline_submitting, () -> { }, true);

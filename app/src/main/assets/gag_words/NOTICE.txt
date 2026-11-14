@@ -1,0 +1,17 @@
+Gag keyboard English and German frequency data
+
+Adapted from Hermit Dave’s FrequencyWords (2018), commit
+525f9b560de45753a5ea01069454e72e9aa541c6:
+https://github.com/hermitdave/FrequencyWords/tree/525f9b560de45753a5ea01069454e72e9aa541c6/content/2018
+
+The upstream lists are based on OpenSubtitles2018 from OPUS:
+https://opus.nlpl.eu/OpenSubtitles2018.php
+
+This derivative word table is distributed under Creative Commons
+Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+SubHub normalized case and Unicode, retained only bounded Latin single
+words, combined English and German counts using their maximum, sorted
+the combined table, and stored the data as a compressed TSV. The
+reproducible converter is scripts/build_gag_wordlist.py.

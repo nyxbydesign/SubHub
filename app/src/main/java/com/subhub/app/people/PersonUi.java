@@ -22,13 +22,7 @@ public final class PersonUi {
     }
 
     public static LinearLayout card(LinearLayout parent) {
-        LinearLayout value = column(parent.getContext());
-        value.setBackgroundResource(R.drawable.bg_card);
-        UiIdentity.cardPadding(value);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        parent.addView(value, params);
-        return value;
+        return UiIdentity.addCard(parent, parent.getContext(), R.drawable.bg_card);
     }
 
     public static TextView text(LinearLayout parent, CharSequence copy, boolean heading) {
@@ -96,7 +90,7 @@ public final class PersonUi {
         button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(parent.getContext(), 48));
         button.setBackgroundResource(primary ? R.drawable.bg_role_primary : R.drawable.bg_card);
-        button.setTextColor(parent.getContext().getColor(primary ? R.color.primary_action_text : R.color.accent_text));
+        button.setTextColor(parent.getContext().getColor(primary ? R.color.text_primary : R.color.accent_text));
         button.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.topMargin = dp(parent.getContext(), 8);
@@ -119,7 +113,7 @@ public final class PersonUi {
                                     value.usedMillis / 60_000L, value.displayMinutes()), null);
             int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
             app.getChildAt(0).setTag("allowance_app_icon:" + value.packageName);
-            if (value.appIcon != null || !snapshot.id.isLocal())
+            if (value.appIcon != null || !snapshot.id.isLocal() && !DummySubPreview.ID.equals(snapshot.id))
                 com.subhub.app.remote.RemoteUi.bindAppIcon((ImageView) app.getChildAt(0), value.appIcon, fallback);
             else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
@@ -132,17 +126,19 @@ public final class PersonUi {
         return connection(context, person.connection, person.lastOnlineAt);
     }
 
-    /** Last seen uses verified foreground history; transport contact is not human presence. */
+    /** Last seen uses verified Online history. */
     public static String connection(Context context, PersonSnapshot.Connection state, long lastOnlineAt) {
         switch (state) {
             case LOCAL: return context.getString(R.string.role_local_data);
             case PENDING: return context.getString(R.string.role_connection_pending);
             case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
+            case IDLE:
             case OFFLINE:
+                boolean idle = state == PersonSnapshot.Connection.IDLE;
                 if (lastOnlineAt <= 0 || lastOnlineAt > System.currentTimeMillis())
-                    return context.getString(R.string.role_connection_offline);
-                return context.getString(R.string.role_offline_last_online,
+                    return context.getString(idle ? R.string.role_connection_idle : R.string.role_connection_offline);
+                return context.getString(idle ? R.string.role_idle_last_online : R.string.role_offline_last_online,
                         ProfileViews.formatLastSeen(lastOnlineAt));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);

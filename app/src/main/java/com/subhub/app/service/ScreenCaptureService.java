@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -127,7 +128,7 @@ public final class ScreenCaptureService extends Service {
     private MediaProjection projection;
     private ScreenCaptureManager capture;
     private ForegroundAppState.Snapshot clearedScope, processedScope;
-    private DetectionEngine detector;
+    private volatile DetectionEngine detector;
     private ObjectTracker tracker;
     private OverlayController overlay;
     private SettingsRepository settings;
@@ -147,14 +148,15 @@ public final class ScreenCaptureService extends Service {
     private volatile long startingGeneration = -1;
     private volatile long pipelineGeneration;
     private volatile boolean nativePipelineOwned;
+    private volatile long detectorRetirement;
+    private long appliedDetectorRetirement;
     private long observedScreenGeneration;
+    private boolean powerSave;
     private ScheduledFuture<?> captureSchedule;
     private boolean screenReceiverRegistered;
     private final android.content.BroadcastReceiver screenReceiver = new android.content.BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            censorScreen.refresh(intent.getAction());
-            durationChanged();
-            reconcileCensorScreen();
+            onCaptureEnvironmentChanged(intent.getAction());
         }
     };
     private final Runnable screenTick = new Runnable() {
@@ -207,7 +209,7 @@ public final class ScreenCaptureService extends Service {
             suspendCensorPipeline();
             return;
         }
-        if (!eligible) { pauseCensorPipeline(false); return; }
+        if (!eligible) { pauseCensorPipeline(powerSave); return; }
         long generation = censorScreen.generation();
         if (pipelineActive || startingGeneration == generation) return;
         startingGeneration = generation;
@@ -217,7 +219,40 @@ public final class ScreenCaptureService extends Service {
     }
 
     private void suspendCensorPipeline() {
+        syncPopupParticipation("");
         pauseCensorPipeline(true);
+    }
+
+    private void onCaptureEnvironmentChanged(String action) {
+        if (destroyed) return;
+        boolean powerChanged = PowerManager.ACTION_POWER_SAVE_MODE_CHANGED.equals(action);
+        if (powerChanged) powerSave = loadGovernor.powerSaveEnabled();
+        else {
+            censorScreen.refresh(action);
+            durationChanged();
+        }
+        reconcileCensorScreen();
+        if (powerChanged && (pipelineActive || startingGeneration >= 0)) {
+            long generation = censorScreen.generation(), transition = pipelineGeneration;
+            // Keep this behind any startup already submitted through the capture queue.
+            executeCapture(() -> {
+                DeviceProjectionAttachment exact = managedAttachment;
+                if (exact == null) executeInference(() -> refreshDetectorPowerPolicy(generation, transition));
+                else exact.executeNative(inferenceExecutor, () -> pipelineGeneration == transition,
+                        current -> { if (current) refreshDetectorPowerPolicy(generation, transition); }, () -> {});
+            });
+        }
+    }
+
+    private void refreshDetectorPowerPolicy(long generation, long transition) {
+        synchronized (resources) {
+            if (pipelineGeneration != transition || !isInstanceRunning() || !censorScreen.isCurrent(generation)
+                    || !censorConfigured() || detector == null) return;
+            try { detector.refreshPowerPolicy(); }
+            catch (Exception | LinkageError failure) {
+                failDetectorTransition(failure, DetectionEngine.resourceCleanupFailed(failure));
+            }
+        }
     }
 
     private void syncPopupParticipation(String observed) {
@@ -236,14 +271,17 @@ public final class ScreenCaptureService extends Service {
     }
 
     private void pauseCensorPipeline(boolean retireNative) {
-        if (retireNative) syncPopupParticipation("");
         boolean hadWork = pipelineActive || startingGeneration >= 0;
         boolean retire = retireNative && nativePipelineOwned;
-        if (retire) nativePipelineOwned = false;
+        if (retire) {
+            nativePipelineOwned = false;
+            detectorRetirement++;
+        }
         pipelineActive = false;
         startingGeneration = -1;
         if (hadWork) durationChanged();
         if (hadWork) pipelineGeneration++;
+        long transition = pipelineGeneration;
         if (managedAttachment != null) managedAttachment.cancelCaptureLoop();
         if (captureSchedule != null) { captureSchedule.cancel(false); captureSchedule = null; }
         ScreenCaptureManager source = capture;
@@ -259,17 +297,46 @@ public final class ScreenCaptureService extends Service {
         if (overlay != null) overlay.clear();
         if (ownsCurrentRuntime()) popupManager().updateDetections(java.util.Collections.emptyList());
         executeCapture(() -> executeInference(() -> {
-            // Ordinary awake app changes retain the prior model; screen suspension must retire it.
-            DetectionEngine retired = retire ? detector : null;
-            if (retire) detector = null;
-            try { if (retired != null) retired.close(); }
-            catch (RuntimeException | Error failure) {
-                resourceClosureFailed = true; projectionRevoked = true;
-                DiagnosticsRepository.fail(DIAGNOSTICS_MODE, failure);
-                postPipeline(() -> stopSelfResult(lastStartId));
+            synchronized (resources) {
+                retireRequestedDetector();
+                if (pipelineGeneration == transition) {
+                    tracker = null;
+                    processedScope = null;
+                    dwellTracker.clear();
+                }
             }
-            tracker = null; processedScope = null; dwellTracker.clear();
         }));
+    }
+
+    /** The next startup also owes this retirement if managed callbacks are reordered. */
+    private boolean retireRequestedDetector() {
+        long requested = detectorRetirement;
+        if (appliedDetectorRetirement == requested) return true;
+        DetectionEngine retired = detector;
+        detector = null;
+        try {
+            if (retired != null) retired.close();
+            appliedDetectorRetirement = requested;
+            return true;
+        } catch (RuntimeException | Error failure) {
+            failDetectorTransition(failure, true);
+            return false;
+        }
+    }
+
+    private void failDetectorTransition(Throwable failure, boolean cleanupFailed) {
+        projectionRevoked = true;
+        if (cleanupFailed) resourceClosureFailed = true;
+        updateDiagnostics(() -> DiagnosticsRepository.fail(DIAGNOSTICS_MODE, failure));
+        Log.e(TAG, "Could not continue on-device protection", failure);
+        DeviceProjectionAttachment exact = managedAttachment;
+        if (exact != null) {
+            if (cleanupFailed) {
+                managedNativeFailure = true;
+                exact.cleanupFailed();
+            }
+            exact.stop();
+        } else postPipeline(() -> { if (ownership.owns(captureOwner)) stopSelfResult(lastStartId); });
     }
 
     private void durationChanged() {
@@ -453,19 +520,19 @@ public final class ScreenCaptureService extends Service {
         observedScreenGeneration = censorScreen.generation();
         android.content.IntentFilter screenFilter = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
         screenFilter.addAction(Intent.ACTION_SCREEN_ON); screenFilter.addAction(Intent.ACTION_USER_PRESENT);
+        screenFilter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         if (managedAttachment == null) {
             androidx.core.content.ContextCompat.registerReceiver(this, screenReceiver, screenFilter,
                     androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
             screenReceiverRegistered = true;
         } else {
             DeviceProjectionAttachment exact = managedAttachment;
-            managedReceiver = new ManagedReceiver(action -> exact.postMain(() -> {
-                censorScreen.refresh(action); durationChanged(); reconcileCensorScreen();
-            }, () -> {}));
+            managedReceiver = new ManagedReceiver(action -> exact.postMain(() -> onCaptureEnvironmentChanged(action), () -> {}));
             managedReceiverAttempted = true;
             androidx.core.content.ContextCompat.registerReceiver(getApplicationContext(), managedReceiver, screenFilter,
                     androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
         }
+        powerSave = loadGovernor.powerSaveEnabled();
         postPipeline(screenTick);
         stats = com.subhub.app.remote.RemoteSessionNative.statistics(this);
         penance = new PenanceManager(this);
@@ -621,6 +688,7 @@ public final class ScreenCaptureService extends Service {
         synchronized (resources) {
             try {
                 if (projectionRevoked || !isInstanceRunning() || pipelineGeneration != transition || !censorScreen.isCurrent(generation) || !censorConfigured()) return;
+                if (!retireRequestedDetector() || pipelineGeneration != transition) return;
                 DetectorConfig config = settings.loadDetectorConfig();
                 detectorConfig = config;
                 updateDiagnostics(() -> DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution()));
@@ -628,7 +696,10 @@ public final class ScreenCaptureService extends Service {
                     detector = new DetectionEngine(this, config);
                     if (managedAttachment != null) detector.requireStrictResourceCleanup();
                     detector.initialize();
-                } else detector.setConfig(config);
+                } else {
+                    detector.setConfig(config);
+                    detector.refreshPowerPolicy();
+                }
                 String provider = detector.getActiveProvider(), model = detector.getActiveModel();
                 updateDiagnostics(() -> DiagnosticsRepository.ready(DIAGNOSTICS_MODE, provider,
                         model, config.getInferenceResolution()));
@@ -666,11 +737,7 @@ public final class ScreenCaptureService extends Service {
                         captureSchedule = executor.scheduleWithFixedDelay(this::captureLatestFrame, 0, 16, TimeUnit.MILLISECONDS);
                     else managedAttachment.startCaptureLoop(executor, this::captureLatestFrame);
                 });
-            } catch (Exception error) {
-                updateDiagnostics(() -> DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error));
-                Log.e(TAG, "Could not start on-device protection", error);
-                postPipeline(() -> { if (ownership.owns(captureOwner)) stopSelfResult(lastStartId); });
-            }
+            } catch (Exception error) { failDetectorTransition(error, DetectionEngine.resourceCleanupFailed(error)); }
         }
     }
 
@@ -693,8 +760,15 @@ public final class ScreenCaptureService extends Service {
         DetectorConfig config = settings.loadDetectorConfig();
         detectorConfig = config;
         if (overlay != null) overlay.setMaxExtrapolationMs(config.getMaxExtrapolationMs());
-        if (detector != null) detector.setConfig(config);
-        if (tracker != null) tracker.setConfig(config);
+        DetectionEngine currentDetector = detector;
+        if (currentDetector != null) {
+            synchronized (currentDetector) {
+                // Retirement clears the reference before taking this monitor to close the model.
+                if (detector == currentDetector) currentDetector.setConfig(config);
+            }
+        }
+        ObjectTracker currentTracker = tracker;
+        if (currentTracker != null) currentTracker.setConfig(config);
         if (!ownsCurrentRuntime()) return;
         popupManager().reloadSettings(this);
         syncPopupParticipation(censorScreen.eligible() ? ScreenshotAccessibilityService.observedCensorForeground() : "");

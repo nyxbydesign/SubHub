@@ -122,14 +122,14 @@ public final class ProfileViews {
         details.setVisibility(View.VISIBLE);
     }
 
-    /** Only the repository's foreground-presence projection may supply CONNECTED here. */
+    /** Presence comes from the repository's authenticated peer projection. */
     static void presence(View identity, String prefix, PersonId target, PersonSnapshot.Connection state) {
         View candidate = identity.findViewWithTag(prefix + "_avatar");
         if (!(candidate instanceof ProfileAvatarView)) return;
         ProfileAvatarView avatar = (ProfileAvatarView) candidate;
         avatar.clearPresence();
         if (remoteContactTarget(target) && state != null && state != PersonSnapshot.Connection.LOCAL)
-            avatar.setPresence(state == PersonSnapshot.Connection.CONNECTED);
+            avatar.setPresence(state);
     }
 
     /** Journal targets route local profiles; only a transport peer generation can carry contact time. */

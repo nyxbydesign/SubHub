@@ -136,7 +136,7 @@ public final class PrimaryHeaderContractTest {
                 R.string.authenticator_title, R.string.keyholder_handover_title, R.string.help_title,
                 R.string.popup_title,
                 R.string.statistics_title, R.string.achievements_title,
-                R.string.subliminal_title, R.string.update_title, R.string.studio_title};
+                R.string.subliminal_title, R.string.update_title, R.string.role_contracts};
         for (int width : new int[] {320, 411, 600}) {
             for (float fontScale : new float[] {1f, 1.3f, 2f}) {
                 Configuration configuration = new Configuration(context.getResources()

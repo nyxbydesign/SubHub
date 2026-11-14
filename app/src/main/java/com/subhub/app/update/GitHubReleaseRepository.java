@@ -204,7 +204,7 @@ public final class GitHubReleaseRepository {
                         || (manifest.versionCode == available.manifest.versionCode
                         && available.prerelease && !release.prerelease)) {
                     available = new UpdateCandidate(manifest, releaseNotes(manifest, release.body),
-                            release.htmlUrl, release.prerelease);
+                            release.htmlUrl, release.prerelease, release.publishedAt);
                 }
             } catch (Exception ignored) {
                 // A malformed or unavailable individual release must not mask a valid newer build.

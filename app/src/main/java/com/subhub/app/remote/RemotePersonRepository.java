@@ -2,7 +2,6 @@ package com.subhub.app.remote;
 
 import android.content.Context;
 import com.subhub.app.R;
-import com.subhub.app.configuration.ConfigurationSettingCatalog;
 import com.subhub.app.people.*;
 import org.json.*;
 import java.util.*;
@@ -44,6 +43,7 @@ public final class RemotePersonRepository implements PersonRepository {
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
         String sessionIdentity=runtime==null?"":runtime.optString("sessionIdentity","");
         if(peer.state==RemoteStore.State.ACTIVE && live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("endSessionSupported") && runtime.optBoolean("serviceActive") && sessionIdentity.matches("[0-9a-f]{64}"))capabilities.add(PersonSnapshot.Capability.END_SESSION);
+        if (canViewBlackmail(peer.state, live, runtime)) capabilities.add(PersonSnapshot.Capability.VIEW_BLACKMAIL);
         String applied=summaryOnly?"":store.metadata(peer.identity,peer.generation,"applied_revision","0"),desired=summaryOnly?"":store.metadata(peer.identity,peer.generation,"desired_revision","0");
         if(!summaryOnly){RemoteStore.Command latest=store.latestCommand(peer.identity,peer.generation);if(latest==null || !latest.pending())desired=applied;}
         if(summaryOnly)capabilities.clear();
@@ -57,14 +57,28 @@ public final class RemotePersonRepository implements PersonRepository {
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
                 .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
     }
+
+    static boolean canViewBlackmail(RemoteStore.State pairing, PersonSnapshot.Freshness freshness, JSONObject runtime) {
+        return pairing == RemoteStore.State.ACTIVE && freshness == PersonSnapshot.Freshness.CURRENT && runtime != null
+                && Boolean.TRUE.equals(runtime.opt("hardcoreEnabled"))
+                && Boolean.TRUE.equals(runtime.opt("blackmailEnabled"));
+    }
     static PersonSnapshot.Connection connection(RemoteStore.State state,PeerPresence.Observation presence,
             long contact,String error) {
         if(state==RemoteStore.State.REVOKED)return PersonSnapshot.Connection.REVOKED;
         if(state==RemoteStore.State.PENDING)return PersonSnapshot.Connection.PENDING;
-        if(presence.online)return PersonSnapshot.Connection.CONNECTED;
-        // A foreground hello can precede the first completed transport checkpoint.
-        return contact==0 && presence.lastOnlineAt==0 && error.isEmpty()
-                ?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
+        PersonSnapshot.Connection connection = activePresence(presence);
+        // A presence hello can precede the first completed transport checkpoint.
+        return connection == PersonSnapshot.Connection.OFFLINE && contact == 0 && presence.lastOnlineAt == 0
+                && !presence.backgroundObserved && error.isEmpty() ? PersonSnapshot.Connection.PAIRED : connection;
+    }
+
+    static PersonSnapshot.Connection activePresence(PeerPresence.Observation presence) {
+        return switch (presence.status) {
+            case ONLINE -> PersonSnapshot.Connection.CONNECTED;
+            case IDLE -> PersonSnapshot.Connection.IDLE;
+            case OFFLINE -> PersonSnapshot.Connection.OFFLINE;
+        };
     }
 
     public PersonSnapshot localProjection(PersonSnapshot local) {
@@ -99,21 +113,13 @@ public final class RemotePersonRepository implements PersonRepository {
     }
     private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration,JSONObject runtime,PersonSnapshot.Freshness runtimeFreshness) throws Exception {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
-        for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
-            if ("atmosphere".equals(group)) {
-                AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
-                        RemoteProfiles.allowances(runtime), runtimeFreshness);
-                result.add(new PersonSnapshot.Section(group, context.getString(R.string.atmosphere_title),
-                        atmosphere.summary, atmosphere.details));
-                continue;
-            }
-            List<String> parts=new ArrayList<>();String[] names="atmosphere".equals(group)?new String[]{"subliminal","popup"}:new String[]{group};
-            for(String section:names)for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)) {
-                Object value=sections.getJSONObject(section).get(field.key);parts.add(context.getString(field.label)+": "+display(field,value));
-            }
-            int title="censor".equals(group)?R.string.sub_censor_title:"limits".equals(group)?R.string.sub_limits_title:"wallet".equals(group)?R.string.sub_wallet_title:R.string.atmosphere_title;
-            result.add(new PersonSnapshot.Section(group,context.getString(title),"",String.join("\n",parts)));
-        }
+        for (String group : List.of("censor", "limits", "wallet"))
+            result.add(ContractFeatureDetails.section(context, group, sections.getJSONObject(group)));
+        if (!GagContractFields.supported(store, peer)) sections.remove(GagContractFields.SECTION);
+        AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
+                RemoteProfiles.allowances(runtime), runtimeFreshness);
+        result.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
+                atmosphere.summary, atmosphere.details));
         JSONObject appDoc=configuration.getJSONObject("apps"),service=configuration.getJSONObject("service");
         List<String> names=new ArrayList<>();List<PersonSnapshot.App> appRows=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
             JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);String label=app==null?id:app.optString("label",id);names.add(label);appRows.add(new PersonSnapshot.App(id,label,feature.appIcons.identity(peer.identity,peer.generation,id)));
@@ -158,10 +164,4 @@ public final class RemotePersonRepository implements PersonRepository {
         return PersonSnapshot.Allowance.ordered(result);
     }
     private static long knownUsage(JSONObject values,String name){try{long value=RemoteProtocol.integer(values,name);return value<0?-1:value;}catch(Exception invalid){return -1;}}
-    private String display(ConfigurationSettingCatalog.Field field,Object value) {
-        if(value instanceof Boolean)return context.getString((Boolean)value?R.string.role_enabled:R.string.role_disabled);
-        if(value instanceof JSONArray){JSONArray rows=(JSONArray)value;List<String> items=new ArrayList<>();for(int i=0;i<rows.length();i++){String item=rows.optString(i);items.add(field.choices.isEmpty()?item:context.getString(ConfigurationSettingCatalog.choiceLabel(field,item)));}return String.join(", ",items);}
-        if(field.kind==ConfigurationSettingCatalog.Kind.CHOICE)return context.getString(ConfigurationSettingCatalog.choiceLabel(field,String.valueOf(value)));
-        return field.displayText(value);
-    }
 }

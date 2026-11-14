@@ -21,6 +21,7 @@ public final class UpdateStateStore {
     private static final String RELEASE_HISTORY = "release_history";
     private static final String LAST_NOTIFIED = "last_notified";
     private static final String DOWNLOAD_ID = "download_id";
+    private static final String AUTOMATIC_DOWNLOAD_ATTEMPTS = "automatic_download_attempts";
     private static final String VERIFIED_PATH = "verified_path";
     private static final String VERIFIED_AT = "verified_at";
     private static final String INSTALL_REQUESTED = "install_requested";
@@ -78,6 +79,19 @@ public final class UpdateStateStore {
     public void setEtag(String value) { preferences.edit().putString(ETAG, value == null ? "" : value).apply(); }
     public long downloadId() { return preferences.getLong(DOWNLOAD_ID, -1L); }
     public void setDownloadId(long id) { preferences.edit().putLong(DOWNLOAD_ID, id).apply(); }
+
+    /** The attempt survives process recreation and download-row cleanup. */
+    boolean reserveAutomaticDownload(UpdateManifest.Asset asset, long now) {
+        synchronized (UpdateStateStore.class) {
+            try {
+                String next = UpdateDownloadAttempts.reserve(
+                        preferences.getString(AUTOMATIC_DOWNLOAD_ATTEMPTS, "[]"), asset.sha256, now);
+                return next != null && preferences.edit().putString(AUTOMATIC_DOWNLOAD_ATTEMPTS, next).commit();
+            } catch (JSONException malformed) {
+                return false;
+            }
+        }
+    }
     public String verifiedPath() {
         synchronized (UpdateStateStore.class) {
             return preferences.getString(VERIFIED_PATH, "");

@@ -2,9 +2,12 @@ package com.subhub.app.people;
 
 import android.content.Context;
 import com.subhub.app.R;
+import com.subhub.app.remote.GagContractFields;
+import com.subhub.app.remote.RemoteFeature;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.subliminal.SubliminalSettings;
 import com.subhub.app.subliminal.SubliminalSettingsRepository;
 import java.util.ArrayList;
@@ -21,26 +24,51 @@ public final class AtmosphereContractDetails {
     public final String details;
 
     private AtmosphereContractDetails(Context context, String whispersState, String popupState,
-            String whispers, String popup) {
-        summary = context.getString(R.string.contract_atmosphere_states, whispersState, popupState);
-        details = context.getString(R.string.arrangement_detail_line,
+            String whispers, String popup, String gagState, boolean hasDetails) {
+        summary = context.getString(R.string.contract_atmosphere_states, whispersState, popupState, gagState);
+        details = hasDetails ? context.getString(R.string.arrangement_detail_line,
                 context.getString(R.string.overview_whispers), whispers) + "\n\n"
                 + context.getString(R.string.arrangement_detail_line,
-                        context.getString(R.string.popup_title), popup);
+                        context.getString(R.string.popup_title), popup) + "\n\n"
+                + context.getString(R.string.arrangement_detail_line,
+                        context.getString(R.string.gag_title), gagState) : "";
     }
 
     public static AtmosphereContractDetails local(Context context) {
-        SubliminalSettings whispers = new SubliminalSettingsRepository(context).load();
+        return local(context, false);
+    }
+
+    static AtmosphereContractDetails subContract(Context context) {
+        return local(context, true);
+    }
+
+    private static AtmosphereContractDetails local(Context context, boolean hideDisabled) {
+        boolean whispersAllowed = SubFeaturePolicy.allowed(context, "subliminal");
+        boolean popupAllowed = SubFeaturePolicy.allowed(context, "popup");
+        boolean whispersEnabled = hideDisabled
+                ? context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                        .getBoolean(FeatureModuleManager.KEY_SUBLIMINAL_ENABLED, false)
+                : new FeatureModuleManager(context).isSubliminalEnabled();
         PopupStormSettings popup = PopupStormSettings.load(context);
-        String whispersState = state(context, new FeatureModuleManager(context).isSubliminalEnabled(),
-                SubFeaturePolicy.allowed(context, "subliminal"), true);
-        String popupState = state(context, popup.isEnabled(), SubFeaturePolicy.allowed(context, "popup"), true);
+        String whispersState = state(context, whispersEnabled, whispersAllowed, true);
+        String popupState = state(context, popup.isEnabled(), popupAllowed, true);
+        boolean showWhispers = !hideDisabled || whispersEnabled && whispersAllowed;
+        boolean showPopup = !hideDisabled || popup.isEnabled() && popupAllowed;
+        String whispersCopy = whispersState;
+        if (showWhispers) {
+            SubliminalSettings whispers = new SubliminalSettingsRepository(context).load();
+            whispersCopy = whispers(context, whispersState, new ArrayList<>(whispers.getEnabledPacks()),
+                    whispers.getPreset().name(), whispers.isAdvanced());
+        }
+        JSONObject gag;
+        try { gag = RemoteFeature.get(context).appliedGag(); }
+        catch (RuntimeException unavailable) { gag = null; }
         return new AtmosphereContractDetails(context, whispersState, popupState,
-                whispers(context, whispersState, new ArrayList<>(whispers.getEnabledPacks()),
-                        whispers.getPreset().name(), whispers.isAdvanced()),
-                popup(context, popupState, popup.getPositionMode(), popup.getDetectionMode(),
+                whispersCopy, showPopup
+                        ? popup(context, popupState, popup.getPositionMode(), popup.getDetectionMode(),
                         popup.isBurstEnabled(), popup.isBouncing(), popup.isRandomRotation(),
-                        popup.getDenialChance() > 0, popup.getDenialStyle()));
+                        popup.getDenialChance() > 0, popup.getDenialStyle()) : popupState,
+                gagStatus(context, gag), showWhispers || showPopup);
     }
 
     /** Sections have already passed RemoteConfiguration validation; consent has its own freshness. */
@@ -62,7 +90,27 @@ public final class AtmosphereContractDetails {
                         popup.getString(PopupStormSettings.K_DETECTION_MODE), popup.getBoolean(PopupStormSettings.K_BURST_ENABLED),
                         popup.getBoolean(PopupStormSettings.K_BOUNCING), popup.getBoolean(PopupStormSettings.K_RANDOM_ROT),
                         popup.getInt(PopupStormSettings.K_DENIAL_CHANCE) > 0, popup.getString(PopupStormSettings.K_DENIAL_STYLE))
-                        + consentNote(context, consent.get("popup"), freshness));
+                        + consentNote(context, consent.get("popup"), freshness),
+                gagStatus(context, sections.optJSONObject(GagContractFields.SECTION)), true);
+    }
+
+    static AtmosphereContractDetails internal(Context context, Map<String, Map<String, Object>> configuration) {
+        try {
+            JSONObject sections = new JSONObject()
+                    .put("modules", new JSONObject(configuration.get("modules")))
+                    .put("subliminal", new JSONObject(configuration.get("subliminal")))
+                    .put("popup", new JSONObject(configuration.get("popup")));
+            Map<String, Object> gag = configuration.get(GagContractFields.SECTION);
+            sections.put(GagContractFields.SECTION, gag == null ? GagContractFields.defaults() : new JSONObject(gag));
+            return remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN);
+        } catch (JSONException invalid) {
+            throw new IllegalArgumentException("Incomplete internal Atmosphere configuration", invalid);
+        }
+    }
+
+    private static String gagStatus(Context context, JSONObject gag) {
+        return context.getString(gag == null ? R.string.gag_status_unknown
+                : gag.optBoolean("enabled") ? R.string.arrangement_configured_on : R.string.control_state_off);
     }
 
     private static String state(Context context, boolean enabled, Boolean allowed, boolean current) {

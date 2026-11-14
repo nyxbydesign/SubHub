@@ -10,6 +10,9 @@ import java.io.File;
 
 /** Starts and restores the single compatible APK download. */
 public final class UpdateDownloadCoordinator {
+    private static final long ALREADY_VERIFIED = -1L;
+    private static final long AUTOMATIC_RETRY_DEFERRED = -2L;
+
     public static final class Status {
         public final int state;
         public final long downloaded;
@@ -45,7 +48,7 @@ public final class UpdateDownloadCoordinator {
             if (status != null && status.state == DownloadManager.STATUS_SUCCESSFUL) {
                 UpdateDownloadFinalizer.finish(context, id);
             }
-        } else {
+        } else if (id == ALREADY_VERIFIED) {
             UpdateNotifications.ready(context, candidate);
         }
     }
@@ -66,10 +69,13 @@ public final class UpdateDownloadCoordinator {
                 long completed = state.downloadId();
                 if (completed >= 0) downloads.remove(completed);
                 state.setDownloadId(-1L);
-                return -1L;
+                return ALREADY_VERIFIED;
             }
             Status active = status();
             if (active != null && active.state != DownloadManager.STATUS_FAILED) return state.downloadId();
+            if (!userRequested && !state.reserveAutomaticDownload(asset, System.currentTimeMillis())) {
+                return AUTOMATIC_RETRY_DEFERRED;
+            }
             cancel();
             File destination = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), asset.name);
             if (destination.exists() && !destination.delete()) throw new IllegalStateException("Old download unavailable");

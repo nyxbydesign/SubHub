@@ -17,7 +17,7 @@ public final class ProfileAvatarView extends FrameLayout {
     private final String job = "profile-avatar:" + System.identityHashCode(this);
     private AsyncUiScope scope;
     private final Paint presencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private boolean presenceVisible, online;
+    private int presenceColor;
 
     public ProfileAvatarView(Context context, ProfileData profile) {
         super(context);
@@ -35,29 +35,31 @@ public final class ProfileAvatarView extends FrameLayout {
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
-    /** Callers supply confirmed foreground presence; avatar previews have no badge by default. */
-    public void setPresence(boolean online) {
-        this.online = online;
-        presenceVisible = true;
+    /** Avatar previews have no badge until a paired profile supplies presence. */
+    public void setPresence(PersonSnapshot.Connection state) {
+        presenceColor = switch (state) {
+            case CONNECTED -> R.color.avatar_presence_online;
+            case IDLE -> R.color.avatar_presence_idle;
+            default -> R.color.avatar_presence_offline;
+        };
         invalidate();
     }
 
     public void clearPresence() {
-        presenceVisible = false;
+        presenceColor = 0;
         invalidate();
     }
 
     @Override protected void dispatchDraw(Canvas canvas) {
         super.dispatchDraw(canvas);
-        if (!presenceVisible) return;
+        if (presenceColor == 0) return;
         float edge = Math.min(getWidth(), getHeight());
         float outer = edge * .16f;
         float cx = getWidth() - outer, cy = getHeight() - outer;
         // Both circles stay inside the avatar bounds, including inside clipping parents.
         presencePaint.setColor(getContext().getColor(R.color.surface_card));
         canvas.drawCircle(cx, cy, outer, presencePaint);
-        presencePaint.setColor(getContext().getColor(online
-                ? R.color.avatar_presence_online : R.color.avatar_presence_offline));
+        presencePaint.setColor(getContext().getColor(presenceColor));
         canvas.drawCircle(cx, cy, edge * .11f, presencePaint);
     }
 

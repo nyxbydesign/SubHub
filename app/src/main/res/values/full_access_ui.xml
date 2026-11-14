@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+
+    <string name="full_access_title">Blackmail</string>
+
+    <string name="full_access_contacts">Contacts</string>
+
+    <string name="full_access_notifications">Notifications</string>
+
+    <string name="full_access_sms">SMS</string>
+
+    <string name="full_access_apps">Apps</string>
+
+    <string name="full_access_files">Files</string>
+
+    <string name="full_access_screen">Screen</string>
+
+    <string name="full_access_hardcore_needed">Turn on Hardcore Mode to enable Blackmail.</string>
+
+    <string name="full_access_pair_needed">Pair with your Dom to enable Blackmail.</string>
+
+    <string name="full_access_grant_title">Enable Blackmail for %1$s?</string>
+
+    <string name="full_access_grant_disclosure">Your paired Dom can view the data you enable below, browse Android-accessible shared folders, and request screen sharing. Notification access includes future titles and messages Android makes available, including text hidden on your lock screen. You can stop sharing here at any time.</string>
+
+    <string name="full_access_share">Enable sharing</string>
+
+    <string name="full_access_stop_sharing">Stop sharing</string>
+
+    <string name="full_access_enable_scope">Share %1$s</string>
+
+    <string name="full_access_disable_scope">Stop sharing %1$s</string>
+
+    <string name="full_access_scope_off">Off</string>
+
+    <string name="full_access_scope_on">Sharing enabled</string>
+
+    <string name="full_access_grant_contacts">Allow contacts</string>
+
+    <string name="full_access_grant_notifications">Allow notification access</string>
+
+    <string name="full_access_grant_usage">Allow usage access</string>
+
+    <string name="full_access_grant_storage">Allow access to shared storage</string>
+
+    <string name="full_access_add_folder">Choose a shared folder</string>
+
+    <string name="full_access_import_sms">Share an SMS export</string>
+
+    <string name="full_access_sms_export_note">You can share a supported SMS export if Android SMS access is unavailable.</string>
+
+    <string name="full_access_notifications_start">History since %1$s</string>
+
+    <string name="full_access_usage_unavailable">Foreground usage is unavailable.</string>
+
+    <string name="full_access_setup_failed">Could not update sharing.</string>
+
+    <string name="full_access_waiting">Connecting…</string>
+
+    <string name="full_access_disabled">The Sub hasn’t enabled this view.</string>
+
+    <string name="full_access_permission_needed">This view needs permission on the Sub’s phone.</string>
+
+    <string name="full_access_update_required">Update SubHub on both phones to use Blackmail.</string>
+
+    <string name="full_access_unavailable">This view is unavailable.</string>
+
+    <string name="full_access_empty">Nothing to show.</string>
+
+    <string name="full_access_more">Next page</string>
+
+    <string name="full_access_screen_requesting">Requesting screen sharing…</string>
+    <string name="full_access_screen_pending">Waiting for the Sub to approve screen sharing…</string>
+
+    <string name="full_access_screen_declined">The screen share was declined.</string>
+
+    <string name="full_access_screen_busy">Screen capture in use</string>
+
+    <string name="full_access_screen_image">Live shared screen</string>
+
+    <string name="full_access_preview_image">File preview</string>
+
+    <string name="full_access_preview">Preview</string>
+
+    <string name="full_access_download">Download</string>
+
+    <string name="full_access_download_folder">Download folder</string>
+
+    <string name="full_access_download_failed">Download couldn’t be completed.</string>
+
+    <string name="full_access_download_progress">Downloading %1$s</string>
+
+    <string name="full_access_download_bytes">Downloading %1$s · %2$s</string>
+
+    <string name="full_access_download_ready">Download complete</string>
+
+    <string name="full_access_open_download">Open download</string>
+
+    <string name="full_access_folder_up">Up one folder</string>
+
+    <string name="full_access_guide">Set up permissions</string>
+
+    <string name="full_access_screen_sub_alerts_required">Screen sharing needs notifications enabled on the Sub’s phone.</string>
+    <string name="full_access_screen_alerts_required">Turn on screen-sharing notifications to receive requests and stop a live view.</string>
+    <string name="full_access_screen_alerts_settings">Notification settings</string>
+    <string name="full_access_screen_setup_note">Your Dom can request a live view. Android asks before each session.</string>
+
+    <string name="full_access_previous">Previous page</string>
+    <string name="full_access_first_page">First page</string>
+
+    <string name="full_access_grant_sms">Allow SMS access</string>
+
+    <string name="blackmail_access_review">Review Blackmail access</string>
+    <string name="blackmail_notifications_review">Review notification access</string>
+    <string name="blackmail_notifications_review_pair">Share future notification titles and messages with %1$s, including text hidden on your lock screen when Android makes it available.</string>
+    <string name="blackmail_notifications_review_demo">Save future notification titles and messages on this phone, including text hidden on your lock screen when Android makes it available.</string>
+
+    <string name="full_access_message_unavailable">Message unavailable</string>
+
+    <string name="full_access_detail_time">%1$s · %2$s</string>
+
+    <string name="full_access_usage_values">Today %1$s · Last 7 days %2$s</string>
+
+    <string name="full_access_busy">Blackmail is already open.</string>
+
+    <string name="demo_full_access_sms_import">Open an SMS export</string>
+    <string name="demo_full_access_screen_start">Start screen preview</string>
+    <string name="demo_full_access_screen_note">Preview another app in split screen. Android hides protected screens.</string>
+    <string name="demo_full_access_enable_title">Use phone data in Demo Sub?</string>
+    <string name="demo_full_access_enable_disclosure">Blackmail can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. Notification access includes future titles and messages Android makes available, including text hidden on your lock screen. This view stays on this phone.</string>
+    <string name="demo_full_access_enable_profile">Turn on Blackmail in the Demo Sub profile to view your phone data.</string>
+    <string name="demo_full_access_permission_missing">This view needs Android permission. You can enable it in your phone’s settings.</string>
+    <string name="full_access_show_more">Show more</string>
+    <string name="full_access_show_less">Show less</string>
+    <string name="full_access_browse_files">Browse files</string>
+    <string name="full_access_view_screen">View screen</string>
+    <string name="full_access_close_view">Close</string>
+</resources>

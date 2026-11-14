@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gag_title">Gag</string>
+    <string name="gag_keyboard">SubHub Gag keyboard</string>
+    <string name="gag_description">Enable and select the SubHub Gag keyboard to use the rules set by your paired Dom. You can switch back to your usual keyboard at any time.</string>
+    <string name="gag_dom_description">Set word replacement rules for your paired Sub.</string>
+    <string name="gag_enable">Replace words</string>
+    <string name="gag_when_to_replace">When to replace</string>
+    <string name="gag_every_word">Every word</string>
+    <string name="gag_every_n_words">Every N words</string>
+    <string name="gag_specific_words">Specific words</string>
+    <string name="gag_interval">Number of words between replacements</string>
+    <string name="gag_words">Words to replace</string>
+    <string name="gag_replacements">Replacement words</string>
+    <string name="gag_one_per_line">One per line</string>
+    <string name="gag_interval_error">Enter a number from 1 to 999.</string>
+    <string name="gag_words_error">Enter at least one word to replace.</string>
+    <string name="gag_replacements_error">Enter at least one replacement.</string>
+    <string name="gag_android_keyboard_settings">Android keyboard settings</string>
+    <string name="gag_choose_keyboard">Choose keyboard</string>
+    <string name="gag_keyboard_shift">Shift</string>
+    <string name="gag_keyboard_delete">Delete</string>
+    <string name="gag_keyboard_space">Space, hold to switch keyboards</string>
+    <string name="gag_keyboard_enter">Enter</string>
+    <string name="gag_keyboard_caps_lock">Caps lock on</string>
+    <string name="gag_keyboard_search">Search</string>
+    <string name="gag_keyboard_done">Done</string>
+    <string name="gag_keyboard_go">Go</string>
+    <string name="gag_keyboard_send">Send</string>
+    <string name="gag_keyboard_next">Next</string>
+    <string name="gag_keyboard_previous">Previous</string>
+    <string name="gag_keyboard_language">EN · DE</string>
+    <string name="gag_keyboard_letters">Letters</string>
+    <string name="gag_keyboard_symbols">Symbols</string>
+    <string name="gag_keyboard_more_symbols">More symbols</string>
+    <string name="gag_keyboard_numbers">Numeric keypad</string>
+    <string name="gag_keyboard_active">Gag on</string>
+    <string name="gag_keyboard_inactive">Gag off</string>
+    <string name="gag_keyboard_excluded">Literal typing</string>
+    <string name="gag_keyboard_setup">Set up Gag keyboard</string>
+    <string name="gag_status_unknown">Unknown</string>
+    <string name="gag_keyboard_selected">SubHub Gag keyboard is selected.</string>
+    <string name="gag_keyboard_choose_next">Choose SubHub Gag keyboard to finish setup.</string>
+    <string name="gag_keyboard_enable_next">Enable SubHub Gag keyboard in Android keyboard settings.</string>
+    <string name="gag_keyboard_symbol_hint">%1$s, hold for %2$s</string>
+</resources>

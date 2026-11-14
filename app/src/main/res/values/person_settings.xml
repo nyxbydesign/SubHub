@@ -7,10 +7,6 @@
     <item name="person_editor_target" type="id" />
     <item name="settings_connection" type="id" />
     <item name="rituals_packs_card" type="id" />
-    <item name="rituals_pack_count" type="id" />
-    <item name="rituals_pack_name" type="id" />
-    <item name="rituals_import_pack" type="id" />
-    <item name="rituals_pack_library" type="id" />
     <item name="rituals_gallery_card" type="id" />
     <item name="rituals_keyholder_card" type="id" />
     <item name="rituals_keyholder_status" type="id" />

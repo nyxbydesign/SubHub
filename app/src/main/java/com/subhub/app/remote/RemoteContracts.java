@@ -40,6 +40,7 @@ public final class RemoteContracts {
         JSONObject wire = com.subhub.app.tasks.TaskContractFields.forPeer(current,
                 "1".equals(store.metadata(peer.identity,peer.generation,"tasks_version","0")), false);
         wire = ExtraTimeContractFields.forPeer(wire,"1".equals(store.metadata(peer.identity,peer.generation,"extra_time_version","0")),false);
+        wire = GagContractFields.forPeer(wire,GagContractFields.supported(store,peer),false);
         store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",wire,false,System.currentTimeMillis());
         process(peer);writer.prunePrepared();
     }

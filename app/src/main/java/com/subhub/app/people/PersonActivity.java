@@ -479,6 +479,14 @@ public final class PersonActivity extends RolePage {
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+                    if (internal || person.can(PersonSnapshot.Capability.VIEW_BLACKMAIL)) {
+                        PersonUi.row(destinations, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
+                            if (!guardTarget()) return;
+                            if (internal) startActivity(DummySubPreview.childIntent(this,
+                                    com.subhub.app.fullaccess.DemoFullAccessActivity.class));
+                            else com.subhub.app.fullaccess.FullAccessActivity.openPeer(this, person.id);
+                        }).setTag("person_tab:full_access");
+                    }
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
                 });
                 if (!internal) reconcile("activity", java.util.List.of(person.id), parent ->
@@ -504,7 +512,7 @@ public final class PersonActivity extends RolePage {
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
-                    if (!internal) ProfileViews.allowedFeatures(parent, person);
+                    ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
@@ -661,11 +669,9 @@ public final class PersonActivity extends RolePage {
         freshness(scope, person.sync.contract);
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable && !internal) appsTitle.setTag("person_apps");
+        if (!editable) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !internal);
-        if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
-                getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, internal || person.id.isLocal());
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
         LinearLayout features = null;
@@ -689,7 +695,7 @@ public final class PersonActivity extends RolePage {
             PersonSnapshot.Section value, boolean editable) {
         int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
                 : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
-        boolean allowed = internal || (person.id.isLocal()
+        boolean allowed = internal ? FeatureEditorSession.canEdit(this, value.key) : (person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
@@ -697,7 +703,7 @@ public final class PersonActivity extends RolePage {
         LinearLayout row = PersonUi.row(parent, icon, value.title,
                 atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
                         : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                (internal || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
+                editable && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
         if (atmosphere && known) {
@@ -713,7 +719,11 @@ public final class PersonActivity extends RolePage {
 
     private void editSection(PersonSnapshot person, String section) {
         if (!guardTarget() || !personId.equals(person.id)) return;
-        if (internal) { startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section))); return; }
+        if (internal) {
+            if (FeatureEditorSession.canEdit(this, section))
+                startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section)));
+            return;
+        }
         if (person.id.isLocal()) {
             PersonRoutes.editSection(this, person.id, section);
             return;

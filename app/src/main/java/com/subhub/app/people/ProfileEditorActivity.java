@@ -21,6 +21,7 @@ public final class ProfileEditorActivity extends PreferencePage {
     private long internalControllerRevision;
     private String avatar;
     private com.subhub.app.security.SubFeatureControls.Draft features;
+    private com.subhub.app.fullaccess.FullAccessSetup fullAccess;
     private EditText name, about, gender, age;
     private LinearLayout portrait;
     private TextView save, change, remove;
@@ -117,7 +118,11 @@ public final class ProfileEditorActivity extends PreferencePage {
             LinearLayout choices = card(page); choices.setTag("profile_edit_features");
             LinearLayout controls = PersonUi.column(this);
             choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
-            com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
+            FeatureConsentView grid = com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
+            if (grid != null)
+                fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, controls, grid, this::mayEdit, state);
+        } else if (internal) {
+            fullAccess = new com.subhub.app.fullaccess.FullAccessSetup(this, card(page), null, this::mayEdit, state);
         }
         ProfileActionRow formActions = new ProfileActionRow(this);
         formActions.setTag("profile_form_actions");
@@ -156,10 +161,14 @@ public final class ProfileEditorActivity extends PreferencePage {
                 gender.getText().toString(), enteredAge)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
+        boolean openGag = features != null && features.enablesGag();
         if (features != null && !features.apply(this)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
         com.subhub.app.remote.RemoteFeature.get(this).changed();
+        if (openGag && com.subhub.app.atmosphere.GagActivity.canSetUp(this)) {
+            startActivity(new android.content.Intent(this, com.subhub.app.atmosphere.GagActivity.class));
+        }
         finish();
     }
 
@@ -197,11 +206,18 @@ public final class ProfileEditorActivity extends PreferencePage {
     @Override protected void onResume() {
         super.onResume();
         if (!mayEdit()) finish();
-        else if (internal) { findViewById(android.R.id.content).setVisibility(View.VISIBLE); authorityClock.post(checkInternalAuthority); }
+        else {
+            if (internal) {
+                findViewById(android.R.id.content).setVisibility(View.VISIBLE);
+                authorityClock.post(checkInternalAuthority);
+            }
+            if (fullAccess != null) fullAccess.resume();
+        }
     }
 
     @Override protected void onPause() {
         authorityClock.removeCallbacks(checkInternalAuthority);
+        if (fullAccess != null) fullAccess.pause();
         if (internal) findViewById(android.R.id.content).setVisibility(View.INVISIBLE);
         super.onPause();
     }
@@ -216,6 +232,7 @@ public final class ProfileEditorActivity extends PreferencePage {
             state.putString("profile_avatar", avatar);
         }
         if (features != null) features.saveState(state);
+        if (fullAccess != null) fullAccess.saveState(state);
         super.onSaveInstanceState(state);
     }
 }

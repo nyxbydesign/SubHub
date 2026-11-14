@@ -12,7 +12,7 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
-        default JSONObject presence(Boolean previousForeground) throws Exception { return null; }
+        default JSONObject presence(Boolean previousForeground, Boolean previousBackgroundSync) throws Exception { return null; }
         default void presenceReceived(RemoteStore.Peer peer) { }
         default int appIconsVersion() { return 0; }
         default void appIcons(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
@@ -37,6 +37,8 @@ public final class RemoteSession {
         default JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception { return profile(peer, details); }
         default int tasksVersion() { return 0; }
         default int extraTimeVersion() { return 0; }
+        default boolean gagRulesSupported() { return false; }
+        default void gagCapabilityChanged(RemoteStore.Peer peer) { }
         default void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
@@ -65,7 +67,7 @@ public final class RemoteSession {
     private final RemoteStore store;
     private final PeerTransport transport;
     private final Hooks hooks;
-    private Boolean sentForeground;
+    private Boolean sentForeground, sentBackgroundSync;
     private String presenceLocalIdentity;
 
     public RemoteSession(RemoteStore store,PeerTransport transport,Hooks hooks) {
@@ -79,6 +81,7 @@ public final class RemoteSession {
     void outgoing(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadlineNanos,
             Runnable helloAcknowledged) throws Exception {
         sentForeground = null;
+        sentBackgroundSync = null;
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         // App-time metadata is the last negotiated compatibility for this pairing, not liveness.
@@ -87,9 +90,11 @@ public final class RemoteSession {
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
         JSONObject hello = message("hello",peer).put("route",transport.syncRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
+        hello.put("fullAccessVersion", FullAccessChannel.VERSION);
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
+        if (hooks.gagRulesSupported()) hello.put("gagVersion", 1);
         String retainedProfile = "";
         if (hooks.profileVersion() == 1) {
             hello.put("profileVersion", 1);
@@ -111,8 +116,10 @@ public final class RemoteSession {
         }
         requireType(response,"hello_ack",peer);
         if (helloAcknowledged != null) helloAcknowledged.run();
+        rememberFullAccess(peer, response);
         boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
+        rememberGag(peer, response);
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
         boolean priority = phasePlanVersion(response) == 1 && controls;
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");
@@ -144,6 +151,7 @@ public final class RemoteSession {
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
         sentForeground = null;
+        sentBackgroundSync = null;
         store.authorityAccess(()->null);
         String identity=RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
         String generation=RemoteProtocol.identifier(hello.getString("generation"));
@@ -161,9 +169,12 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         boolean priority = phasePlanVersion(hello) == 1 && controls;
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
+        rememberFullAccess(peer, hello);
+        if (supportsFullAccess(hello)) ready.put("fullAccessVersion", FullAccessChannel.VERSION);
         boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         if (extraTime) ready.put("extraTimeVersion", 1);
+        if (rememberGag(peer, hello)) ready.put("gagVersion", 1);
         if (priority) ready.put("phasePlanVersion",1);
         boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
         if (appIcons) ready.put("appIconsVersion",1);
@@ -343,11 +354,34 @@ public final class RemoteSession {
         return value;
     }
 
+    private boolean rememberGag(RemoteStore.Peer peer, JSONObject frame) throws JSONException {
+        boolean supported = hooks.gagRulesSupported() && frame.has("gagVersion")
+                && RemoteProtocol.integer(frame, "gagVersion") == 1;
+        String value = supported ? "1" : "0";
+        if (!value.equals(store.metadata(peer.identity, peer.generation, GagContractFields.VERSION, "0"))) {
+            store.putMetadata(peer.identity, peer.generation, GagContractFields.VERSION, value);
+            hooks.gagCapabilityChanged(peer);
+            RemoteUi.configurationChanged();
+        }
+        return supported;
+    }
+
     private static long appIconsVersion(JSONObject frame) throws JSONException {
         if (!frame.has("appIconsVersion")) return 0;
         long value=RemoteProtocol.integer(frame,"appIconsVersion");
         if (value<=0) throw new SecurityException("Invalid app icon capability");
         return value;
+    }
+
+    private static boolean supportsFullAccess(JSONObject frame) {
+        Object version = frame.opt("fullAccessVersion");
+        return version instanceof Integer && ((Integer) version) == FullAccessChannel.VERSION
+                || version instanceof Long && ((Long) version) == FullAccessChannel.VERSION;
+    }
+
+    private void rememberFullAccess(RemoteStore.Peer peer, JSONObject frame) {
+        if (peer.localRole == RemoteProtocol.Role.DOM)
+            store.putMetadata(peer.identity, peer.generation, "full_access_version", supportsFullAccess(frame) ? "1" : "0");
     }
 
     private static long phasePlanVersion(JSONObject frame) throws JSONException {
@@ -460,6 +494,8 @@ public final class RemoteSession {
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
                 boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
+                if (sectionCandidate && !GagContractFields.supported(store, peer)
+                        && GagContractFields.containsRules(batch)) sectionCandidate=false;
                 RemoteSectionTransfer.EncodedOffer encoded=sectionCandidate?RemoteSectionTransfer.encodeOffer(batch,sectionBasis(peer,true)):null;
                 JSONObject offered=encoded==null?batch.json():encoded.frame;
                 if(encoded==null)send(connection,offered,deadline);else sendEncoded(connection,encoded.encoded,deadline);
@@ -674,10 +710,12 @@ public final class RemoteSession {
         if("hello".equals(type)||"hello_ack".equals(type)||"state_complete".equals(type)
                 ||"done".equals(type)||"done_ack".equals(type)) {
             try {
-                JSONObject presence = hooks.presence(sentForeground);
+                JSONObject presence = hooks.presence(sentForeground, sentBackgroundSync);
                 if (presence != null) {
                     frame.put("presence", presence);
                     sentForeground = presence.getBoolean("foreground");
+                    Object background = presence.opt("backgroundSync");
+                    sentBackgroundSync = background instanceof Boolean ? (Boolean) background : null;
                 }
             } catch (Exception unavailable) { /* Presence failure must not block durable synchronization. */ }
         }
@@ -701,8 +739,7 @@ public final class RemoteSession {
     private void recordDataPresence(RemoteStore.Peer peer) {
         try {
             if (!remotePresence(peer)) return;
-            PeerPresence.receiveData(store, peer);
-            hooks.presenceReceived(peer);
+            if (PeerPresence.receiveData(store, peer)) hooks.presenceReceived(peer);
         } catch (RuntimeException unavailable) { /* Presence is independent of the durable receipt. */ }
     }
 

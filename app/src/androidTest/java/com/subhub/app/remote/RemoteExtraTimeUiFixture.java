@@ -25,6 +25,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -272,6 +273,25 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
     /** The screen for the corresponding side must be closed before switching roles. */
     public ExtraTimeRequests subRequests() throws Exception {
         assertSame(sub, selected); return new ExtraTimeRequests(context, PersonId.LOCAL);
+    }
+
+    /** Keep an expired request in the owned Sub's history without creating any tribute or transport. */
+    public String seedExpiredRequest(String packageName, ZonedDateTime created) throws Exception {
+        assertSame(sub, selected);
+        FormalRelationshipCoordinator.requireOwnedFixture(sub.store);
+        String scope = subRequests().snapshot(System.currentTimeMillis()).scope;
+        assertFalse(scope.isEmpty());
+        ExtraTimeStore journal = new ExtraTimeStore(context);
+        ExtraTimeStore.Row row = new ExtraTimeStore.Row(UUID.randomUUID().toString(),
+                packageName, "Fixture app", created.toLocalDate().toString(), created.getZone().getId(),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                created.toInstant().toEpochMilli(), 0, 10, "EXPIRED", 0, 0, 0, "EUR");
+        synchronized (ExtraTimeStore.LOCK) {
+            List<ExtraTimeStore.Row> rows = journal.load(scope);
+            rows.add(row);
+            journal.save(scope, rows);
+        }
+        return row.id;
     }
 
     /** Controlled UI state only; wire negotiation itself is exercised in ExtraTimeWireAndroidTest. */

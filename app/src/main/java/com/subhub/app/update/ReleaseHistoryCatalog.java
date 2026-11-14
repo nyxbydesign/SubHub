@@ -7,6 +7,11 @@ import com.subhub.app.R;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -50,17 +55,18 @@ public final class ReleaseHistoryCatalog {
         if (bundled != null) for (ReleaseHistoryItem item : bundled) put(byTag, item, false);
         if (live != null) for (ReleaseHistoryItem item : live) put(byTag, item, true);
         List<ReleaseHistoryItem> merged = new ArrayList<>(byTag.values());
-        merged.sort(Comparator.comparing(ReleaseHistoryCatalog::version).reversed());
+        merged.sort(Comparator.comparing(ReleaseHistoryCatalog::publication)
+                .thenComparing(ReleaseHistoryCatalog::version).reversed());
         if (merged.size() > MAX_ITEMS) return new ArrayList<>(merged.subList(0, MAX_ITEMS));
         return merged;
     }
 
     static List<ReleaseHistoryItem> withCandidate(List<ReleaseHistoryItem> history,
             UpdateCandidate candidate) {
-        if (candidate == null) return history == null ? new ArrayList<>() : history;
+        if (candidate == null) return merge(null, history);
         ReleaseHistoryItem available = new ReleaseHistoryItem(
                 candidate.manifest.versionName, candidate.manifest.tag, candidate.notes,
-                candidate.releaseUrl, "", candidate.prerelease);
+                candidate.releaseUrl, candidate.publishedAt, candidate.prerelease);
         List<ReleaseHistoryItem> live = new ArrayList<>();
         live.add(available);
         return merge(live, history);
@@ -88,6 +94,19 @@ public final class ReleaseHistoryCatalog {
             return SemanticVersion.parse(item.tag);
         } catch (IllegalArgumentException ignored) {
             return SemanticVersion.parse("0.0.0");
+        }
+    }
+
+    private static Instant publication(ReleaseHistoryItem item) {
+        String published = item.publishedAt;
+        try {
+            // A bundled historical date has day-level precision only. It sorts
+            // before known releases later that day without inventing display text.
+            return published.length() == 10
+                    ? LocalDate.parse(published).atStartOfDay().toInstant(ZoneOffset.UTC)
+                    : OffsetDateTime.parse(published).toInstant();
+        } catch (DateTimeException ignored) {
+            return Instant.MIN;
         }
     }
 }

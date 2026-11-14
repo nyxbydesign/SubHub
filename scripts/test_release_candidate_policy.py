@@ -119,18 +119,20 @@ class ReleaseCandidatePolicyTest(unittest.TestCase):
                 (False, False, True, True), (False, False, False, False)):
             with self.subTest(dev=dev, publish=publish, replacement=replacement):
                 environment = dict(os.environ, DEV_BUILD=str(dev).lower(), PUBLISH_RELEASE=str(publish).lower(),
-                    REPLACEMENT_LAB_CANDIDATE=str(replacement).lower(), CI_RUN_NUMBER='128',
+                    REPLACEMENT_LAB_CANDIDATE=str(replacement).lower(), CI_RUN_NUMBER='128', DEV_SEQUENCE='2',
                     RELEASE_TAG='v0.6.5', GITHUB_OUTPUT='unused', IMMEDIATE_QUALITY_EXPERIMENT='false')
                 code = 'set -euo pipefail\npython3() { printf "%s\\n" "$*"; }\ngit() { return 0; }\n' + version
                 actual = subprocess.run([str(bash), '--noprofile', '--norc', '-c', code], env=environment, capture_output=True, text=True)
                 self.assertEqual(actual.returncode, 0, actual.stderr)
                 self.assertEqual('--ci-run-number 128' in actual.stdout, expected_ci)
                 self.assertEqual('--dev-build' in actual.stdout, dev)
+                self.assertEqual('--dev-sequence 2' in actual.stdout, dev)
                 actual = subprocess.run([str(bash), '--noprofile', '--norc', '-c',
                     'set -euo pipefail\n' + build + '\nprintf "%s\\n" "${build_args[@]}"'],
                     env=environment, capture_output=True, text=True)
                 self.assertEqual(actual.returncode, 0, actual.stderr)
                 self.assertEqual('-PciRunNumber=128' in actual.stdout.splitlines(), expected_ci)
+                self.assertEqual('-PdevSequence=2' in actual.stdout.splitlines(), dev)
 
 
 if __name__ == '__main__':

@@ -1627,6 +1627,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             doc=com.subhub.app.tasks.TaskContractFields.forPeer(doc,
                     "1".equals(metadata(identity,generation,"tasks_version","0")), true);
             doc=ExtraTimeContractFields.forPeer(doc,"1".equals(metadata(identity,generation,"extra_time_version","0")),true);
+            doc=GagContractFields.forPeer(doc,GagContractFields.supported(this,peer),true);
             long previous=Long.parseLong(metadata(identity,generation,"desired_revision","0"));
             if(previous!=expectedDesired || previous==Long.MAX_VALUE || expectedApplied<0)throw new IllegalStateException("Configuration changed; reload before saving");
             Command pending=latestCommand(identity,generation);if(pending!=null && pending.pending())throw new IllegalStateException("A configuration change is pending");

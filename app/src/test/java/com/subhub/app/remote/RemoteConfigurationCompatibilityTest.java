@@ -37,6 +37,31 @@ public final class RemoteConfigurationCompatibilityTest {
         assertNotNull(RemoteConfiguration.active(value,"0.6.5"));
     }
 
+    @Test public void gagIsOptionalOnLegacyContractsAndScopedToNegotiatedPeers() throws Exception {
+        JSONObject legacy = configuration();
+        assertNull(GagContractFields.section(RemoteConfiguration.active(legacy)));
+        JSONObject supported = GagContractFields.forPeer(legacy, true, false);
+        JSONObject defaults = GagContractFields.section(RemoteConfiguration.active(supported));
+        assertFalse(defaults.getBoolean("enabled"));
+        assertEquals(RemoteProtocol.canonical(legacy),
+                RemoteProtocol.canonical(GagContractFields.forPeer(supported, false, true)));
+        GagContractFields.section(supported).put("enabled", true).put("mode", "MATCH").put("words", "one\ntwo");
+        assertTrue(GagContractFields.section(RemoteConfiguration.active(supported)).getBoolean("enabled"));
+        assertThrows(SecurityException.class, () -> GagContractFields.forPeer(supported, false, true));
+        assertNull(GagContractFields.section(GagContractFields.forPeer(supported, false, false)));
+    }
+
+    @Test public void gagRejectsPartialRulesAndBoundsTheConfigurationLists() throws Exception {
+        JSONObject value = GagContractFields.forPeer(configuration(), true, false);
+        JSONObject gag = GagContractFields.section(value);
+        gag.put("enabled", true).put("mode", "MATCH");
+        assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+        gag.put("words", "x".repeat(2049));
+        assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+        gag.put("words", "fixture").remove("replacements");
+        assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+    }
+
     private static JSONObject configuration() throws Exception {
         JSONObject sections=new JSONObject();
         for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSettingCatalog.defaults(section));

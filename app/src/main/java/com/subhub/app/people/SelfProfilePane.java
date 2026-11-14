@@ -1,22 +1,39 @@
 package com.subhub.app.people;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.view.Gravity;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.LifecycleOwner;
 import com.subhub.app.R;
 import com.subhub.app.security.DeviceRolePreferences;
+import com.subhub.app.security.HardcoreModeManager;
+import com.subhub.app.settings.SettingsRepository;
 
 /** One active workspace owns one editable identity; the other role's profile stays separate. */
 public final class SelfProfilePane {
     private final AppCompatActivity activity;
     private final LinearLayout content;
+    private final SharedPreferences.OnSharedPreferenceChangeListener hardcoreChange = (settings, key) -> {
+        if ((key == null || HardcoreModeManager.KEY_REQUESTED.equals(key)) && view().isShown()) refresh();
+    };
 
     public SelfProfilePane(AppCompatActivity activity) {
         this.activity = activity;
         content = PersonUi.column(activity);
         content.setTag("self_profile");
+        SharedPreferences settings = activity.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        activity.getLifecycle().addObserver(new DefaultLifecycleObserver() {
+            @Override public void onResume(LifecycleOwner owner) {
+                settings.registerOnSharedPreferenceChangeListener(hardcoreChange);
+            }
+            @Override public void onPause(LifecycleOwner owner) {
+                settings.unregisterOnSharedPreferenceChangeListener(hardcoreChange);
+            }
+        });
     }
     public LinearLayout view() { return content; }
 
