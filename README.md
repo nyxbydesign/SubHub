@@ -132,6 +132,8 @@ Sub Contract is read-only. It groups the Dom profile, About and authorized share
 
 Choose a person to configure their apps, feature settings, artwork, and next-session duration. Start and End act on that selected person where authorized. Stats opens usage summaries and history directly. A Sub can read their applied contract and statistics, start an eligible session, settle Tribute, and use allowed pause or safety controls.
 
+Portable `.subhubpack` and `.bbpack` import and export were retired in 0.7.0. When a device updates from an older version, SubHub preserves previously applied settings and artwork and recovers interrupted Studio activations.
+
 Activity records selected-app opens, triggered Tributes, and reached app limits. Notifications open the authenticated Activity feed. Recorded events queue while the paired device is offline; delivery requires the peers to reconnect. Triggered Tributes describe assessed amounts, not successful payments. App-open and app-limit entries require the live Accessibility service on Android 11 or later. Older Dom devices can pair and receive these entries; Tribute entries depend on the source feature that assesses them.
 
 Settings → Notifications controls optional alerts on this device, separately for each supported role. Dom offers Activity, Task reviews, Contract changes, Session starts and Session stops; Sub offers Contract changes, Session starts and Session stops. These local choices are independent of shared contract settings. Turning off a type cancels its existing alerts without disabling other types or Android's required ongoing service notifications. Android notification permission and channel settings still apply.
