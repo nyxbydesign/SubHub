@@ -744,7 +744,7 @@ public final class TasksAndroidTest {
     @Test public void historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation() throws Exception {
         long at = System.currentTimeMillis() - 600_000L;
         ZoneId zone = ZoneId.of("Asia/Kathmandu");
-        TaskDefinition approved, declined, cancelled, refused, skipped;
+        TaskDefinition approved, declined, cancelled, refused, skipped, scheduled, expired;
         TaskAction approvedProof, declinedProof;
         synchronized (SubFeaturePolicy.LOCK) {
             approved = historyTask("old schedule approved", at - 8 * 3_600_000L, zone, 86_400_000L);
@@ -752,6 +752,8 @@ public final class TasksAndroidTest {
             cancelled = historyTask("cancelled pending request", at - 4 * 3_600_000L, zone, 86_400_000L);
             refused = historyTask("refused without completion", at - 2 * 3_600_000L, zone, 86_400_000L);
             skipped = historyTask("skipped without completion", at - 3 * 3_600_000L, zone, 60_000L);
+            scheduled = historyTask("prepare the shared reading list", at + 3_600_000L, zone, 3_600_000L);
+            expired = historyTask("missed the morning check-in", at - 6 * 3_600_000L, zone, 60_000L);
             approvedProof = historyAction(approved, TaskAction.Kind.SUBMIT,
                     approved.start(approved.firstStart.toLocalDate()).toEpochMilli() + 60_000L, "");
             declinedProof = historyAction(declined, TaskAction.Kind.OUTSIDE,
@@ -763,12 +765,17 @@ public final class TasksAndroidTest {
             store.append(scope, historyAction(cancelled, TaskAction.Kind.CANCEL_ONCE, at, ""), true, false);
             store.append(scope, historyAction(refused, TaskAction.Kind.REFUSE_ONCE, at - 10_000L, ""), false, false);
             store.append(scope, historyAction(skipped, TaskAction.Kind.SKIP, at - 10_000L, ""), false, false);
+            store.append(scope, historyAction(expired, TaskAction.Kind.TIMEOUT,
+                    expired.end(expired.firstStart.toLocalDate()).toEpochMilli(), ""), false, false);
         }
         String requested = submissionTimeText(approved, approvedProof.at);
         List<String> expected = new ArrayList<>(List.of(occurrenceId(approved), occurrenceId(declined), occurrenceId(cancelled)));
         List<String> tied = new ArrayList<>(List.of(occurrenceId(refused), occurrenceId(skipped)));
         java.util.Collections.sort(tied); expected.addAll(tied);
+        expected.add(occurrenceId(expired));
         try (ActivityScenario<TasksActivity> page = launch()) {
+            assertPreviewTiming(page, scheduled, R.string.tasks_scheduled, R.string.tasks_starts);
+            page.onActivity(this::assertNarrowPreviewTiming);
             openTask(page, approved);
             assertCompletionText(page, approved, requested);
             androidx.test.espresso.Espresso.pressBack();
@@ -778,6 +785,8 @@ public final class TasksAndroidTest {
             store.append(scope, historyAction(approved, TaskAction.Kind.ACCEPT, at + 20_000L, approvedProof.id), true, false);
             assertCompletionText(page, approved, requested);
             assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            assertPreviewTiming(page, approved, R.string.tasks_approved, R.string.tasks_due);
+            assertPreviewTiming(page, expired, R.string.tasks_timed_out, R.string.tasks_due);
             captureHistoryView(page, "history-dom", null);
             page.recreate();
             assertCompletionText(page, approved, requested);
@@ -813,6 +822,7 @@ public final class TasksAndroidTest {
             switchRole(page, false);
             awaitTag(page, "tasks_history");
             assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            assertPreviewTiming(page, approved, R.string.tasks_approved, R.string.tasks_due);
             assertCompletionText(page, approved, requested);
             captureHistoryView(page, "history-sub", null);
         }
@@ -823,7 +833,8 @@ public final class TasksAndroidTest {
         TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), titlePrefix + suffix,
                 "Synthetic History instructions", start, zone, duration, Set.of(), true, false, null);
         store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE, null,
-                task.start(start.toLocalDate()).toEpochMilli() - 60_000L, "", "", List.of(), task), true, false);
+                Math.min(System.currentTimeMillis(), task.start(start.toLocalDate()).toEpochMilli() - 60_000L),
+                "", "", List.of(), task), true, false);
         return task;
     }
 
@@ -836,6 +847,47 @@ public final class TasksAndroidTest {
         String dateTime = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
                 .withZone(task.zone).format(java.time.Instant.ofEpochMilli(at));
         return context.getString(R.string.tasks_submission_timestamp, dateTime);
+    }
+
+    private void assertPreviewTiming(ActivityScenario<TasksActivity> page, TaskDefinition task,
+            int statusLabel, int dateLabel) throws Exception {
+        String id = occurrenceId(task);
+        java.time.Instant instant = dateLabel == R.string.tasks_starts
+                ? task.start(task.firstStart.toLocalDate()) : task.end(task.firstStart.toLocalDate());
+        String dateText = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
+                .withZone(task.zone).format(instant);
+        assertLayoutText(page, "task_preview_status:" + id, context.getString(statusLabel));
+        assertLayoutText(page, "task_preview_timing:" + id, context.getString(dateLabel, dateText));
+        page.onActivity(activity -> {
+            View badge = activity.findViewById(android.R.id.content).findViewWithTag("task_preview_status:" + id);
+            View date = activity.findViewById(android.R.id.content).findViewWithTag("task_preview_timing:" + id);
+            ViewGroup metadata = (ViewGroup) badge.getParent();
+            assertSame(metadata, date.getParent());
+            assertEquals(0, metadata.indexOfChild(badge));
+            ViewGroup copy = (ViewGroup) metadata.getParent();
+            assertEquals(copy.getChildAt(0).getLeft(), metadata.getLeft() + badge.getLeft());
+            assertTrue(badge.getRight() <= date.getLeft());
+            assertTrue(badge.getTop() < date.getBottom() && date.getTop() < badge.getBottom());
+        });
+    }
+
+    private void assertNarrowPreviewTiming(TasksActivity activity) {
+        android.content.res.Configuration config = new android.content.res.Configuration(
+                activity.getResources().getConfiguration());
+        config.fontScale = 2f;
+        Context scaled = activity.createConfigurationContext(config);
+        android.widget.LinearLayout frame = PersonUi.column(scaled);
+        PersonUi.row(PersonUi.card(frame), R.drawable.ic_nav_tasks, "Prepare the shared reading list", "", () -> {},
+                copy -> TasksUi.previewTiming(copy, "narrow", "Scheduled", "Starts 11/14/26, 10:15 PM"));
+        frame.measure(View.MeasureSpec.makeMeasureSpec(PersonUi.dp(scaled, 320), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        frame.layout(0, 0, frame.getMeasuredWidth(), frame.getMeasuredHeight());
+        android.widget.TextView badge = frame.findViewWithTag("task_preview_status:narrow");
+        android.widget.TextView date = frame.findViewWithTag("task_preview_timing:narrow");
+        assertEquals(badge.getLeft(), date.getLeft());
+        assertTrue(badge.getBottom() <= date.getTop());
+        assertTextFits(badge);
+        assertTextFits(date);
     }
 
     private void assertCompletionText(ActivityScenario<TasksActivity> page, TaskDefinition task, String expected) throws Exception {
@@ -887,16 +939,21 @@ public final class TasksAndroidTest {
         page.onActivity(activity -> {
             android.widget.TextView text = activity.findViewById(android.R.id.content).findViewWithTag(tag);
             assertEquals(expected, text.getText().toString());
-            android.text.Layout layout = text.getLayout();
-            assertNotNull(layout);
-            int width = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
-            for (int line = 0; line < layout.getLineCount(); line++) {
-                assertEquals("No ellipsis in " + tag, 0, layout.getEllipsisCount(line));
-                assertTrue("Text fits " + tag, layout.getLineMax(line) <= width + 1);
-            }
-            assertTrue("Full text height " + tag, layout.getHeight()
-                    <= text.getHeight() - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
+            assertTextFits(text);
         });
+    }
+
+    private static void assertTextFits(android.widget.TextView text) {
+        Object tag = text.getTag();
+        android.text.Layout layout = text.getLayout();
+        assertNotNull(layout);
+        int width = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+        for (int line = 0; line < layout.getLineCount(); line++) {
+            assertEquals("No ellipsis in " + tag, 0, layout.getEllipsisCount(line));
+            assertTrue("Text fits " + tag, layout.getLineMax(line) <= width + 1);
+        }
+        assertTrue("Full text height " + tag, layout.getHeight()
+                <= text.getHeight() - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
     }
 
     /** View.draw captures laid-out synthetic content, including History rows outside the viewport. */

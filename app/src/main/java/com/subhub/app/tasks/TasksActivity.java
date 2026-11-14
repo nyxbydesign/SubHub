@@ -403,15 +403,15 @@ public final class TasksActivity extends RolePage {
             LinearLayout card = PersonUi.card(body);
             card.setTag("task:" + occurrence.id);
             taskCards.put(occurrence.id, new TaskCard(card, signature));
-            PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, timing, () -> {
+            int previewStatus = occurrence.status == TaskEngine.Status.ACCEPTED ? R.string.tasks_approved
+                    : occurrence.status == TaskEngine.Status.DENIED ? R.string.tasks_declined : statusLabel(occurrence.status);
+            PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, "", () -> {
                 if (model.busy || model.loading) return;
                 model.selected = occurrence.id;
                 model.proofAttachments = false;
                 render(); scrollTop();
-            }).setTag("task_open:" + occurrence.id);
-            int previewStatus = occurrence.status == TaskEngine.Status.ACCEPTED ? R.string.tasks_approved
-                    : occurrence.status == TaskEngine.Status.DENIED ? R.string.tasks_declined : statusLabel(occurrence.status);
-            TasksUi.badge(card, getString(previewStatus)).setTag("task_preview_status:" + occurrence.id);
+            }, copy -> TasksUi.previewTiming(copy, occurrence.id, getString(previewStatus), timing))
+                    .setTag("task_open:" + occurrence.id);
             if (occurrence.inHistory()) completionTime(card, occurrence);
         }
     }

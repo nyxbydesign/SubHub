@@ -42,6 +42,11 @@ public final class PersonUi {
 
     public static LinearLayout row(LinearLayout parent, int icon, CharSequence title,
             CharSequence detail, Runnable action) {
+        return row(parent, icon, title, detail, action, null);
+    }
+
+    public static LinearLayout row(LinearLayout parent, int icon, CharSequence title,
+            CharSequence detail, Runnable action, java.util.function.Consumer<LinearLayout> addDetails) {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -65,6 +70,7 @@ public final class PersonUi {
             TextView description = text(copy, detail, false);
             description.setPadding(0, dp(context, 4), 0, 0);
         }
+        if (addDetails != null) addDetails.accept(copy);
         if (action != null) {
             UiIdentity.addActionChevron(row);
             UiIdentity.bindClick(row, action);

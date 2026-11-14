@@ -95,6 +95,57 @@ final class TasksUi {
         return badge;
     }
 
+    static void previewTiming(LinearLayout copy, String id, String status, String timing) {
+        Context context = copy.getContext();
+        PreviewTiming row = new PreviewTiming(context);
+        copy.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        TextView badge = badge(row, status);
+        badge.setTag("task_preview_status:" + id);
+        LinearLayout.LayoutParams badgeSize = (LinearLayout.LayoutParams) badge.getLayoutParams();
+        badgeSize.topMargin = 0;
+        badgeSize.bottomMargin = 0;
+        TextView date = PersonUi.text(row, timing, false);
+        date.setPadding(0, 0, 0, 0);
+        date.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+        date.setTag("task_preview_timing:" + id);
+    }
+
+    /** Keep the badge beside the date unless the date needs more than two lines at that width. */
+    private static final class PreviewTiming extends LinearLayout {
+        private final int inlineGap, stackedGap;
+
+        PreviewTiming(Context context) {
+            super(context);
+            inlineGap = PersonUi.dp(context, 8);
+            stackedGap = PersonUi.dp(context, 4);
+            setPadding(0, stackedGap, 0, 0);
+            setGravity(Gravity.START | Gravity.TOP);
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            int unconstrained = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+            android.view.View badge = getChildAt(0);
+            TextView date = (TextView) getChildAt(1);
+            badge.measure(unconstrained, unconstrained);
+            int dateWidth = MeasureSpec.getSize(widthSpec) - badge.getMeasuredWidth() - inlineGap;
+            boolean inline = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED;
+            if (!inline && dateWidth > 0) {
+                date.measure(MeasureSpec.makeMeasureSpec(dateWidth, MeasureSpec.AT_MOST), unconstrained);
+                inline = date.getLineCount() <= 2;
+            }
+            setOrientation(inline ? HORIZONTAL : VERTICAL);
+            LayoutParams dateSize = (LayoutParams) date.getLayoutParams();
+            int start = inline ? inlineGap : 0;
+            int top = inline ? 0 : stackedGap;
+            if (dateSize.getMarginStart() != start || dateSize.topMargin != top) {
+                dateSize.setMarginStart(start);
+                dateSize.topMargin = top;
+                date.setLayoutParams(dateSize);
+            }
+            super.onMeasure(widthSpec, heightSpec);
+        }
+    }
+
     static void counts(LinearLayout parent, int completed, int active, int pending, int scheduled) {
         LinearLayout row = counterRow(parent);
         count(row, completed, R.string.tasks_completed, 4);
