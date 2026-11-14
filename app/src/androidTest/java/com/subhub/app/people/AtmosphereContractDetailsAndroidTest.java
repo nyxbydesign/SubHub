@@ -224,12 +224,12 @@ public final class AtmosphereContractDetailsAndroidTest {
 
             People.installLocalProjection(person -> person.withContractDom(
                     new ProfileData("Renamed Dom", "", encoded, "", 0), null));
-            page.onActivity(ContractActivity::showSectionHome);
+            page.onActivity(ContractActivity::refresh);
             await(page, activity -> "Renamed Dom".equals(text(tagged(activity, "contract_dom_name"))));
             page.onActivity(activity -> assertSame(firstBitmap.get(), contractPortrait(activity)));
 
             People.installLocalProjection(person -> person.withContractDom(ProfileData.empty("No portrait"), null));
-            page.onActivity(ContractActivity::showSectionHome);
+            page.onActivity(ContractActivity::refresh);
             await(page, activity -> "No portrait".equals(text(tagged(activity, "contract_dom_name"))));
             page.onActivity(activity -> {
                 ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
@@ -385,7 +385,7 @@ public final class AtmosphereContractDetailsAndroidTest {
     }
 
     private String expected() {
-        return expectedAtmosphere() + "\n\nGag\nUnknown";
+        return expectedAtmosphere() + "\n\nGagging\nUnknown";
     }
 
     private String expectedAtmosphere() {
