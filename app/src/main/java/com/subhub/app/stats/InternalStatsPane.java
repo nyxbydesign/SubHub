@@ -69,7 +69,9 @@ final class InternalStatsPane extends LinearLayout {
         allowances.setVisibility(allowances.getChildCount()==0?GONE:VISIBLE);
         details.removeAllViews();heading(details,R.string.profile_stats_feature_totals);
         row(details,R.string.statistics_longest,duration(stats.getLongestSessionSeconds()));
-        row(details,R.string.statistics_current_streak,activity.getString(R.string.stats_days_value,stats.getCurrentStreak()));
+        int streakDays = stats.getCurrentStreak();
+        row(details,R.string.statistics_current_streak,
+                activity.getResources().getQuantityString(R.plurals.stats_days_value, streakDays, streakDays));
         row(details,R.string.stats_limited_app_time,duration(stats.getLimitedAppMillis()/1000));
         row(details,R.string.stats_limit_stops,number(stats.getLimitInterventions()));
         row(details,R.string.stats_whispers,number(stats.getSubliminalImpressions()));

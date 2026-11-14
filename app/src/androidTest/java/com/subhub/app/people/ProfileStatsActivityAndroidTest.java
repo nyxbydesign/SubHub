@@ -429,7 +429,9 @@ public final class ProfileStatsActivityAndroidTest {
     public void localProfileInlineDurationAndFlatStatsFitActualRequestedFontAndViewport() throws Exception {
         long start = System.currentTimeMillis() - 600000;
         assertTrue(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit()
-                .putString("session_history", "2," + start + ",90,4,120000,1,2,123,4,5,0").commit());
+                .putString("session_history", "2," + start + ",90,4,120000,1,2,123,4,5,0")
+                .putInt("current_streak", 1).putString("last_session_date", java.time.LocalDate.now().toString())
+                .commit());
         source.entries = List.of(event(PersonId.LOCAL, "visual-local", 1));
         try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(profile(PersonId.LOCAL))) {
             PersonActivity profile = resumed(PersonActivity.class);
@@ -502,8 +504,21 @@ public final class ProfileStatsActivityAndroidTest {
                     assertTrue(text(history).contains(context.getString(R.string.stats_assessed)));
                     assertTrue(text(history).contains(com.subhub.app.penance.WalletCurrency.format("EUR", 123)));
                 });
-                captureLocal(stats, "stats-feature-totals", stats.findViewById(R.id.stats_totals_details),
-                        () -> assertLocalTextFits(stats.findViewById(R.id.stats_totals_details)));
+                captureLocal(stats, "stats-feature-totals", stats.findViewById(R.id.stats_totals_details), () -> {
+                    View totals = stats.findViewById(R.id.stats_totals_details);
+                    assertLocalTextFits(totals);
+                    String label = stats.getString(R.string.statistics_current_streak);
+                    String day = stats.getResources().getQuantityString(R.plurals.stats_days_value, 1, 1);
+                    assertTrue("A one-day streak must use the singular quantity",
+                            text(totals).contains("\n" + label + "\n" + day + "\n"));
+                    android.content.res.Configuration english =
+                            new android.content.res.Configuration(stats.getResources().getConfiguration());
+                    english.setLocale(java.util.Locale.ENGLISH);
+                    android.content.res.Resources en = stats.createConfigurationContext(english).getResources();
+                    assertEquals("0 days", en.getQuantityString(R.plurals.stats_days_value, 0, 0));
+                    assertEquals("1 day", en.getQuantityString(R.plurals.stats_days_value, 1, 1));
+                    assertEquals("2 days", en.getQuantityString(R.plurals.stats_days_value, 2, 2));
+                });
             } finally { onMain(stats::finish); }
         }
     }

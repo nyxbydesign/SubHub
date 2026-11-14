@@ -481,10 +481,9 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         totalsDetails.removeAllViews();
         heading(totalsDetails, R.string.profile_stats_feature_totals);
         row(totalsDetails, R.string.statistics_longest, duration(stats.getLongestSessionSeconds()));
-        row(
-                totalsDetails,
-                R.string.statistics_current_streak,
-                getString(R.string.stats_days_value, stats.getCurrentStreak()));
+        int streakDays = stats.getCurrentStreak();
+        row(totalsDetails, R.string.statistics_current_streak,
+                getResources().getQuantityString(R.plurals.stats_days_value, streakDays, streakDays));
         row(
                 totalsDetails,
                 R.string.stats_limited_app_time,
