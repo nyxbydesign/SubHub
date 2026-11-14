@@ -437,11 +437,13 @@ public final class JournalUiAndroidTest {
         }
         try (ActivityScenario<com.subhub.app.people.PersonActivity> scenario = ActivityScenario.launch(
                 new Intent(context, com.subhub.app.people.PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
-            await(scenario, a -> tagged(a, "profile_journal_preview") != null
-                    && !((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals(a.getString(R.string.profile_journal_loading)));
+            await(scenario, a -> tagged(a, "profile_preview:sub") != null);
             scenario.onActivity(a -> {
                 assertTrue(tagged(a, "profile_preview:sub") instanceof com.subhub.app.people.ProfilePreview);
-                assertFalse(((TextView) tagged(a, "profile_journal_preview")).getText().toString().contains("Private preview"));
+                TextView journal = (TextView) tagged(a, "profile_journal_preview");
+                assertNotNull(journal);
+                assertNotEquals(a.getString(R.string.profile_journal_loading), journal.getText().toString());
+                assertFalse(journal.getText().toString().contains("Private preview"));
                 assertNull(tagged(a, "profile_edit"));
             });
             capture(scenario, "polished-paired-sub-preview");
@@ -459,7 +461,8 @@ public final class JournalUiAndroidTest {
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
             await(scenario, a -> tagged(a, "profile_preview:sub") != null);
             scenario.onActivity(a -> { assertNull(tagged(a, "self_profile_about"));
-                assertEquals(a.getString(R.string.role_sub), ((TextView) tagged(a, "self_profile_details")).getText().toString()); });
+                assertEquals(ProfileStore.load(a, false).isSwitch ? a.getString(R.string.profile_role_switch) : "",
+                        ((TextView) tagged(a, "self_profile_details")).getText().toString()); });
             capture(scenario, "polished-profile-empty-details");
         }
     }
