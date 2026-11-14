@@ -353,6 +353,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/internal/InternalSubRecord.java": "main_internal_internal_sub_record",
     b"app/src/main/java/com/subhub/app/internal/InternalSubStore.java": "main_internal_internal_sub_store",
     b"app/src/main/java/com/subhub/app/internal/OwnerDataProvisioning.java": "main_internal_owner_data_provisioning",
+    b"app/src/main/java/com/subhub/app/internal/RecordEncoding.java": "main_internal_record_encoding",
     b"app/src/main/java/com/subhub/app/internal/SerialOwnerDataBroker.java": "main_internal_serial_owner_data_broker",
     b"app/src/main/java/com/subhub/app/journal/JournalActivity.java": "main_journal_journal_activity",
     b"app/src/main/java/com/subhub/app/journal/JournalAttachment.java": "main_journal_journal_attachment",

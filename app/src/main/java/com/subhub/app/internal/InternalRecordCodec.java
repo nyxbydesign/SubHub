@@ -5,11 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -28,7 +24,7 @@ final class InternalRecordCodec {
     private static byte[] encode(InternalSubRecord record, int version) {
         if (version == 1 && record.tasksResumeAfterMillis != 0) throw new IllegalArgumentException("Legacy boundary loss");
         try {
-            ByteArrayOutputStream bytes = new BoundedBytes();
+            ByteArrayOutputStream bytes = new RecordEncoding.BoundedBytes(MAX_BYTES, "Oversized internal record");
             DataOutputStream out = new DataOutputStream(bytes);
             out.writeInt(MAGIC); out.writeInt(version); text(out, record.targetId); text(out, record.generation);
             out.writeLong(record.revision); out.writeLong(record.configurationRevision); out.writeBoolean(record.visible);
@@ -44,7 +40,7 @@ final class InternalRecordCodec {
             }
             out.flush();
             if (bytes.size() > MAX_BYTES - 32) throw new IllegalArgumentException("Oversized internal record");
-            out.write(digest(bytes.toByteArray())); out.flush();
+            out.write(RecordEncoding.digest(bytes.toByteArray())); out.flush();
             return bytes.toByteArray();
         } catch (IOException invalid) { throw new IllegalArgumentException("Invalid internal record encoding", invalid); }
     }
@@ -53,7 +49,7 @@ final class InternalRecordCodec {
         if (bytes == null || bytes.length < 40 || bytes.length > MAX_BYTES)
             throw new IllegalArgumentException("Invalid internal record size");
         byte[] body = Arrays.copyOf(bytes, bytes.length - 32);
-        if (!MessageDigest.isEqual(digest(body), Arrays.copyOfRange(bytes, body.length, bytes.length)))
+        if (!MessageDigest.isEqual(RecordEncoding.digest(body), Arrays.copyOfRange(bytes, body.length, bytes.length)))
             throw new IllegalArgumentException("Corrupt internal record");
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(body));
@@ -115,31 +111,10 @@ final class InternalRecordCodec {
         return count;
     }
     private static void text(DataOutputStream out, String value) throws IOException {
-        ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT).encode(java.nio.CharBuffer.wrap(value));
-        if (encoded.remaining() > MAX_BYTES - 64) throw new IllegalArgumentException("Oversized text");
-        byte[] bytes = new byte[encoded.remaining()]; encoded.get(bytes);
-        out.writeInt(bytes.length); out.write(bytes);
+        RecordEncoding.writeText(out, value, MAX_BYTES - 64);
     }
+
     private static String text(DataInputStream in) throws IOException {
-        int length = count(in, MAX_BYTES - 64);
-        if (length > in.available()) throw new IOException("Truncated text");
-        byte[] bytes = new byte[length]; in.readFully(bytes);
-        return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-    }
-    private static byte[] digest(byte[] bytes) {
-        try { return MessageDigest.getInstance("SHA-256").digest(bytes); }
-        catch (NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
-    }
-    private static final class BoundedBytes extends ByteArrayOutputStream {
-        @Override public synchronized void write(int value) {
-            if (count >= MAX_BYTES) throw new IllegalArgumentException("Oversized internal record");
-            super.write(value);
-        }
-        @Override public synchronized void write(byte[] bytes, int offset, int length) {
-            if (length > MAX_BYTES - count) throw new IllegalArgumentException("Oversized internal record");
-            super.write(bytes, offset, length);
-        }
+        return RecordEncoding.readText(in, count(in, MAX_BYTES - 64));
     }
 }
