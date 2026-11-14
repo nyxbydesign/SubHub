@@ -68,7 +68,8 @@ final class GagLexicon {
     }
 
     boolean isKnownWord(String original) {
-        String word = lookupWord(original);
+        String word = lookupWord(java.text.Normalizer.normalize(original, java.text.Normalizer.Form.NFC)
+                .toLowerCase(Locale.ROOT));
         return word != null && counts.containsKey(word);
     }
 

@@ -10,8 +10,13 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.ExtractedText;
+import android.view.inputmethod.ExtractedTextRequest;
+import android.view.inputmethod.SurroundingText;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -67,6 +72,93 @@ public final class GagKeyPressAndroidTest {
                 assertEquals(List.of(0, 1, 0), clicks);
                 clicks.clear();
             }
+        }
+    }
+
+    @Test public void highestRankedSuggestionStaysCenteredWithMissingSlots() {
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                LinearLayout strip = new LinearLayout(activity);
+                strip.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+                for (int index = 0; index < 3; index++) {
+                    TextView slot = new TextView(activity);
+                    slot.setGravity(android.view.Gravity.CENTER);
+                    strip.addView(slot, new LinearLayout.LayoutParams(0, -1, 1));
+                }
+                activity.setContentView(strip);
+                assertTrue(strip.isAttachedToWindow());
+                List<String> accepted = new ArrayList<>();
+                for (int width : new int[]{317, 389, 721}) {
+                    List<String> candidates = List.of("HELLO", "help", "held", "helm");
+                    for (int count = 0; count <= candidates.size(); count++) {
+                        GagKeyboardService.bindSuggestionSlots(strip, candidates.subList(0, count), accepted::add);
+                        strip.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                                View.MeasureSpec.makeMeasureSpec(43, View.MeasureSpec.EXACTLY));
+                        strip.layout(0, 0, width, 43);
+                        TextView left = (TextView) strip.getChildAt(0);
+                        TextView center = (TextView) strip.getChildAt(1);
+                        TextView right = (TextView) strip.getChildAt(2);
+                        assertEquals(0, left.getLeft());
+                        assertEquals(left.getRight(), center.getLeft());
+                        assertEquals(center.getRight(), right.getLeft());
+                        assertEquals(width, right.getRight());
+                        assertTrue(Math.abs(width - center.getLeft() - center.getRight()) <= 2);
+                        assertEquals(count >= 2 ? "help" : "", left.getText().toString());
+                        assertEquals(count >= 1 ? "HELLO" : "", center.getText().toString());
+                        assertEquals(count >= 3 ? "held" : "", right.getText().toString());
+                        assertEquals(count >= 2 ? View.VISIBLE : View.INVISIBLE, left.getVisibility());
+                        assertEquals(count >= 1 ? View.VISIBLE : View.INVISIBLE, center.getVisibility());
+                        assertEquals(count >= 3 ? View.VISIBLE : View.INVISIBLE, right.getVisibility());
+                        if (count > 0) {
+                            assertTrue(center.performClick());
+                            assertEquals(List.of("HELLO"), accepted);
+                        } else assertTrue(accepted.isEmpty());
+                        accepted.clear();
+                    }
+                }
+            });
+        }
+    }
+
+    @Test public void committedDeleteWitnessWorksWithoutSelectionCallback() {
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                EditableConnection input = new EditableConnection(new View(activity));
+                GagDeleteSuggestion delete = GagDeleteSuggestion.capture(input);
+                assertEquals(-1, delete.deletedCursor(input));
+                input.text = "hello";
+                input.cursor = 5;
+                assertEquals(5, delete.deletedCursor(input));
+                assertEquals(5, delete.selectionCursor(input, 5, 5, -1));
+                assertEquals(-1, delete.selectionCursor(input, 4, 4, -1));
+                assertEquals(-1, delete.selectionCursor(input, 5, 5, 0));
+                assertEquals(-1, delete.deletedCursor(new EditableConnection(new View(activity))));
+                input.text = "hexlo";
+                assertEquals(-1, delete.deletedCursor(input));
+                input.text = "hello!";
+                assertEquals(-1, delete.deletedCursor(input));
+            });
+        }
+    }
+
+    private static final class EditableConnection extends BaseInputConnection {
+        String text = "hellox";
+        int cursor = text.length();
+
+        EditableConnection(View view) { super(view, true); }
+
+        @Override public SurroundingText getSurroundingText(int beforeLength, int afterLength, int flags) {
+            int offset = Math.max(0, cursor - beforeLength);
+            int end = Math.min(text.length(), cursor + afterLength);
+            return new SurroundingText(text.substring(offset, end), cursor - offset, cursor - offset, offset);
+        }
+
+        @Override public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {
+            ExtractedText extracted = new ExtractedText();
+            extracted.text = text;
+            extracted.selectionStart = cursor;
+            extracted.selectionEnd = cursor;
+            return extracted;
         }
     }
 

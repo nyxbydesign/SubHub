@@ -13,10 +13,11 @@ public final class GagPersonalDictionaryTest {
     public void literalKnownWordKeepsItsSpellingAheadOfCustomLearnedAndGenericSuggestions() {
         GagPersonalDictionary.Model model = new GagPersonalDictionary.Model();
         assertTrue(model.addCustomWord("Showtime"));
+        assertTrue(model.addCustomWord("shOw"));
         assertTrue(model.record("showcase", null));
         assertEquals(List.of("SHOW", "Showtime", "Showcase"),
                 model.suggestions("SHOW", List.of("show", "shown"), 3));
-        assertEquals(List.of("Showtime", "showcase", "shown"),
+        assertEquals(List.of("show", "Showtime", "showcase"),
                 model.suggestions("show", List.of("shown"), 3));
     }
 

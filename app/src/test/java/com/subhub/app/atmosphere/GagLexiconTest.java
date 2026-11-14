@@ -21,6 +21,15 @@ public final class GagLexiconTest {
         assertTrue(words.suggestions("teH").isEmpty());
     }
 
+    @Test public void literalExactLookupRecognizesUppercaseAndCanonicalUnicode() {
+        assertTrue(words.isKnownWord("THE"));
+        assertTrue(words.isKnownWord("tHe"));
+        assertTrue(words.isKnownWord("SCHO\u0308N"));
+        assertTrue(!words.isKnownWord("teh"));
+        assertTrue(!words.isKnownWord("192.168.1.1"));
+        assertTrue(words.suggestions("teH").isEmpty());
+    }
+
     @Test public void exactWordsAvoidTypoSuggestions() {
         assertTrue(words.suggestions("schon").isEmpty());
         assertTrue(words.suggestions("schön").isEmpty());
