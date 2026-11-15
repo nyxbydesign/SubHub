@@ -887,6 +887,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/util/RemoteAppIcon.java": "main_util_remote_app_icon",
     b"app/src/main/java/com/subhub/app/util/RemoteAppIcons.java": "main_util_remote_app_icons",
     b"app/src/main/java/com/subhub/app/util/SelectionGrid.java": "main_util_selection_grid",
+    b"app/src/main/java/com/subhub/app/util/Sha256.java": "main_util_sha256",
     b"app/src/main/java/com/subhub/app/util/SoftBackgroundDrawable.java": "main_util_soft_background_drawable",
     b"app/src/main/java/com/subhub/app/util/StateToggle.java": "main_util_state_toggle",
     b"app/src/main/java/com/subhub/app/util/SubHubNavigation.java": "main_util_sub_hub_navigation",
