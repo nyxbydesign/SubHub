@@ -6,7 +6,7 @@
     <string name="privacy_discreet_help">Use a neutral name and icon on your home screen, plain notification text, and hidden previews in recent apps.</string>
     <string name="privacy_system_identity">Android settings and system notification labels may still identify SubHub.</string>
     <string name="privacy_app_lock">App Lock</string>
-    <string name="privacy_lock_help">Ask for your fingerprint, face, or device screen lock when you open the app or return to it. Background service and exports keep running.</string>
+    <string name="privacy_lock_help">Ask for your fingerprint, face, or device screen lock when you open the app or return to it.</string>
     <string name="privacy_dom_separate">Opening the app does not unlock Dom controls. They still use your Dom PIN or keyholder code.</string>
     <string name="privacy_save_failed">This privacy setting could not be saved.</string>
     <string name="privacy_locked">Your app is locked</string>

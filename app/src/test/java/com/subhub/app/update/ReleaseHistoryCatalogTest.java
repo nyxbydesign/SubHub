@@ -2,6 +2,7 @@ package com.subhub.app.update;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -76,6 +77,46 @@ public final class ReleaseHistoryCatalogTest {
                 Arrays.asList(legacy, mergedStable), Arrays.asList(stable));
         assertEquals("v0.7.0", merged.get(0).tag);
         assertEquals("2026-11-12T21:00:00Z", merged.get(0).publishedAt);
+    }
+
+    @Test public void stableModeKeepsExactInstalledDevAndFindsStableBeyondPreviewLimit() throws Exception {
+        ReleaseHistoryItem stable = item("0.7.0", "v0.7.0", "Stable", "2026-11-12", false);
+        ReleaseHistoryItem installed = item("0.7.0-dev.1", "v0.7.0-dev.1", "Installed", "2026-11-11", true);
+        List<ReleaseHistoryItem> feed = new ArrayList<>(List.of(stable, installed));
+        for (int index = 2; index <= 22; index++) {
+            String name = "0.7.0-dev." + index;
+            feed.add(item(name, "v" + name, "Development", "2026-11-13", true));
+        }
+        List<ReleaseHistoryItem> catalog = ReleaseHistoryItem.decode(
+                ReleaseHistoryItem.encode(ReleaseHistoryCatalog.merge(feed, null)));
+        List<ReleaseHistoryItem> stableRows = ReleaseHistoryCatalog.visible(catalog, false, installed.versionName);
+        assertEquals(List.of(stable.tag, installed.tag), stableRows.stream().map(row -> row.tag).toList());
+        List<ReleaseHistoryItem> devRows = ReleaseHistoryCatalog.visible(catalog, true, installed.versionName);
+        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, devRows.size());
+        assertEquals("v0.7.0-dev.22", devRows.get(0).tag);
+        assertTrue(devRows.stream().allMatch(row -> row.prerelease));
+    }
+
+    @Test public void installedDevStaysVisibleWithMissingNotesOrAnOlderReleaseDate() {
+        List<ReleaseHistoryItem> feed = new ArrayList<>();
+        for (int index = 0; index < ReleaseHistoryCatalog.MAX_ITEMS + 1; index++) {
+            String name = "0.7." + index;
+            feed.add(item(name, "v" + name, "Stable", "2026-11-13", false));
+        }
+        String version = "0.7.0-dev.18";
+        List<ReleaseHistoryItem> catalog = ReleaseHistoryCatalog.merge(feed, null);
+        List<ReleaseHistoryItem> visible = ReleaseHistoryCatalog.visible(catalog, false, version);
+        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, visible.size());
+        ReleaseHistoryItem installed = visible.get(visible.size() - 1);
+        assertTrue(ReleaseHistoryCatalog.isInstalled(installed, version));
+        assertTrue(installed.notes.isEmpty());
+        assertTrue(installed.publishedAt.isEmpty());
+        assertEquals("v0.7.16", visible.get(0).tag);
+        ReleaseHistoryItem known = item(version, "v" + version, "Cached notes", "2026-11-10", true);
+        visible = ReleaseHistoryCatalog.visible(ReleaseHistoryCatalog.merge(List.of(known), catalog), false, version);
+        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, visible.size());
+        assertEquals(known, visible.get(visible.size() - 1));
+        assertTrue(ReleaseHistoryCatalog.visible(List.of(known), false, "0.7.0").isEmpty());
     }
 
     private static ReleaseHistoryItem item(String version, String tag, String notes,

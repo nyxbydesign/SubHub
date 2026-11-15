@@ -49,6 +49,7 @@ public final class ReleaseHistoryCatalog {
         }
     }
 
+    /** Retain stable and development rows until the chosen channel is projected for display. */
     static List<ReleaseHistoryItem> merge(List<ReleaseHistoryItem> live,
             List<ReleaseHistoryItem> bundled) {
         Map<String, ReleaseHistoryItem> byTag = new LinkedHashMap<>();
@@ -57,8 +58,44 @@ public final class ReleaseHistoryCatalog {
         List<ReleaseHistoryItem> merged = new ArrayList<>(byTag.values());
         merged.sort(Comparator.comparing(ReleaseHistoryCatalog::publication)
                 .thenComparing(ReleaseHistoryCatalog::version).reversed());
-        if (merged.size() > MAX_ITEMS) return new ArrayList<>(merged.subList(0, MAX_ITEMS));
         return merged;
+    }
+
+    static boolean isInstalled(ReleaseHistoryItem item, String installedVersion) {
+        return item.tag.equals("v" + installedVersion);
+    }
+
+    static List<ReleaseHistoryItem> visible(List<ReleaseHistoryItem> sortedHistory, boolean devUpdates,
+            String installedVersion) {
+        if (devUpdates) return sortedHistory.subList(0, Math.min(sortedHistory.size(), MAX_ITEMS));
+        List<ReleaseHistoryItem> result = new ArrayList<>(MAX_ITEMS);
+        ReleaseHistoryItem installed = null;
+        for (ReleaseHistoryItem item : sortedHistory) {
+            if (isInstalled(item, installedVersion)) {
+                installed = item;
+                if (result.size() < MAX_ITEMS) result.add(item);
+            } else if (!item.prerelease && result.size() < MAX_ITEMS) {
+                result.add(item);
+            }
+        }
+        if (installed == null && isPrerelease(installedVersion)) {
+            // The installed development build may predate the feed or have no cached notes.
+            installed = new ReleaseHistoryItem(installedVersion, "v" + installedVersion,
+                    "", "", "", true);
+        }
+        if (installed != null && !result.contains(installed)) {
+            if (result.size() == MAX_ITEMS) result.remove(MAX_ITEMS - 1);
+            result.add(installed);
+        }
+        return result;
+    }
+
+    private static boolean isPrerelease(String versionName) {
+        try {
+            return SemanticVersion.parse(versionName).isPrerelease();
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     static List<ReleaseHistoryItem> withCandidate(List<ReleaseHistoryItem> history,

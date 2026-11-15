@@ -8,7 +8,9 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
 import android.content.SharedPreferences;
+import android.view.ViewGroup;
 import android.widget.CompoundButton;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -19,10 +21,15 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -140,7 +147,7 @@ public final class DevUpdatesAndroidTest {
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
             scenario.onActivity(activity -> {
                 CompoundButton toggle = activity.findViewById(R.id.dev_updates);
-                assertEquals("Dev updates", toggle.getText().toString());
+                assertEquals("Development updates", toggle.getText().toString());
                 assertFalse(toggle.isChecked());
                 assertTrue(toggle.isEnabled());
                 toggle.performClick();
@@ -155,6 +162,97 @@ public final class DevUpdatesAndroidTest {
                 assertTrue(toggle.getHeight() >= Math.round(48 * activity.getResources().getDisplayMetrics().density));
             });
         }
+    }
+
+    @Test public void developmentSwitchFiltersCachedAndRefreshedHistoryImmediately() throws Exception {
+        ReleaseHistoryItem stable = historyItem("99.0.0", "2099-01-01", false);
+        ReleaseHistoryItem installed = historyItem(BuildConfig.VERSION_NAME, "2099-01-02", true);
+        ReleaseHistoryItem development = historyItem("99.0.0-dev.1", "2099-01-03", true);
+        ReleaseHistoryItem newerDevelopment = historyItem("99.0.0-dev.2", "2099-01-04", true);
+        state.setDevUpdates(true);
+        state.setReleaseHistory(List.of(stable, installed, development));
+        Method render = UpdatesActivity.class.getDeclaredMethod("render");
+        render.setAccessible(true);
+        try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertNotNull(historyRow(activity, development));
+                holdActivityUpdateCheck(activity);
+                CompoundButton toggle = activity.findViewById(R.id.dev_updates);
+                toggle.performClick();
+                assertFalse(toggle.isChecked());
+                assertFalse("The refresh is still queued", toggle.isEnabled());
+                assertNull("Cached development rows disappear before the refresh", historyRow(activity, development));
+                assertNotNull(historyRow(activity, stable));
+                assertHistoryMeta(activity, installed, R.string.update_history_installed);
+            });
+            state.setReleaseHistory(List.of(stable, installed, newerDevelopment));
+            state.setCandidate(candidate(stable.versionName, BuildConfig.VERSION_CODE + 1L));
+            scenario.onActivity(activity -> {
+                renderHistory(activity, render);
+                assertNull(historyRow(activity, newerDevelopment));
+                assertHistoryMeta(activity, stable, R.string.update_history_available);
+                assertHistoryMeta(activity, installed, R.string.update_history_installed);
+            });
+            state.clearCandidate();
+            scenario.onActivity(activity -> {
+                renderHistory(activity, render);
+                assertEquals(stable.publishedAt, historyMeta(historyRow(activity, stable)));
+            });
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                CompoundButton toggle = activity.findViewById(R.id.dev_updates);
+                assertFalse(toggle.isChecked());
+                assertNull(historyRow(activity, newerDevelopment));
+                assertHistoryMeta(activity, installed, R.string.update_history_installed);
+                holdActivityUpdateCheck(activity);
+                toggle.performClick();
+                assertTrue(toggle.isChecked());
+                assertNotNull("Cached development rows return before the refresh", historyRow(activity, newerDevelopment));
+                assertNotNull(historyRow(activity, stable));
+            });
+        }
+    }
+
+    private static void holdActivityUpdateCheck(UpdatesActivity activity) {
+        try {
+            Field network = UpdatesActivity.class.getDeclaredField("network");
+            network.setAccessible(true);
+            ExecutorService executor = (ExecutorService) network.get(activity);
+            // The activity shuts down the executor on close, discarding the queued network work.
+            executor.execute(() -> {
+                try { new CountDownLatch(1).await(); }
+                catch (InterruptedException closed) { Thread.currentThread().interrupt(); }
+            });
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
+
+    private static void renderHistory(UpdatesActivity activity, Method render) {
+        try { render.invoke(activity); }
+        catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
+
+    private static ReleaseHistoryItem historyItem(String version, String date, boolean development) {
+        return new ReleaseHistoryItem(version, "v" + version, "Fixture notes", "", date, development);
+    }
+
+    private static android.view.View historyRow(UpdatesActivity activity, ReleaseHistoryItem item) {
+        ViewGroup rows = activity.findViewById(R.id.release_history_list);
+        String expected = activity.getString(R.string.update_history_version, item.versionName);
+        for (int index = 0; index < rows.getChildCount(); index++) {
+            android.view.View row = rows.getChildAt(index);
+            TextView version = row.findViewById(R.id.release_version);
+            if (expected.contentEquals(version.getText())) return row;
+        }
+        return null;
+    }
+
+    private static String historyMeta(android.view.View row) {
+        assertNotNull(row);
+        return ((TextView) row.findViewById(R.id.release_meta)).getText().toString();
+    }
+
+    private static void assertHistoryMeta(UpdatesActivity activity, ReleaseHistoryItem item, int label) {
+        assertEquals(activity.getString(label), historyMeta(historyRow(activity, item)));
     }
 
     @Test public void subModeCanChangeUpdaterPreferencesWithNativeTapsAndRecreation() throws Exception {
