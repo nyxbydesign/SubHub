@@ -19,8 +19,12 @@ import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.UiDevice;
 import com.subhub.app.R;
+import com.subhub.app.appmode.AppModeActivity;
+import com.subhub.app.atmosphere.AtmosphereActivity;
+import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.people.*;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import org.json.*;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -194,41 +198,117 @@ public class RemoteEditorAndroidTest {
             throw new AssertionError("Could not tap paired profile action " + tag, failure);
         }
     }
-    @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");page.onActivity(a->{EditText name=(EditText)controls(a).get("name");name.setText("F");name.setText("Final offline name");});
+    @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                input.setText("5");
+                input.setText("53");
+            });
             page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            RemoteStore.Command command=feature.store.latestCommand(peer.identity,generation);
-            assertEquals(1,command.revision);
-            assertEquals("Final offline name",new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").getString("name"));
-        }
-    }
-    @Test public void newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");page.onActivity(a->((EditText)controls(a).get("name")).setText("First change"));
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            page.onActivity(a->((EditText)controls(a).get("name")).setText("Latest change"));
-            await(()->"Latest change".equals(feature.contracts.editing(peer).getJSONObject("contract").getString("name")));
-            assertEquals(1,feature.store.latestCommand(peer.identity,generation).revision);
-            page.recreate();ready(page,"name");
-            page.onActivity(a->assertEquals("Latest change",((EditText)controls(a).get("name")).getText().toString()));
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            RemoteStore.Command command = feature.store.latestCommand(peer.identity, generation);
+            assertEquals(1, command.revision);
+            assertEquals(53, configuredAllowance(new JSONObject(command.body).getJSONObject("configuration")));
         }
     }
 
-    @Test public void automaticSaveRetainsTheFocusedEditorAndCursor()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");AtomicReference<EditText> name=new AtomicReference<>();
-            page.onActivity(a->{EditText value=(EditText)controls(a).get("name");name.set(value);value.requestFocus();value.setText("Saved without rebuilding");value.setSelection(5);});
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            page.onActivity(a->{assertSame(name.get(),controls(a).get("name"));assertTrue(name.get().hasFocus());assertEquals(5,name.get().getSelectionStart());});
+    @Test public void newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            page.onActivity(activity -> allowanceEditor(activity).setText("42"));
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            page.onActivity(activity -> allowanceEditor(activity).setText("53"));
+            await(() -> configuredAllowance(feature.contracts.editing(peer)) == 53);
+            assertEquals(1, feature.store.latestCommand(peer.identity, generation).revision);
+            page.recreate();
+            waitForAllowance(page);
+            page.onActivity(activity -> assertEquals("53", allowanceEditor(activity).getText().toString()));
         }
     }
 
-    @Test public void atmosphereRouteOpensSubliminalAndRoleLossClosesEditor()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("atmosphere")) {
-            ready(page,"name");page.onActivity(a->{try{java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("subliminal",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
-            ControllerPinManager.enterSubMode();page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);await(()->page.getState()==androidx.lifecycle.Lifecycle.State.DESTROYED);
+    @Test public void automaticSaveRetainsTheFocusedEditorAndCursor() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            AtomicReference<EditText> original = new AtomicReference<>();
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                original.set(input);
+                assertTrue(input.requestFocus());
+                input.setText("53");
+                input.setSelection(1);
+            });
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            page.onActivity(activity -> {
+                assertSame(original.get(), allowanceEditor(activity));
+                assertTrue(original.get().hasFocus());
+                assertEquals(1, original.get().getSelectionStart());
+                assertEquals("53", original.get().getText().toString());
+            });
+        }
+    }
+
+    private ActivityScenario<AppModeActivity> openPairedLimits() throws Exception {
+        JSONObject baseline = feature.contracts.current(peer);
+        baseline.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits")
+                .put("app_timer_per_app_enabled", true);
+        String dom = source.peers(false).get(0).identity;
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", baseline, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        return ActivityScenario.launch(pairedIntent(AppModeActivity.class));
+    }
+
+    private Intent pairedIntent(Class<? extends Activity> destination) {
+        return new Intent(context, destination)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, RemotePersonRepository.id(peer).value());
+    }
+
+    private static EditText allowanceEditor(AppModeActivity activity) {
+        return activity.getWindow().getDecorView().findViewWithTag("limit:com.android.settings");
+    }
+
+    private void waitForAllowance(ActivityScenario<AppModeActivity> page) throws Exception {
+        await(() -> {
+            AtomicReference<Boolean> ready = new AtomicReference<>(false);
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                ready.set(FeatureEditorSession.remote(activity) && input != null && input.isEnabled());
+            });
+            return ready.get();
+        });
+    }
+
+    private static int configuredAllowance(JSONObject configuration) throws JSONException {
+        return configuration.getJSONObject("apps").getJSONObject("allowances").getInt("com.android.settings");
+    }
+
+    @Test public void atmosphereRouteOpensSubliminalAndRoleLossClosesEditor() throws Exception {
+        Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
+        try (ActivityScenario<AtmosphereActivity> page = ActivityScenario.launch(pairedIntent(AtmosphereActivity.class))) {
+            AtomicReference<View> whispers = new AtomicReference<>();
+            page.onActivity(activity -> whispers.set(activity.findViewById(R.id.whispers_card)));
+            Instrumentation.ActivityMonitor monitor =
+                    instrument.addMonitor(SubliminalSettingsActivity.class.getName(), null, false);
+            SubliminalSettingsActivity opened = null;
+            try {
+                tapView(whispers.get());
+                opened = (SubliminalSettingsActivity) monitor.waitForActivityWithTimeout(5_000);
+                assertNotNull("Whispers must open the paired editor", opened);
+                assertEquals(RemotePersonRepository.id(peer), PersonRoutes.requireId(opened.getIntent()));
+            } finally {
+                instrument.removeMonitor(monitor);
+                if (opened != null) instrument.runOnMainSync(opened::finish);
+            }
+        }
+        try (ActivityScenario<SubliminalSettingsActivity> page =
+                     ActivityScenario.launch(pairedIntent(SubliminalSettingsActivity.class))) {
+            page.onActivity(activity -> assertTrue(FeatureEditorSession.remote(activity)));
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            ControllerPinManager.enterSubMode();
+            page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            await(() -> page.getState() == androidx.lifecycle.Lifecycle.State.DESTROYED);
+            assertNull(feature.store.latestCommand(peer.identity, generation));
         }
     }
     @Test public void dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly()throws Exception {

@@ -21,7 +21,6 @@ public final class RemoteContractActivity extends RemotePage {
     private RemoteConfigurationAutosave autosave;
     @Override protected void onCreate(Bundle state){super.onCreate(state);
         String requested=state==null?getIntent().getStringExtra("section"):state.getString("section",section);
-        if("atmosphere".equals(requested))requested="subliminal";
         if(requested!=null&&ConfigurationSchema.SECTIONS.contains(requested))section=requested;
         page(sectionTitle(section));if(!selectPeer())return;
         if(state!=null && state.containsKey("draft"))try{draft=new JSONObject(state.getString("draft"));editBase=new JSONObject(state.getString("editBase",draft.toString()));desired=state.getLong("desired");applied=state.getLong("applied");artGroup=state.getString("artGroup","censor");fileAction=state.getInt("fileAction");restoreControls=state.getBundle("controls");render();if(autosave!=null)autosave.changed();return;}catch(JSONException invalid){notice(R.string.remote_reload);}
