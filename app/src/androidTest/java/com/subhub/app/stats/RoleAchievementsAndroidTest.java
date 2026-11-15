@@ -107,7 +107,7 @@ public final class RoleAchievementsAndroidTest {
         saved.edit().putStringSet("unlocked", new LinkedHashSet<>(Collections.singletonList("first_session")))
                 .putStringSet("pending_notifications", new LinkedHashSet<>(Collections.singletonList("first_session"))).commit();
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        assertEquals(25, dom.all().size());
+        assertEquals(31, dom.all().size());
         List<AchievementManager.Achievement> awarded = dom.checkDomAchievements(facts());
         assertFalse(awarded.isEmpty());
         long timestamp = dom.getUnlockedAt("dom_subs_1");
@@ -119,7 +119,7 @@ public final class RoleAchievementsAndroidTest {
         assertTrue(dom.all().isEmpty());
         assertTrue(dom.takePendingNotifications().isEmpty());
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        assertEquals(49, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
+        assertEquals(43, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
         assertFalse(sub.isUnlocked("dom_subs_1"));
         assertEquals("first_session", sub.takePendingNotifications().get(0).getId());
         ControllerPinManager.enterDomMode();
@@ -168,13 +168,24 @@ public final class RoleAchievementsAndroidTest {
         for (String id : earned) edit.putLong("unlocked_at." + id, date);
         assertTrue(edit.commit());
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        for (String id : earned) { assertTrue(dom.isUnlocked(id)); assertEquals(date, dom.getUnlockedAt(id)); }
+        assertFalse(dom.isUnlocked("paypal_vault"));
+        assertEquals(0, dom.getUnlockedAt("paypal_vault"));
+        for (String id : earned) {
+            if ("paypal_vault".equals(id)) continue;
+            assertTrue(dom.isUnlocked(id));
+            assertEquals(date, dom.getUnlockedAt(id));
+        }
         assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
-        assertEquals(earned.size(), dom.takePendingNotifications().size());
+        assertEquals(earned.size() - 1, dom.takePendingNotifications().size());
         assertTrue(dom.takePendingNotifications().isEmpty());
         ControllerPinManager.enterSubMode();
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        for (String id : earned) assertFalse(sub.isUnlocked(id));
+        assertTrue(sub.isUnlocked("paypal_vault"));
+        assertEquals(date, sub.getUnlockedAt("paypal_vault"));
+        for (String id : earned) if (!"paypal_vault".equals(id)) assertFalse(sub.isUnlocked(id));
+        List<AchievementManager.Achievement> pending = sub.takePendingNotifications();
+        assertEquals(1, pending.size());
+        assertEquals("paypal_vault", pending.get(0).getId());
         assertTrue(sub.takePendingNotifications().isEmpty());
         assertEquals(earned, saved.getStringSet("unlocked", Collections.emptySet()));
     }

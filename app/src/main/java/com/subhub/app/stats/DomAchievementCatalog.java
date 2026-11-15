@@ -34,7 +34,6 @@ final class DomAchievementCatalog {
             a("wallet_keeper", R.string.achievement_wallet_keeper, R.string.achievement_desc_wallet_keeper, "wallet_setup", R.drawable.achievement_badge_wallet_keeper),
             a("tribute_rulesmith", R.string.achievement_tribute_rulesmith, R.string.achievement_desc_tribute_rulesmith, "wallet_setup", R.drawable.achievement_badge_tribute_rulesmith),
             a("paid_pause", R.string.achievement_paid_pause, R.string.achievement_desc_paid_pause, "wallet_setup", R.drawable.achievement_badge_paid_pause),
-            a("paypal_vault", R.string.achievement_paypal_vault, R.string.achievement_desc_paypal_vault, "dom_wallet", R.drawable.achievement_badge_paypal_vault),
             a("dom_tribute_10", R.string.dom_tribute_10, R.string.dom_desc_tribute_10, "dom_tribute", R.drawable.achievement_badge_dom_tribute_10),
             a("dom_tribute_250", R.string.dom_tribute_250, R.string.dom_desc_tribute_250, "dom_tribute", R.drawable.achievement_badge_dom_tribute_250),
             a("dom_tribute_1000", R.string.dom_tribute_1000, R.string.dom_desc_tribute_1000, "dom_tribute", R.drawable.achievement_badge_dom_tribute_1000),
@@ -48,7 +47,7 @@ final class DomAchievementCatalog {
     static long target(String id) {
         switch (id) {
             case "dom_subs_1": case "dom_hardcore_1":
-            case "first_custom_phrase": case "paypal_vault":
+            case "first_custom_phrase":
             case "text_filter_enabled": case "color_picker":
             case "app_mode_guardian": case "limits_setter": case "limits_dual_guard":
             case "wallet_keeper": case "paid_pause": return 1;

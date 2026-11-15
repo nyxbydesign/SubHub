@@ -276,7 +276,6 @@ final class AchievementsPane extends android.content.ContextWrapper {
                 return "dom_appearance";
             case "text_filter_enabled": case "text_filter_catalog": return "dom_censor";
             case "first_custom_phrase": case "phrase_library": return "dom_phrases";
-            case "paypal_vault": return "dom_wallet";
             case "dom_tribute_10": case "dom_tribute_250":
             case "dom_tribute_1000": case "dom_tribute_10000": return "dom_wallet";
             case "pack_curator": return "packs";

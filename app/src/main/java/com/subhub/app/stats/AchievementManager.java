@@ -220,7 +220,6 @@ public final class AchievementManager {
             }
             case "color_picker": case "text_filter_enabled": case "text_filter_catalog":
                 return current(id, new StatsRepository(context, false).retainedSnapshot());
-            case "paypal_vault": return new PayPalCredentialStore(context).vaultState().isReady() ? 1 : 0;
             case "wallet_keeper": return PenanceManager.observedEnabled(context) ? 1 : 0;
             case "tribute_rulesmith": return PenanceManager.observedRuleCount(context);
             case "paid_pause": return new PaidPauseManager(context).isEnabled() ? 1 : 0;
@@ -539,6 +538,7 @@ public final class AchievementManager {
                 a("subliminal_100", R.string.achievement_subliminal_100, R.string.achievement_desc_subliminal_100, "◉", "subliminal", R.drawable.achievement_badge_subliminal_100, false),
                 a("subliminal_1000", R.string.achievement_subliminal_1000, R.string.achievement_desc_subliminal_1000, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1000, false),
                 a("subliminal_10000", R.string.achievement_subliminal_10000, R.string.achievement_desc_subliminal_10000, "◉", "subliminal", R.drawable.achievement_badge_subliminal_10000, false),
+                a("paypal_vault", R.string.achievement_paypal_vault, R.string.achievement_desc_paypal_vault, "◆", "wallet", R.drawable.achievement_badge_paypal_vault, false),
                 a("wallet_paid_10", R.string.achievement_wallet_paid_10, R.string.achievement_desc_wallet_paid_10, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_10, false),
                 a("wallet_paid_100", R.string.achievement_wallet_paid_100, R.string.achievement_desc_wallet_paid_100, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_100, false),
                 a("wallet_paid_500", R.string.achievement_wallet_paid_500, R.string.achievement_desc_wallet_paid_500, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_500, false),

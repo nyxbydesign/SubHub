@@ -29,7 +29,7 @@ public final class AchievementCatalogContractTest {
         Context context = ApplicationProvider.getApplicationContext();
         AchievementManager manager = new AchievementManager(context);
 
-        assertEquals(42, manager.getTotalCount());
+        assertEquals(43, manager.getTotalCount());
         Set<String> ids = new HashSet<>();
         Set<Integer> badgeResources = new HashSet<>();
         Set<String> badgeDigests = new HashSet<>();
@@ -50,8 +50,8 @@ public final class AchievementCatalogContractTest {
             }
         }
 
-        assertEquals(42, badgeResources.size());
-        assertEquals(42, badgeDigests.size());
+        assertEquals(43, badgeResources.size());
+        assertEquals(43, badgeDigests.size());
         assertFalse(ids.contains("pack_curator"));
         assertFalse(ids.contains("profile_creator"));
         assertFalse(ids.contains("profile_organizer"));
@@ -61,7 +61,9 @@ public final class AchievementCatalogContractTest {
                 find(manager, "pact_sealed").getBadgeArtRes());
         assertEquals(R.drawable.achievement_badge_hardcore_guardian,
                 find(manager, "hardcore_guardian").getBadgeArtRes());
-        assertFalse(ids.contains("paypal_vault"));
+        assertEquals(R.drawable.achievement_badge_paypal_vault,
+                find(manager, "paypal_vault").getBadgeArtRes());
+        assertEquals(AchievementRole.SUB, find(manager, "paypal_vault").getRole());
         assertFalse(ids.contains("first_custom_phrase"));
         assertFalse(ids.contains("phrase_library"));
         for (String id : java.util.List.of("text_filter_enabled", "text_filter_catalog",

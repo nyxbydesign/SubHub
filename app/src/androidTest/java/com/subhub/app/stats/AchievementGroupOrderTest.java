@@ -48,6 +48,7 @@ public final class AchievementGroupOrderTest {
         assertFalse(groups.containsKey("limits"));
         assertFalse(groups.containsKey("wallet_setup"));
         assertTrue(groups.containsKey("wallet_payments"));
+        assertEquals(List.of("paypal_vault"), ids(groups.get("wallet")));
         for (AchievementManager.Achievement achievement : catalog) {
             assertTrue(groups.get(AchievementsActivity.displayCategory(achievement))
                     .contains(achievement));
@@ -66,8 +67,13 @@ public final class AchievementGroupOrderTest {
         assertEquals(List.of("limits_setter", "limits_dual_guard"), ids(groups.get("limits")));
         assertEquals(List.of("wallet_keeper", "tribute_rulesmith", "paid_pause"), ids(groups.get("wallet_setup")));
         assertEquals(List.of("first_custom_phrase", "phrase_library"), ids(groups.get("dom_phrases")));
-        assertEquals(List.of("paypal_vault", "dom_tribute_10", "dom_tribute_250",
-                "dom_tribute_1000", "dom_tribute_10000"), ids(groups.get("dom_wallet")));
+        List<AchievementManager.Achievement> wallet = groups.get("dom_wallet");
+        assertEquals(List.of("dom_tribute_10", "dom_tribute_250",
+                "dom_tribute_1000", "dom_tribute_10000"), ids(wallet));
+        Context context = ApplicationProvider.getApplicationContext();
+        assertEquals(List.of("100 Taken", "2,500 Taken", "10,000 Taken", "100,000 Taken"),
+                wallet.stream().map(badge -> context.getString(badge.getName()))
+                        .collect(java.util.stream.Collectors.toList()));
         assertEquals(List.of("text_filter_enabled", "text_filter_catalog"), ids(groups.get("dom_censor")));
         assertEquals(List.of("color_picker", "border_artist", "style_explorer"), ids(groups.get("dom_appearance")));
     }
