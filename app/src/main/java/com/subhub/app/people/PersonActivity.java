@@ -542,8 +542,9 @@ public final class PersonActivity extends RolePage {
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
-                    if (!internal) ProfileViews.allowedFeatures(parent, person);
+                    if (!internal && person.id.isLocal()) ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
+                    if (!internal && !person.id.isLocal()) ProfileViews.allowedFeatures(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
                 for (PersonSnapshot.Section value : person.sections) for (PersonSnapshot.App app : value.apps) {
