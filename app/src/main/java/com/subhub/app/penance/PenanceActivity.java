@@ -27,6 +27,7 @@ import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
+import com.subhub.app.util.UiIdentity;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -869,10 +870,11 @@ public final class PenanceActivity extends AppCompatActivity {
         }
         long now = System.currentTimeMillis();
         PenanceSnapshot snapshot = manager.snapshot(now);
-        binding.dueAmount.setText(ruleSettings.money(snapshot.getDueCents()));
-        binding.mercyAmount.setText(ruleSettings.money(snapshot.getMercyCents()));
-        binding.checkoutAmount.setText(ruleSettings.money(snapshot.getCheckoutCents()));
-        binding.paidAmount.setText(ruleSettings.money(snapshot.getPaidCents()));
+        String due = ruleSettings.money(snapshot.getDueCents());
+        UiIdentity.setTextIfChanged(binding.dueAmount, due);
+        UiIdentity.setTextIfChanged(binding.mercyAmount, ruleSettings.money(snapshot.getMercyCents()));
+        UiIdentity.setTextIfChanged(binding.checkoutAmount, ruleSettings.money(snapshot.getCheckoutCents()));
+        UiIdentity.setTextIfChanged(binding.paidAmount, ruleSettings.money(snapshot.getPaidCents()));
         boolean checkout = snapshot.getCheckoutCents() > 0;
         boolean automaticCheckout = checkout && manager.getActiveCheckoutMode()
                 == PenanceManager.CheckoutMode.HARDCORE_AUTO;
@@ -880,19 +882,14 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean linkReady = validExternalUrl(manager.getPayPalLink());
         boolean paymentAvailable = paypalReady || linkReady;
         PayPalCredentialStore.VaultState vaultState = paypalCredentials.vaultState();
-        if (vaultState.isReady() && !vaultState.maskedPayer().isEmpty()) {
-            binding.paymentAvailability.setText(getString(
-                    R.string.paypal_vault_status_linked, vaultState.maskedPayer()));
-        } else binding.paymentAvailability.setText(paypalReady
-                    ? R.string.penance_payment_ready
-                    : linkReady ? R.string.penance_payment_link_ready
-                    : R.string.penance_payment_unavailable);
+        CharSequence availability = vaultState.isReady() && !vaultState.maskedPayer().isEmpty()
+                ? getString(R.string.paypal_vault_status_linked, vaultState.maskedPayer())
+                : getText(paypalReady ? R.string.penance_payment_ready
+                        : linkReady ? R.string.penance_payment_link_ready : R.string.penance_payment_unavailable);
+        UiIdentity.setTextIfChanged(binding.paymentAvailability, availability);
         boolean setupNeeded = !paymentAvailable && FeatureEditorSession.canEdit(this, "wallet");
-        binding.buttonSettle.setText(
-                setupNeeded
-                        ? getString(R.string.wallet_setup_paypal)
-                        : getString(
-                                R.string.wallet_pay_amount, ruleSettings.money(snapshot.getDueCents())));
+        UiIdentity.setTextIfChanged(binding.buttonSettle,
+                setupNeeded ? getText(R.string.wallet_setup_paypal) : getString(R.string.wallet_pay_amount, due));
         binding.buttonSettle.setVisibility(checkout ? View.GONE : View.VISIBLE);
         binding.buttonSettle.setEnabled(
                 !checkoutBusy
@@ -910,14 +907,13 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean sandboxOrder = checkout && paypalReady
                 && !manager.getActiveOrderId().isEmpty()
                 && !manager.getActiveOrderId().equals(manager.getActiveSettlementId());
-        binding.buttonConfirmPayment.setText(sandboxOrder
-                ? R.string.penance_confirm_paid : R.string.penance_confirm_link_paid);
+        UiIdentity.setTextIfChanged(binding.buttonConfirmPayment, getText(sandboxOrder
+                ? R.string.penance_confirm_paid : R.string.penance_confirm_link_paid));
         binding.buttonConfirmPayment.setEnabled(!checkoutBusy);
-        if (checkoutBusy) binding.paymentStatus.setText(R.string.penance_checking);
-        else if (automaticCheckout) {
-            binding.paymentStatus.setText(R.string.paypal_auto_payment_processing);
-        } else if (checkout) binding.paymentStatus.setText(R.string.penance_payment_pending);
-        else binding.paymentStatus.setText("");
+        CharSequence status = checkoutBusy ? getText(R.string.penance_checking)
+                : automaticCheckout ? getText(R.string.paypal_auto_payment_processing)
+                : checkout ? getText(R.string.penance_payment_pending) : "";
+        UiIdentity.setTextIfChanged(binding.paymentStatus, status);
         binding.paymentStatus.setVisibility(
                 binding.paymentStatus.length() == 0 ? View.GONE : View.VISIBLE);
         updateWalletSummaries(snapshot);
@@ -930,40 +926,27 @@ public final class PenanceActivity extends AppCompatActivity {
         for (PenanceInfraction infraction : PenanceInfraction.values())
             if (infraction != PenanceInfraction.PAID_PAUSE
                     && ruleSettings.isInfractionEnabled(infraction)) enabled++;
-        walletActions
-                .get("rules")
-                .summary()
-                .setText(
-                        getResources().getQuantityString(
-                                R.plurals.tribute_rules_enabled_summary, enabled, enabled));
-        walletActions
-                .get("limits")
-                .summary()
-                .setText(getString(
-                        R.string.tribute_spending_limits_summary,
-                        ruleSettings.money(ruleSettings.getDailyCapCents()),
-                        ruleSettings.money(ruleSettings.getWeeklyCapCents())));
+        UiIdentity.setTextIfChanged(walletActions.get("rules").summary(),
+                getResources().getQuantityString(R.plurals.tribute_rules_enabled_summary, enabled, enabled));
+        UiIdentity.setTextIfChanged(walletActions.get("limits").summary(), getString(
+                R.string.tribute_spending_limits_summary,
+                ruleSettings.money(ruleSettings.getDailyCapCents()),
+                ruleSettings.money(ruleSettings.getWeeklyCapCents())));
         PaidPauseRuleSettings pause = PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this));
-        walletActions
-                .get("pause")
-                .summary()
-                .setText(
-                        pause.isEnabled()
-                                ? getString(
-                                        R.string.wallet_pause_summary,
-                                        pause.getDurationMinutes(),
-                                        ruleSettings.money(pause.getPriceCents()))
-                                : getString(R.string.control_state_off));
+        UiIdentity.setTextIfChanged(walletActions.get("pause").summary(),
+                pause.isEnabled() ? getString(R.string.wallet_pause_summary, pause.getDurationMinutes(),
+                        ruleSettings.money(pause.getPriceCents())) : getText(R.string.control_state_off));
     }
 
     private void renderHistory(PenanceSnapshot snapshot, long nowMillis) {
-        binding.history.setText(snapshot.getEvents().isEmpty() ? getString(R.string.penance_history_empty) : "");
+        UiIdentity.setTextIfChanged(binding.history,
+                snapshot.getEvents().isEmpty() ? getText(R.string.penance_history_empty) : "");
         binding.history.setVisibility(snapshot.getEvents().isEmpty() ? View.VISIBLE : View.GONE);
         int groupCount = binding.walletHistoryList.bind(snapshot.getEvents(), nowMillis, historyExpanded ? 12 : 2);
         binding.walletHistoryMore.setVisibility(
                 groupCount > 2 ? View.VISIBLE : View.GONE);
-        binding.walletHistoryMore.setText(
-                historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more);
+        UiIdentity.setTextIfChanged(binding.walletHistoryMore,
+                getText(historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more));
     }
 
     private static boolean validExternalUrl(String value) {

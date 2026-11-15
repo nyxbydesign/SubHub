@@ -5,6 +5,8 @@ import static org.junit.Assume.assumeTrue;
 
 import android.content.*;
 import android.graphics.*;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.*;
 import android.widget.*;
 
@@ -167,6 +169,47 @@ public class WalletUiRefinementAndroidTest {
                                 325, wallet.snapshot(System.currentTimeMillis()).getDueCents());
                         capture(a, "wallet-sub.png");
                     });
+        }
+    }
+
+    @Test
+    public void unchangedRefreshLeavesWalletLabelsAloneAndCheckoutStillUpdates() throws Exception {
+        try (ActivityScenario<PenanceActivity> scenario = ActivityScenario.launch(PenanceActivity.class)) {
+            settle();
+            var refresh = PenanceActivity.class.getDeclaredMethod("render");
+            refresh.setAccessible(true);
+            scenario.onActivity(activity -> {
+                TextView due = activity.findViewById(R.id.due_amount);
+                TextView checkout = activity.findViewById(R.id.checkout_amount);
+                TextView status = activity.findViewById(R.id.payment_status);
+                java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+                TextWatcher watcher = new TextWatcher() {
+                    @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                    @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                        writes.incrementAndGet();
+                    }
+                    @Override public void afterTextChanged(Editable text) {}
+                };
+                for (TextView label : new TextView[]{due, checkout, status, activity.findViewById(R.id.mercy_amount),
+                        activity.findViewById(R.id.paid_amount), activity.findViewById(R.id.payment_availability),
+                        activity.findViewById(R.id.button_settle), activity.findViewById(R.id.button_confirm_payment),
+                        activity.findViewById(R.id.history), activity.findViewById(R.id.wallet_history_more)}) {
+                    label.addTextChangedListener(watcher);
+                }
+                try {
+                    for (int i = 0; i < 10; i++) refresh.invoke(activity);
+                    assertEquals(0, writes.get());
+                    assertNotNull(wallet.beginSettlement(System.currentTimeMillis()));
+                    refresh.invoke(activity);
+                } catch (ReflectiveOperationException failure) {
+                    throw new AssertionError(failure);
+                }
+                assertEquals(wallet.money(0), due.getText().toString());
+                assertEquals(wallet.money(325), checkout.getText().toString());
+                assertEquals(context.getString(R.string.penance_payment_pending), status.getText().toString());
+                assertEquals(View.VISIBLE, status.getVisibility());
+                assertEquals(3, writes.get());
+            });
         }
     }
 
