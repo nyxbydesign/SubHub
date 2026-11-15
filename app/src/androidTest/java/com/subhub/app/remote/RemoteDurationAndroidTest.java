@@ -7,7 +7,6 @@ import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static org.hamcrest.Matchers.*;
 import android.content.*;
 import android.view.View;
-import android.widget.Spinner;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -60,6 +59,25 @@ public class RemoteDurationAndroidTest {
                     RemoteProtocol.canonical(RemoteConfiguration.active(queued).getJSONObject("contract")));
             assertEquals(RemoteStore.CommandState.QUEUED,command.state);
         }
+    }
+
+    @Test public void openingAndRecreatingInlineDurationNeverQueuesUnchangedConfiguration() throws Exception {
+        try (ActivityScenario<PersonActivity> page = open()) {
+            ready(page);
+            page.recreate();
+            ready(page);
+            page.onActivity(activity -> {
+                View root = activity.getWindow().getDecorView();
+                com.subhub.app.commitment.DurationChoicesView choices =
+                        root.findViewWithTag("remote_duration_choice");
+                assertEquals(com.subhub.app.commitment.ServiceDurationView.PERMANENT, choices.duration());
+                assertNotNull(root.findViewWithTag("remote_configuration_save_status"));
+                assertNull(root.findViewWithTag("feature_editor_apply"));
+            });
+            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS + 200);
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+        }
+        assertNull(feature.store.latestCommand(peer.identity, peer.generation));
     }
     @Test public void staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation()throws Exception {
         AtomicReference<View> stale=new AtomicReference<>();

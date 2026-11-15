@@ -122,11 +122,11 @@ SUBHUB_PASS_NATIVE = {
         "staleWorkspaceRevisionCannotSaveOrDiscardConfigurationEdits"
     ],
     "com.subhub.app.remote.RemoteDurationAndroidTest": [
-        "staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation"
+        "staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation",
+        "openingAndRecreatingInlineDurationNeverQueuesUnchangedConfiguration"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
-        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor"
@@ -731,8 +731,7 @@ DUMMY_PREVIEW_NATIVE = {
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
-        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor",

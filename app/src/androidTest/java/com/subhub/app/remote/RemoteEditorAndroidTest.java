@@ -2,6 +2,7 @@ package com.subhub.app.remote;
 
 import static org.junit.Assert.*;
 import android.app.Activity;
+import android.app.Instrumentation;
 import android.content.*;
 import android.graphics.Rect;
 import android.net.Uri;
@@ -9,6 +10,7 @@ import android.view.*;
 import android.widget.*;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.UiDevice;
 import com.subhub.app.R;
@@ -49,23 +51,75 @@ public class RemoteEditorAndroidTest {
             Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,generation));
         }
     }
-    @Test public void nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            ready(page,"service_duration");AtomicReference<View> picker=new AtomicReference<>();page.onActivity(a->picker.set(controls(a).get("service_duration")));tapView(picker.get());
-            UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String choice=context.getResources().getStringArray(R.array.remote_duration_choices)[2];
-            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(choice)),5000));device.findObject(androidx.test.uiautomator.By.text(choice)).click();InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-            try{await(()->{AtomicReference<Integer> selected=new AtomicReference<>(-1);page.onActivity(a->selected.set(((Spinner)controls(a).get("service_duration")).getSelectedItemPosition()));return selected.get()==2;});}catch(AssertionError failed){diagnose(page,"duration-choice");throw failed;}
-            try{await(()->feature.store.latestCommand(peer.identity,generation)!=null);}catch(AssertionError failed){diagnose(page,"duration-apply");throw failed;}JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");assertEquals(3_600_000,saved.getJSONObject("service").getLong("duration"));
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance() throws Exception {
+        String addedPackage = "com.example.fixture.browser";
+        String dom = source.peers(false).get(0).identity;
+        source.publish(dom, generation, RemoteProtocol.Stream.APP_CATALOG, addedPackage,
+                new JSONObject().put("label", "Fixture Browser"), false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.APP_CATALOG));
+        People.installRemoteRepository(new RemotePersonRepository(context, feature));
+        People.installRemoteAuthority(feature::controlsLocal);
+        People.installConnectionUi(new RemoteUi());
+        String person = RemotePersonRepository.id(peer).value();
+        SharedPreferences local = context.getSharedPreferences(
+                com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0);
+        Map<String, ?> before = new HashMap<>(local.getAll());
+        Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
+        Intent profile = new Intent(context, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, person);
+        try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(profile)) {
+            AtomicReference<View> contract = new AtomicReference<>();
+            await(() -> {
+                page.onActivity(activity -> contract.set(activity.getWindow().getDecorView()
+                        .findViewWithTag("person_tab:contracts")));
+                return contract.get() != null;
+            });
+            tapView(contract.get());
+            AtomicReference<View> addApps = new AtomicReference<>();
+            await(() -> {
+                page.onActivity(activity -> addApps.set(activity.getWindow().getDecorView()
+                        .findViewWithTag("person_apps")));
+                return addApps.get() != null && addApps.get().isClickable();
+            });
+            Instrumentation.ActivityMonitor monitor =
+                    instrument.addMonitor(LocalAppsActivity.class.getName(), null, false);
+            LocalAppsActivity apps = null;
+            try {
+                tapView(addApps.get());
+                apps = (LocalAppsActivity) monitor.waitForActivityWithTimeout(5_000);
+                assertNotNull("Paired Contract must open the shared Apps editor", apps);
+                assertEquals(person, PersonRoutes.requireId(apps.getIntent()).value());
+                LocalAppsActivity editor = apps;
+                AtomicReference<CheckBox> choice = new AtomicReference<>();
+                await(() -> {
+                    instrument.runOnMainSync(() -> choice.set(editor.getWindow().getDecorView()
+                            .findViewWithTag("included:" + addedPackage)));
+                    return choice.get() != null;
+                });
+                instrument.runOnMainSync(() -> {
+                    View panel = editor.findViewById(R.id.person_apps_panel);
+                    assertEquals("person_apps:" + person, panel.getTag());
+                    assertTrue(((CheckBox) panel.findViewWithTag("included:com.android.settings")).isChecked());
+                    assertFalse(choice.get().isChecked());
+                    assertTrue(choice.get().isEnabled());
+                });
+                inspectLayout(editor, "paired-apps");
+                assertNull(feature.store.latestCommand(peer.identity, generation));
+                tapView(choice.get());
+                await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            } finally {
+                instrument.removeMonitor(monitor);
+                if (apps != null) instrument.runOnMainSync(apps::finish);
+            }
         }
-    }
-
-    @Test public void editorOpeningAndRecreationNeverQueueUnchangedConfiguration()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            ready(page,"service_duration");page.recreate();ready(page,"service_duration");
-            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);
-            assertNull(feature.store.latestCommand(peer.identity,generation));
-            page.onActivity(a->assertNull(find(a.body,"Apply to device")));
-        }
+        RemoteStore.Command command = feature.store.latestCommand(peer.identity, generation);
+        JSONObject configuration = new JSONObject(command.body).getJSONObject("configuration");
+        JSONObject savedApps = configuration.getJSONObject("apps");
+        assertEquals(RemoteStore.CommandState.QUEUED, command.state);
+        assertEquals(Set.of("com.android.settings", addedPackage), RemoteConfiguration.selected(configuration));
+        assertEquals(37, savedApps.getJSONObject("allowances").getInt("com.android.settings"));
+        assertFalse(savedApps.getBoolean("all"));
+        assertEquals(before, local.getAll());
     }
     @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
@@ -119,10 +173,6 @@ public class RemoteEditorAndroidTest {
         }
     }
 
-    private void diagnose(ActivityScenario<RemoteContractActivity> page,String name)throws Exception {
-        File directory=new File(context.getFilesDir(),"remote-editor-failures");directory.mkdirs();UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());device.takeScreenshot(new File(directory,name+".png"));device.dumpWindowHierarchy(new File(directory,name+".xml"));
-        AtomicReference<String> values=new AtomicReference<>();page.onActivity(a->{JSONObject data=new JSONObject();try{data.put("mayEdit",a.mayEdit());for(Map.Entry<String,View> entry:controls(a).entrySet()){View v=entry.getValue();if(v instanceof EditText)data.put(entry.getKey(),new JSONObject().put("value",((EditText)v).getText()).put("error",((EditText)v).getError()));else if(v instanceof Spinner)data.put(entry.getKey(),((Spinner)v).getSelectedItemPosition());}values.set(data.toString());}catch(Exception e){throw new AssertionError(e);}});try(OutputStream out=new FileOutputStream(new File(directory,name+".json"))){out.write(values.get().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
-    }
     @Test public void focusedSectionsExposeOnlyTheirOwnDirectProfileActions()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
             ready(page,"apps_all");page.onActivity(a->{assertNull(find(a.body,context.getString(R.string.remote_import)));assertNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(controls(a).get("module_censor_enabled"));});
@@ -181,19 +231,46 @@ public class RemoteEditorAndroidTest {
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
-        for(String section:Arrays.asList("apps","duration","censor"))try(ActivityScenario<RemoteContractActivity> page=open(section)) {
-            ready(page,"apps".equals(section)?"apps_all":"duration".equals(section)?"service_duration":"name");inspectLayout(page,"contract-"+section);
+        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
+            ready(page,"name");inspectLayout(page,"contract-censor");
         }
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
     }
     @androidx.annotation.RequiresApi(29)
     private <T extends Activity> void inspectLayout(ActivityScenario<T> page,String name)throws Exception {
-        android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();AtomicReference<T> activity=new AtomicReference<>();page.onActivity(activity::set);
-        await(()->{AtomicReference<Boolean> settled=new AtomicReference<>(false);page.onActivity(a->settled.set(a.hasWindowFocus()&&!a.getWindow().getDecorView().isLayoutRequested()));return settled.get();});
-        java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);page.onActivity(a->{View root=a.getWindow().getDecorView();root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);root.invalidate();});assertTrue("No hardware frame commit",frame.await(5,java.util.concurrent.TimeUnit.SECONDS));
-        List<String> failures=new ArrayList<>();page.onActivity(a->inspectText(a.findViewById(android.R.id.content),failures));
-        String configuration=activity.get().getResources().getConfiguration().screenWidthDp+"-"+activity.get().getResources().getConfiguration().fontScale;
+        AtomicReference<T> activity = new AtomicReference<>();
+        page.onActivity(activity::set);
+        inspectLayout(activity.get(), name);
+    }
+
+    @androidx.annotation.RequiresApi(29)
+    private void inspectLayout(Activity activity, String name) throws Exception {
+        Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
+        await(() -> {
+            AtomicReference<Boolean> settled = new AtomicReference<>(false);
+            instrument.runOnMainSync(() -> {
+                View root = activity.getWindow().getDecorView();
+                settled.set(activity.hasWindowFocus() && root.isLaidOut() && !root.isLayoutRequested());
+            });
+            return settled.get();
+        });
+        android.content.res.Configuration display = activity.getResources().getConfiguration();
+        android.os.Bundle arguments = InstrumentationRegistry.getArguments();
+        String width = arguments.getString("shell_expected_width_dp");
+        String font = arguments.getString("shell_expected_font_scale");
+        if (width != null) assertEquals(Integer.parseInt(width), display.screenWidthDp);
+        if (font != null) assertEquals(Float.parseFloat(font), display.fontScale, .01f);
+        java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
+        instrument.runOnMainSync(() -> {
+            View root = activity.getWindow().getDecorView();
+            root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);
+            root.invalidate();
+        });
+        assertTrue("No hardware frame commit", frame.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        List<String> failures = new ArrayList<>();
+        instrument.runOnMainSync(() -> inspectText(activity.findViewById(android.R.id.content), failures));
+        String configuration=display.screenWidthDp+"-"+display.fontScale;
         File directory=new File(context.getFilesDir(),"remote-layout/"+configuration+"-"+database);assertTrue(directory.isDirectory()||directory.mkdirs());UiDevice device=UiDevice.getInstance(instrument);assertTrue(device.takeScreenshot(new File(directory,name+".png")));
         try(OutputStream out=new FileOutputStream(new File(directory,name+".json"))){out.write(new JSONArray(failures).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}assertTrue(failures.toString(),failures.isEmpty());
     }
