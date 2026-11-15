@@ -138,6 +138,13 @@
         <activity
             android:name=".atmosphere.GagActivity"
             android:exported="false" />
+        <activity
+            android:name=".atmosphere.GagClipboardPermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:windowSoftInputMode="stateAlwaysHidden" />
         <service
             android:name=".atmosphere.GagKeyboardService"
             android:exported="true"
@@ -148,6 +155,10 @@
             </intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/gag_input_method" />
         </service>
+
+        <activity android:name=".atmosphere.GagClipboardEditActivity"
+            android:exported="false" android:excludeFromRecents="true"
+            android:taskAffinity="" android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
 
         <activity
             android:name=".capture.CustomImagesActivity"

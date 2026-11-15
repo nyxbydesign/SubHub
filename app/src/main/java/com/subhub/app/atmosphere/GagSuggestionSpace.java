@@ -2,7 +2,7 @@ package com.subhub.app.atmosphere;
 
 import android.view.inputmethod.InputConnection;
 
-/** Owns one automatically appended separator until the next key or cursor change. */
+/** Remembers where a suggestion can be followed by a separator. */
 record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot position) {
     static boolean needsSpace(CharSequence after) {
         if (after == null) return false;
@@ -11,7 +11,7 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
         return !Character.isWhitespace(next) && !Character.isSpaceChar(next) && !joinsPrevious(next);
     }
 
-    static boolean joinsPrevious(int key) {
+    private static boolean joinsPrevious(int key) {
         return switch (Character.getType(key)) {
             case Character.CONNECTOR_PUNCTUATION, Character.DASH_PUNCTUATION,
                     Character.START_PUNCTUATION, Character.END_PUNCTUATION,
@@ -22,13 +22,14 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
     }
 
     static GagSuggestionSpace capture(InputConnection input, GagDeleteSuggestion.Snapshot before,
-            int originalLength, String appended) {
-        if (before == null || before.cursor() < originalLength || !appended.endsWith(" ")) return null;
+            int originalLength, String inserted) {
+        if (before == null || before.cursor() < originalLength || inserted.isEmpty()
+                || !needsSpace(before.right())) return null;
         GagDeleteSuggestion.Snapshot after = GagDeleteSuggestion.editorSnapshot(input);
-        int expected = before.cursor() - originalLength + appended.length();
-        return after != null && after.cursor() == expected && after.left().endsWith(" ")
+        int expected = before.cursor() - originalLength + inserted.length();
+        return after != null && after.cursor() == expected && !after.left().isEmpty()
                 && after.right().equals(before.right())
-                && after.left().endsWith(appended.substring(Math.max(0, appended.length() - after.left().length())))
+                && after.left().endsWith(inserted.substring(Math.max(0, inserted.length() - after.left().length())))
                 ? new GagSuggestionSpace(input, after) : null;
     }
 
@@ -36,9 +37,7 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
         return input == current && start == end && end == position.cursor();
     }
 
-    void removeBefore(InputConnection current, int key) {
-        if (current == input && joinsPrevious(key)
-                && position.equals(GagDeleteSuggestion.editorSnapshot(current)))
-            current.deleteSurroundingText(1, 0);
+    boolean matches(InputConnection current) {
+        return current == input && position.equals(GagDeleteSuggestion.editorSnapshot(current));
     }
 }

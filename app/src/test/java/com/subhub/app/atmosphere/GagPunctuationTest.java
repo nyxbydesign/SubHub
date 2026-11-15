@@ -11,13 +11,11 @@ public final class GagPunctuationTest {
         assertFalse(GagSuggestionSpace.needsSpace("\t"));
         assertFalse(GagSuggestionSpace.needsSpace("\u00A0"));
         assertFalse(GagSuggestionSpace.needsSpace("),"));
+        assertFalse(GagSuggestionSpace.needsSpace("("));
+        assertFalse(GagSuggestionSpace.needsSpace("]"));
+        assertFalse(GagSuggestionSpace.needsSpace(">"));
         assertTrue(GagSuggestionSpace.needsSpace(""));
-        assertTrue(GagSuggestionSpace.joinsPrevious('('));
-        assertTrue(GagSuggestionSpace.joinsPrevious(']'));
-        assertTrue(GagSuggestionSpace.joinsPrevious(','));
-        assertTrue(GagSuggestionSpace.joinsPrevious('>'));
-        assertFalse(GagSuggestionSpace.joinsPrevious(' '));
-        assertFalse(GagSuggestionSpace.joinsPrevious('a'));
+        assertTrue(GagSuggestionSpace.needsSpace("a"));
     }
 
     @Test public void spacesBeforeTheNextWordAfterCommasPeriodsAndEllipses() {

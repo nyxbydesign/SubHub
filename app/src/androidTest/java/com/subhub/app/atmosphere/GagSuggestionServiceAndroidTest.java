@@ -35,7 +35,7 @@ public final class GagSuggestionServiceAndroidTest {
     private static final String IME = "com.subhub.app/.atmosphere.GagKeyboardService";
     private static final long TIMEOUT_MS = 8_000L;
 
-    @Test public void explicitSuggestionsPreserveExistingSpaceAndOwnOnlyTheirNewSeparator() throws Exception {
+    @Test public void explicitSuggestionsPreserveExistingSpaceAndDeferNewSeparators() throws Exception {
         openEditor(true);
         correctHello(" next");
         assertText("hello next");
@@ -43,11 +43,13 @@ public final class GagSuggestionServiceAndroidTest {
         acceptHello();
         key(",");
         assertText("hello,");
+        key("x");
+        assertText("hello, x");
 
         acceptHello();
         keyDescription(R.string.gag_keyboard_symbols);
         key("(");
-        assertText("hello(");
+        assertText("hello()");
 
         acceptHello();
         keyDescription(R.string.gag_keyboard_symbols);
@@ -56,8 +58,42 @@ public final class GagSuggestionServiceAndroidTest {
 
         acceptHello();
         keyDescription(R.string.gag_keyboard_space);
-        key(",");
-        assertText("hello  ,");
+        assertText("hello ");
+        key("x");
+        assertText("hello x");
+
+        acceptHello();
+        key("x");
+        assertText("hello x");
+    }
+
+    @Test public void movingTheCaretOrDeletingCancelsThePendingSeparator() throws Exception {
+        acceptHello();
+        assertSuggestions("there", "everyone", "again");
+        shell("input keyevent KEYCODE_DPAD_LEFT");
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text("there")), TIMEOUT_MS));
+        shell("input keyevent KEYCODE_DPAD_RIGHT");
+        key("x");
+        assertText("hellox");
+
+        acceptHello();
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText("hell");
+        key("x");
+        assertText("hellx");
+    }
+
+    @Test public void openingBracketsInsertMatchingClosersAfterTheCursor() throws Exception {
+        for (String pair : new String[]{"()", "[]", "{}"}) {
+            acceptHello();
+            keyDescription(R.string.gag_keyboard_symbols);
+            if (!pair.equals("()")) keyDescription(R.string.gag_keyboard_more_symbols);
+            key(pair.substring(0, 1));
+            assertText("hello" + pair);
+            keyDescription(R.string.gag_keyboard_letters);
+            key("x");
+            assertText("hello" + pair.substring(0, 1) + "x" + pair.substring(1));
+        }
     }
 
     @Test public void multipleMissedSpacesRequireSuggestionTapAndPreserveTheFollowingText() throws Exception {
@@ -78,9 +114,9 @@ public final class GagSuggestionServiceAndroidTest {
     @Test public void nextWordsRefreshAfterAnAcceptedSuggestionAndAppendOnlyOnTap() throws Exception {
         acceptHello();
         assertSuggestions("there", "everyone", "again");
-        assertText("hello ");
+        assertText("hello");
         key("there");
-        assertText("hello there ");
+        assertText("hello there");
         assertSuggestions("how", "I", "again");
         key(",");
         assertText("hello there,");
@@ -104,7 +140,7 @@ public final class GagSuggestionServiceAndroidTest {
                 TIMEOUT_MS));
         assertText("thanks ");
         key("again");
-        assertText("thanks again ");
+        assertText("thanks again");
         assertSuggestions("and", "but", "or");
     }
 
@@ -244,7 +280,7 @@ public final class GagSuggestionServiceAndroidTest {
     private static void acceptHello() throws Exception {
         openEditor(false);
         correctHello("");
-        assertText("hello ");
+        assertText("hello");
     }
 
     private static void correctHello(String after) {

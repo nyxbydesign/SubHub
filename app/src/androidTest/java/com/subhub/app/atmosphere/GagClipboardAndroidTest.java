@@ -68,7 +68,79 @@ public final class GagClipboardAndroidTest {
         assertEquals("Explicitly copied", history.entries(15L).get(0).text());
     }
 
-    @Test public void screenshotCaptureRequiresSeparateConsentAndCurrentFullPhotoGrant() {
+    @Test public void screenshotCaptureFollowsClipboardUseAndCurrentFullPhotoGrant() {
+        withPhotoAccess((scoped, grants) -> {
+            var prefs = GagScreenshotClipboard.preferences(scoped);
+            String full = GagScreenshotClipboard.requestedPermissions()[0];
+            grants.add(full);
+            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+
+            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
+
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            long beforeOpen = System.currentTimeMillis();
+            assertTrue(GagScreenshotClipboard.updateAccess(scoped));
+            assertTrue(GagScreenshotClipboard.enabled(scoped));
+            assertTrue(prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0) >= beforeOpen);
+
+            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+        });
+    }
+
+    @Test public void deniedOrSelectedPhotoAccessDoesNotKeepPrompting() {
+        withPhotoAccess((scoped, grants) -> {
+            var prefs = GagScreenshotClipboard.preferences(scoped);
+            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
+            assertTrue(GagScreenshotClipboard.onClipboardOpened(scoped));
+            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                prefs.edit().clear().apply();
+                grants.add(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED);
+                assertEquals(GagScreenshotClipboard.Access.SELECTED, GagScreenshotClipboard.access(scoped));
+                assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+                assertFalse(GagScreenshotClipboard.enabled(scoped));
+                assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            }
+            grants.add(GagScreenshotClipboard.requestedPermissions()[0]);
+            assertTrue(GagScreenshotClipboard.updateAccess(scoped));
+            assertTrue(GagScreenshotClipboard.enabled(scoped));
+        });
+    }
+
+    @Test public void existingScreenshotOptInKeepsItsCutoffUntilPhotoAccessIsRevoked() {
+        withPhotoAccess((scoped, grants) -> {
+            var prefs = GagScreenshotClipboard.preferences(scoped);
+            long existing = 1L;
+            prefs.edit().putLong(GagScreenshotClipboard.ENABLED_SINCE, existing).apply();
+            String full = GagScreenshotClipboard.requestedPermissions()[0];
+            grants.add(full);
+            assertTrue(GagScreenshotClipboard.updateAccess(scoped));
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+            assertEquals(existing, prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0));
+
+            grants.remove(full);
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
+            assertEquals(0L, prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0));
+            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
+
+            grants.add(full);
+            assertTrue(GagScreenshotClipboard.updateAccess(scoped));
+            assertTrue(prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0) > existing);
+        });
+    }
+
+    private static void withPhotoAccess(java.util.function.BiConsumer<android.content.Context,
+            java.util.Set<String>> check) {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String fixturePrefs = "gag_screenshot_access_test";
         var grants = new java.util.HashSet<String>();
@@ -85,23 +157,7 @@ public final class GagClipboardAndroidTest {
         };
         target.deleteSharedPreferences(fixturePrefs);
         try {
-            GagScreenshotClipboard.enable(scoped);
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
-            if (android.os.Build.VERSION.SDK_INT >= 34) {
-                grants.add(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED);
-                assertEquals(GagScreenshotClipboard.Access.SELECTED, GagScreenshotClipboard.access(scoped));
-                GagScreenshotClipboard.enable(scoped);
-                assertFalse(GagScreenshotClipboard.enabled(scoped));
-            }
-            grants.add(GagScreenshotClipboard.requestedPermissions()[0]);
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
-            GagScreenshotClipboard.enable(scoped);
-            assertTrue(GagScreenshotClipboard.enabled(scoped));
-            grants.clear();
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
-            GagScreenshotClipboard.disable(scoped);
-            grants.add(GagScreenshotClipboard.requestedPermissions()[0]);
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            check.accept(scoped, grants);
         } finally { target.deleteSharedPreferences(fixturePrefs); }
     }
 

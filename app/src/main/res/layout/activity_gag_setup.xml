@@ -105,20 +105,5 @@
                 android:layout_height="wrap_content"
                 android:text="@string/gag_clear_learned" />
         </LinearLayout>
-
-        <com.subhub.app.util.StateToggle
-            android:id="@+id/gag_screenshot_clipboard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/ui_gap_group"
-            android:saveEnabled="false"
-            android:text="@string/gag_screenshot_clipboard" />
-
-        <TextView
-            android:id="@+id/gag_screenshot_clipboard_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:accessibilityLiveRegion="polite"
-            android:textColor="@color/text_secondary" />
     </LinearLayout>
 </ScrollView>

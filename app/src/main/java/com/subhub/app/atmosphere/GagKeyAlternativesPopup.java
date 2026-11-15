@@ -33,6 +33,14 @@ final class GagKeyAlternativesPopup {
     }
 
     boolean show(View key, List<String> choices, Consumer<String> select) {
+        return show(key, choices, select, 44, 20);
+    }
+
+    boolean showActions(View card, List<String> actions, Consumer<String> select) {
+        return show(card, actions, select, 112, 16);
+    }
+
+    private boolean show(View key, List<String> choices, Consumer<String> select, int cellDp, int textSize) {
         dismiss();
         Rect window = new Rect();
         key.getWindowVisibleDisplayFrame(window);
@@ -43,7 +51,7 @@ final class GagKeyAlternativesPopup {
         int availableHeight = window.height() - 2 * inset;
         int rows = choices.size() > 5 ? 2 : 1;
         int columns = (choices.size() + rows - 1) / rows;
-        int cell = Math.min(dp(44), availableWidth / columns);
+        int cell = Math.min(dp(cellDp), availableWidth / columns);
         int heightPerRow = Math.min(dp(rows == 2 ? 40 : 46), availableHeight / rows);
         if (cell == 0 || heightPerRow == 0) return false;
         int width = columns * cell + 2 * inset;
@@ -63,7 +71,7 @@ final class GagKeyAlternativesPopup {
                 Button button = new Button(key.getContext());
                 button.setText(choice);
                 button.setAllCaps(false);
-                button.setTextSize(20);
+                button.setTextSize(textSize);
                 button.setIncludeFontPadding(false);
                 button.setGravity(Gravity.CENTER);
                 button.setPadding(0, 0, 0, 0);

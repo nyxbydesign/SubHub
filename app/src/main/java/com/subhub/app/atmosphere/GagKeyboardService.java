@@ -125,8 +125,9 @@ public final class GagKeyboardService extends InputMethodService {
     private AlertDialog keyboardPicker;
     private LinearLayout keyboardHost;
     private LinearLayout clipboardPanel;
+    private GagKeyAlternativesPopup clipboardMenu;
     private ClipboardManager clipboardManager;
-    private final GagClipboard clipboard = new GagClipboard();
+    private GagClipboard clipboard;
     private final android.os.Handler clipboardPasteDelivery = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ThreadPoolExecutor clipboardImages =
             new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
@@ -166,6 +167,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public void onCreate() {
         super.onCreate();
+        clipboard = new GagClipboard(new GagClipboardPins(getNoBackupFilesDir()));
         backend = RemoteFeature.get(this);
         configurationObserver = RemoteUi.observeConfiguration(this::refreshWorkspace);
         participation = GagParticipation.preferences(this);
@@ -195,7 +197,6 @@ public final class GagKeyboardService extends InputMethodService {
         observedComposingStart = -1;
         dismissKeyboardPicker();
         dismissKeyPopups();
-        suggestionSpace = null;
         stopClipboard();
         super.onStartInput(editor, restarting);
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
@@ -242,7 +243,6 @@ public final class GagKeyboardService extends InputMethodService {
         clearDeletionHistory();
         dismissKeyboardPicker();
         dismissKeyPopups();
-        suggestionSpace = null;
         stopClipboard();
         if (page == Page.EMOJI) page = pageBeforeEmoji;
         clearPendingSpace();
@@ -257,7 +257,6 @@ public final class GagKeyboardService extends InputMethodService {
         observedComposingStart = -1;
         dismissKeyboardPicker();
         dismissKeyPopups();
-        suggestionSpace = null;
         stopClipboard();
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
         word.setLength(0);
@@ -369,9 +368,6 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
-        GagSuggestionSpace ownedSpace = suggestionSpace;
-        suggestionSpace = null;
-        if (ownedSpace != null) ownedSpace.removeBefore(input, character);
         insertPendingSpace(input, character);
         boolean inWord = (page == Page.LETTERS && GagRules.wordCharacter(character))
                 || ((word.length() > 0 || literalWord) && GagRules.apostrophe(character));
@@ -391,7 +387,7 @@ public final class GagKeyboardService extends InputMethodService {
                 input.commitText(text, 1);
             }
         } else {
-            boolean committed = completeWord(input, text, null);
+            boolean committed = completeWordWithBracket(input, text);
             if (committed && editorAllowed && (character == '.' || character == ','))
                 pendingPunctuation = (char) character;
             if (committed && editorAllowed) {
@@ -415,14 +411,21 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void clearPendingSpace() {
+        suggestionSpace = null;
         pendingPunctuation = 0;
         punctuationCursor = -1;
     }
 
     private void insertPendingSpace(InputConnection input, int next) {
+        GagSuggestionSpace space = suggestionSpace;
         char punctuation = pendingPunctuation;
         clearPendingSpace();
-        if (!editorAllowed || punctuation == 0 || !Character.isLetter(next)) return;
+        if (!editorAllowed || !Character.isLetter(next)) return;
+        if (space != null && space.matches(input)) {
+            input.commitText(" ", 1);
+            return;
+        }
+        if (punctuation == 0) return;
         CharSequence selected = input.getSelectedText(0);
         if (selected != null && selected.length() != 0) return;
         if (GagPunctuation.needsSpace(punctuation, next, input.getTextBeforeCursor(2, 0),
@@ -452,13 +455,34 @@ public final class GagKeyboardService extends InputMethodService {
         return true;
     }
 
+    private boolean completeWordWithBracket(InputConnection input, String typed) {
+        if (!editorAllowed) return completeWord(input, typed, null);
+        String closing = switch (typed) {
+            case "(" -> ")";
+            case "[" -> "]";
+            case "{" -> "}";
+            default -> null;
+        };
+        if (closing == null) return completeWord(input, typed, null);
+        boolean batching = input.beginBatchEdit();
+        try {
+            if (!completeWord(input, typed, null)) return false;
+            try {
+                // Zero places the cursor before the added closer.
+                input.commitText(closing, 0);
+            } catch (RuntimeException unavailable) {
+                // The typed opener was already committed.
+            }
+            return true;
+        } finally {
+            if (batching) input.endBatchEdit();
+        }
+    }
+
     private boolean commitSuggestion(InputConnection input, int originalLength, String completed) {
-        suggestionSpace = null;
-        boolean append = GagSuggestionSpace.needsSpace(input.getTextAfterCursor(2, 0));
-        GagDeleteSuggestion.Snapshot before = append ? GagDeleteSuggestion.editorSnapshot(input) : null;
-        String inserted = append ? completed + " " : completed;
-        if (!input.commitText(inserted, 1)) return false;
-        if (append) suggestionSpace = GagSuggestionSpace.capture(input, before, originalLength, inserted);
+        GagDeleteSuggestion.Snapshot before = GagDeleteSuggestion.editorSnapshot(input);
+        if (!input.commitText(completed, 1)) return false;
+        suggestionSpace = GagSuggestionSpace.capture(input, before, originalLength, completed);
         return true;
     }
 
@@ -501,7 +525,6 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void backspace() {
-        suggestionSpace = null;
         clearPendingSpace();
         resetOpening(false);
         refreshReplacementAuthority();
@@ -655,7 +678,6 @@ public final class GagKeyboardService extends InputMethodService {
             return;
         }
         clearPendingSpace();
-        suggestionSpace = null;
         resetOpening(false);
         word.setLength(0);
         GagDeletionHistory.Snapshot expected = edit.destination(action);
@@ -691,7 +713,6 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void enter() {
         clearDeletionHistory();
-        suggestionSpace = null;
         clearPendingSpace();
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
@@ -713,6 +734,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     @Override public View onCreateInputView() {
         dismissKeyPopups();
+        closeClipboard();
         Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
         LinearLayout surface = new LinearLayout(theme);
         surface.setOrientation(LinearLayout.VERTICAL);
@@ -870,7 +892,6 @@ public final class GagKeyboardService extends InputMethodService {
         if (input == null) return false;
         clearDeletionHistory();
         clearPendingSpace();
-        suggestionSpace = null;
         boolean committed = completeWord(input, emoji, null);
         literalWord = false;
         if (committed) resetOpening(false);
@@ -937,7 +958,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void renderSpace(LinearLayout row, float weight) {
-        Button space = key(row, getString(R.string.gag_keyboard_language), weight, LETTER_SURFACE, 13, () -> type(" "));
+        String label = page == Page.NUMBERS ? "" : getString(R.string.gag_keyboard_language);
+        Button space = key(row, label, weight, LETTER_SURFACE, 13, () -> type(" "));
         space.setContentDescription(getString(R.string.gag_keyboard_space));
         space.setOnLongClickListener(view -> { chooseKeyboard(view); return true; });
     }
@@ -988,7 +1010,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (editorAllowed) {
             int gutter = dp(44);
             ImageButton clipboardButton = new ImageButton(tools.getContext());
-            clipboardButton.setImageResource(R.drawable.ic_gag_clipboard_tiles);
+            clipboardButton.setImageResource(R.drawable.ic_gag_clipboard);
             clipboardButton.setContentDescription(getString(R.string.gag_keyboard_clipboard));
             clipboardButton.setScaleType(android.widget.ImageView.ScaleType.CENTER);
             clipboardButton.setBackground(keyFace(MODIFIER_SURFACE, 7));
@@ -1082,9 +1104,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void startScreenshotClipboard() {
-        if (GagScreenshotClipboard.access(this) != GagScreenshotClipboard.Access.FULL)
-            GagScreenshotClipboard.disable(this);
-        if (!clipboardAllowed() || !clipboardRetention() || !GagScreenshotClipboard.enabled(this)) return;
+        if (!clipboardAllowed() || !GagScreenshotClipboard.updateAccess(this)) return;
         if (screenshotObserver == null) {
             var observer = new android.database.ContentObserver(main) {
                 @Override public void onChange(boolean selfChange, Uri uri) {
@@ -1111,7 +1131,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void scanScreenshots() {
-        if (!clipboardAllowed() || !clipboardRetention() || !GagScreenshotClipboard.enabled(this)) {
+        if (!clipboardAllowed() || !GagScreenshotClipboard.updateAccess(this)) {
             stopScreenshotClipboard();
             refreshClipboard();
             return;
@@ -1154,7 +1174,7 @@ public final class GagKeyboardService extends InputMethodService {
         }
         var prefs = GagScreenshotClipboard.preferences(this);
         if (!clipboardAllowed() || !clipboardRetention()) return;
-        if (!GagScreenshotClipboard.enabled(this)) {
+        if (!GagScreenshotClipboard.updateAccess(this)) {
             stopScreenshotClipboard();
             refreshClipboard();
             return;
@@ -1250,6 +1270,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (window == null) return;
         clipboardConnection = getCurrentInputConnection();
         clipboardPanel = new LinearLayout(keyboard.getContext());
+        clipboardMenu = new GagKeyAlternativesPopup(clipboardPanel);
         clipboardPanel.setOrientation(LinearLayout.VERTICAL);
         clipboardPanel.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         clipboardPanel.setBackgroundColor(0xff171717);
@@ -1258,12 +1279,16 @@ public final class GagKeyboardService extends InputMethodService {
         int height = keyboard.getHeight();
         keyboard.setVisibility(View.GONE);
         keyboardHost.addView(clipboardPanel, new LinearLayout.LayoutParams(-1, height));
+        boolean requestPhotoAccess = GagScreenshotClipboard.onClipboardOpened(this);
         startScreenshotClipboard();
         captureClipboard();
+        if (requestPhotoAccess) GagClipboardPermissionActivity.open(this);
     }
 
     private void closeClipboard() {
         if (clipboardPanel == null) return;
+        clipboardMenu.dismiss();
+        clipboardMenu = null;
         clipboardPanel.removeAllViews();
         keyboardHost.removeView(clipboardPanel);
         clipboardPanel = null;
@@ -1305,6 +1330,7 @@ public final class GagKeyboardService extends InputMethodService {
                 scheduleSuggestions();
             return;
         }
+        clipboardMenu.dismiss();
         clipboardPanel.removeAllViews();
         LinearLayout header = new LinearLayout(clipboardPanel.getContext());
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -1328,6 +1354,10 @@ public final class GagKeyboardService extends InputMethodService {
         retention.setMinimumHeight(dp(42));
         clipboardPanel.addView(retention, new LinearLayout.LayoutParams(-1, -2));
         retention.setOnCheckedChangeListener((button, enabled) -> {
+            if (!enabled && !clipboard.forgetPins()) {
+                clipboardChangeFailed();
+                return;
+            }
             GagScreenshotClipboard.preferences(this).edit().putBoolean(GagScreenshotClipboard.RETENTION, enabled).apply();
             clearClipboardHistory();
         });
@@ -1345,10 +1375,17 @@ public final class GagKeyboardService extends InputMethodService {
             content.addView(empty);
             return;
         }
-        TextView recent = clipboardLabel(content, getString(R.string.gag_clipboard_recent), 14);
-        ViewCompat.setAccessibilityHeading(recent, true);
-        content.addView(recent, new LinearLayout.LayoutParams(-1, -2));
-        if (clipboardEditing)
+        var sections = entries.stream().collect(java.util.stream.Collectors.partitioningBy(GagClipboard.Entry::pinned));
+        addClipboardSection(content, sections.get(true), R.string.gag_clipboard_pinned);
+        addClipboardSection(content, sections.get(false), R.string.gag_clipboard_recent);
+    }
+
+    private void addClipboardSection(LinearLayout content, List<GagClipboard.Entry> entries, int title) {
+        if (entries.isEmpty()) return;
+        TextView heading = clipboardLabel(content, getString(title), 14);
+        ViewCompat.setAccessibilityHeading(heading, true);
+        content.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        if (clipboardEditing && title == R.string.gag_clipboard_recent)
             clipboardControl(content, getString(R.string.gag_keyboard_clipboard_clear), this::clearClipboardHistory);
         InputConnection input = clipboardConnection;
         LinearLayout panel = clipboardPanel;
@@ -1367,24 +1404,64 @@ public final class GagKeyboardService extends InputMethodService {
                 GagClipboard.Entry entry = entries.get(start + column);
                 View card = clipboardPreview(row, entry, false);
                 card.setTag("gag_clipboard_card");
-                card.setOnClickListener(view -> {
-                    if (!clipboardEditing) pasteClipboard(panel, input, entry);
-                    else if (panel == clipboardPanel && clipboardAllowed()) {
-                        clipboard.remove(entry);
-                        if (entry.screenshot() != null) {
-                            stopScreenshotClipboard();
-                            GagScreenshotClipboard.dismiss(this, entry.screenshot());
-                            startScreenshotClipboard();
-                        }
-                        if (clipboard.entries(android.os.SystemClock.elapsedRealtime()).isEmpty()) clipboardEditing = false;
-                        refreshClipboard();
-                    }
-                });
-                if (clipboardEditing)
-                    card.setContentDescription(getString(R.string.gag_clipboard_remove_item, clipboardTitle(entry)));
+                bindClipboardCard(card, panel, input, entry);
                 row.addView(card, cardSize);
             }
         }
+    }
+
+    private void bindClipboardCard(View card, View panel, InputConnection input, GagClipboard.Entry entry) {
+        if (!clipboardEditing || entry.text() != null) card.setOnClickListener(view -> {
+            if (!clipboardEditing) {
+                pasteClipboard(panel, input, entry);
+            } else if (clipboardCardIsCurrent(panel, input, entry)
+                    && !GagClipboardEditActivity.open(this, clipboard, entry)) {
+                clipboardChangeFailed();
+            }
+        });
+        String pin = getString(entry.pinned() ? R.string.gag_clipboard_unpin : R.string.gag_clipboard_pin);
+        String delete = getString(R.string.delete);
+        var choices = entry.text() == null ? List.of(delete) : List.of(pin, delete);
+        GagKeyPress press = new GagKeyPress(main, null);
+        press.setAlternatives(clipboardMenu);
+        card.setOnTouchListener(press);
+        card.setOnLongClickListener(view -> {
+            if (clipboardCardIsCurrent(panel, input, entry) && clipboardMenu.showActions(view, choices, action -> {
+                if (clipboardCardIsCurrent(panel, input, entry)) {
+                    changeClipboardEntry(entry, action.equals(delete));
+                }
+            })) view.getParent().requestDisallowInterceptTouchEvent(true);
+            return true;
+        });
+    }
+
+    private boolean clipboardCardIsCurrent(View panel, InputConnection input, GagClipboard.Entry entry) {
+        return panel == clipboardPanel && clipboardAllowed() && clipboardRetention() && clipboard.allows(input)
+                && (entry.screenshot() == null || GagScreenshotClipboard.enabled(this))
+                && clipboard.contains(entry, android.os.SystemClock.elapsedRealtime());
+    }
+
+    private void changeClipboardEntry(GagClipboard.Entry entry, boolean delete) {
+        long elapsed = android.os.SystemClock.elapsedRealtime();
+        long wall = System.currentTimeMillis();
+        boolean changed = delete ? clipboard.remove(entry, wall)
+                : entry.pinned() ? clipboard.unpin(entry, wall, elapsed) : clipboard.pin(entry, elapsed);
+        if (!changed) {
+            clipboardChangeFailed();
+            return;
+        }
+        if (delete && entry.screenshot() != null) {
+            stopScreenshotClipboard();
+            GagScreenshotClipboard.dismiss(this, entry.screenshot());
+            startScreenshotClipboard();
+        }
+        if (clipboard.entries(elapsed).isEmpty()) clipboardEditing = false;
+        refreshClipboard();
+    }
+
+    private void clipboardChangeFailed() {
+        android.widget.Toast.makeText(this, R.string.gag_clipboard_change_failed, android.widget.Toast.LENGTH_SHORT).show();
+        refreshClipboard();
     }
 
     private void clearClipboardHistory() {
@@ -1465,7 +1542,7 @@ public final class GagKeyboardService extends InputMethodService {
         if ((panel != null && panel != clipboardPanel) || !clipboardAllowed() || !clipboardRetention()
                 || (entry.screenshot() != null && !GagScreenshotClipboard.enabled(this))
                 || !clipboard.allows(input)
-                || !clipboard.entries(android.os.SystemClock.elapsedRealtime()).contains(entry)) return;
+                || !clipboard.contains(entry, android.os.SystemClock.elapsedRealtime())) return;
         if (entry.image() != null) {
             pasteClipboardImage(input, entry);
             return;
@@ -1475,7 +1552,6 @@ public final class GagKeyboardService extends InputMethodService {
         clearPendingSpace();
         clearSuggestions();
         resetOpening(false);
-        suggestionSpace = null;
         String insertion = word + entry.text();
         word.setLength(0);
         String completed = GagClipboard.applyWords(insertion, token -> applyGag(token, token));
@@ -1521,7 +1597,6 @@ public final class GagKeyboardService extends InputMethodService {
                         clearPendingSpace();
                         clearSuggestions();
                         resetOpening(false);
-                        suggestionSpace = null;
                         shared = GagClipboardFileProvider.publish(context, file, entry.expiresAt() - now);
                         accepted = image.commit(input, editor, shared);
                         if (accepted) closeClipboard();
@@ -1547,7 +1622,7 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean showClipboardSuggestion(InputConnection input) {
         if (!GagScreenshotClipboard.enabled(this)) clipboard.retainScreenshots(java.util.Set.of());
         if (!clipboardAllowed() || !clipboardRetention() || !isEmptyEditor(input)) return false;
-        List<GagClipboard.Entry> entries = clipboard.entries(android.os.SystemClock.elapsedRealtime());
+        List<GagClipboard.Entry> entries = clipboard.recentEntries(android.os.SystemClock.elapsedRealtime());
         if (entries.isEmpty()) return false;
         GagClipboard.Entry latest = entries.get(0);
         clearClipboardSuggestion();
@@ -1621,7 +1696,9 @@ public final class GagKeyboardService extends InputMethodService {
             if (showClipboardSuggestion(input)) return;
             GagSuggestionContext context = GagSuggestionContext.read(input);
             if (context == null || (cursor >= 0 && context.cursor() >= 0 && context.cursor() != cursor)) return;
-            List<String> candidates = nextWords(context);
+            String before = context.before();
+            if (suggestionSpace != null && suggestionSpace.matches(input)) before += " ";
+            List<String> candidates = nextWords(before);
             if (shifted) {
                 List<String> uppercase = new ArrayList<>(candidates.size());
                 for (String candidate : candidates) {
@@ -1669,9 +1746,9 @@ public final class GagKeyboardService extends InputMethodService {
                         && rulesRevision == backend.gagRevision());
     }
 
-    private List<String> nextWords(GagSuggestionContext context) {
+    private List<String> nextWords(String before) {
         String language = getResources().getConfiguration().getLocales().get(0).getLanguage();
-        if (!context.before().isEmpty()) return GagNextWords.predict(context.before(), language);
+        if (!before.isEmpty()) return GagNextWords.predict(before, language);
         List<String> candidates = new ArrayList<>(3);
         GagPersonalDictionary personal = personalDictionary();
         if (personal.isLearningEnabled()) candidates.addAll(personal.suggestions("", List.of(), 3));
@@ -1688,9 +1765,11 @@ public final class GagKeyboardService extends InputMethodService {
         if (!isCurrentSuggestion(generation, epoch, input) || word.length() != 0) return;
         clearDeletionHistory();
         clearSuggestions();
+        GagSuggestionSpace space = suggestionSpace;
         clearPendingSpace();
         if (!context.commit(input, candidate, token -> applyGag(token, token),
-                completed -> commitSuggestion(input, 0, completed))) return;
+                completed -> commitSuggestion(input, 0,
+                        space != null && space.matches(input) ? " " + completed : completed))) return;
         resetOpening(false);
         literalWord = false;
         lastShiftTap = 0;
@@ -1942,7 +2021,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void prepareKeyboardSwitch() {
-        suggestionSpace = null;
+        clearPendingSpace();
         if (word.length() != 0) literalWord = true;
         leaveWordLiteral();
     }

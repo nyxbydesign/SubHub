@@ -22,12 +22,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Reads only recent, saved screenshot candidates while the keyboard has explicit consent. */
+/** Reads only recent, saved screenshots after Clipboard use and a full Android photo grant. */
 final class GagScreenshotClipboard {
     static final String PREFS = "gag_clipboard";
     static final String RETENTION = "retention";
     static final String ENABLED_SINCE = "screenshots_enabled_since";
     static final String CLEARED_THROUGH = "screenshots_cleared_through";
+    private static final String CLIPBOARD_OPENED = "screenshots_clipboard_opened";
     private static final String DISMISSED = "screenshots_dismissed";
     private static final String PICTURES = "Pictures/Screenshots/";
     private static final String DCIM = "DCIM/Screenshots/";
@@ -65,18 +66,31 @@ final class GagScreenshotClipboard {
         return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
     }
 
-    static void enable(Context context) {
-        if (access(context) == Access.FULL) preferences(context).edit()
-                .putLong(ENABLED_SINCE, System.currentTimeMillis()).apply();
+    static boolean onClipboardOpened(Context context) {
+        SharedPreferences prefs = preferences(context);
+        if (!prefs.getBoolean(RETENTION, true) || prefs.getBoolean(CLIPBOARD_OPENED, false)) return false;
+        prefs.edit().putBoolean(CLIPBOARD_OPENED, true).apply();
+        return prefs.getLong(ENABLED_SINCE, 0) <= 0 && access(context) == Access.NONE;
+    }
+
+    static boolean updateAccess(Context context) {
+        SharedPreferences prefs = preferences(context);
+        long since = prefs.getLong(ENABLED_SINCE, 0);
+        if (access(context) != Access.FULL) {
+            if (since > 0) prefs.edit().remove(ENABLED_SINCE).putBoolean(CLIPBOARD_OPENED, true).apply();
+            return false;
+        }
+        if (!prefs.getBoolean(RETENTION, true)) return false;
+        if (since > 0) return true;
+        if (!prefs.getBoolean(CLIPBOARD_OPENED, false)) return false;
+        prefs.edit().putLong(ENABLED_SINCE, System.currentTimeMillis()).apply();
+        return true;
     }
 
     static boolean enabled(Context context) {
-        return preferences(context).getLong(ENABLED_SINCE, 0) > 0 && access(context) == Access.FULL;
-    }
-
-    static void disable(Context context) {
         SharedPreferences prefs = preferences(context);
-        if (prefs.contains(ENABLED_SINCE)) prefs.edit().remove(ENABLED_SINCE).apply();
+        return prefs.getBoolean(RETENTION, true) && prefs.getLong(ENABLED_SINCE, 0) > 0
+                && access(context) == Access.FULL;
     }
 
     static void clearThrough(Context context, long timestamp) {

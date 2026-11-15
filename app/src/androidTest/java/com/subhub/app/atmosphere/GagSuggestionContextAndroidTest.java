@@ -26,9 +26,10 @@ public final class GagSuggestionContextAndroidTest {
                 String starter = GagNextWords.starters("en").get(0);
                 assertEquals("", editor.toString());
                 assertTrue(commit(input, empty, starter, word -> word));
-                assertEquals("I ", editor.toString());
+                assertEquals("I", editor.toString());
                 assertFalse(commit(input, empty, starter, word -> word));
 
+                assertTrue(input.commitText(" ", 1));
                 GagSuggestionContext afterStarter = GagSuggestionContext.read(input);
                 assertNotNull(afterStarter);
                 String next = GagNextWords.after(afterStarter.before(), "en").get(0);
@@ -39,12 +40,12 @@ public final class GagSuggestionContextAndroidTest {
                 assertNull(GagSuggestionContext.read(input));
                 Selection.setSelection(editor, editor.length());
                 assertTrue(commit(input, afterStarter, next, word -> word.equals("am") ? "mmph" : word));
-                assertEquals("I mmph ", editor.toString());
+                assertEquals("I mmph", editor.toString());
             });
         }
     }
 
-    @Test public void suggestionSpaceIsOwnedOnlyAtTheUnchangedCursor() {
+    @Test public void suggestionSpaceIsPendingOnlyAtTheUnchangedCursor() {
         try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
             host.onActivity(activity -> {
                 android.widget.EditText text = new android.widget.EditText(activity);
@@ -61,18 +62,19 @@ public final class GagSuggestionContextAndroidTest {
                 GagDeleteSuggestion.Snapshot before = GagDeleteSuggestion.editorSnapshot(input);
                 assertNotNull(before);
                 assertTrue(input.setComposingRegion(0, 3));
-                assertTrue(input.commitText("hello ", 1));
-                GagSuggestionSpace owned = GagSuggestionSpace.capture(input, before, 3, "hello ");
-                assertNotNull(owned);
-                assertTrue(owned.atSelection(input, 6, 6));
-                owned.removeBefore(input, '(');
+                assertTrue(input.commitText("hello", 1));
+                GagSuggestionSpace pending = GagSuggestionSpace.capture(input, before, 3, "hello");
+                assertNotNull(pending);
+                assertTrue(pending.atSelection(input, 5, 5));
+                assertTrue(pending.matches(input));
                 assertEquals("hello", editor.toString());
 
-                editor.append("  ");
-                Selection.setSelection(editor, 7);
-                assertFalse(owned.atSelection(input, 7, 7));
-                owned.removeBefore(input, ',');
-                assertEquals("hello  ", editor.toString());
+                Selection.setSelection(editor, 4);
+                assertFalse(pending.atSelection(input, 4, 4));
+                assertFalse(pending.matches(input));
+                editor.replace(0, 5, "world");
+                Selection.setSelection(editor, 5);
+                assertFalse(pending.matches(input));
             });
         }
     }
@@ -88,20 +90,20 @@ public final class GagSuggestionContextAndroidTest {
                 GagSuggestionContext hello = GagSuggestionContext.read(input);
                 assertNotNull(hello);
                 assertTrue(commit(input, hello, "there", word -> word));
-                assertEquals("hello there ", editor.toString());
+                assertEquals("hello there", editor.toString());
 
                 GagSuggestionContext there = GagSuggestionContext.read(input);
                 assertNotNull(there);
                 editor.replace(6, 11, "again");
-                assertEquals(12, Selection.getSelectionEnd(editor));
+                assertEquals(11, Selection.getSelectionEnd(editor));
                 assertFalse(commit(input, there, "how", word -> word));
-                assertEquals("hello again ", editor.toString());
+                assertEquals("hello again", editor.toString());
             });
         }
     }
 
     private static boolean commit(BaseInputConnection input, GagSuggestionContext expected,
             String candidate, java.util.function.UnaryOperator<String> replace) {
-        return expected.commit(input, candidate, replace, completed -> input.commitText(completed + " ", 1));
+        return expected.commit(input, candidate, replace, completed -> input.commitText(completed, 1));
     }
 }
