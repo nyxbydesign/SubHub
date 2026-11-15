@@ -50,11 +50,7 @@ public final class OnboardingFlow {
     }
 
     public static String legacyPage(List<OnboardingPage> pages, int version, int step) {
-        if (version < 2) {
-            int[] migrated = {0, 3, 1, 4, 5, 5};
-            step = migrated[Math.max(0, Math.min(5, step))];
-        }
-        if (step <= 0) return ROLE;
+        if (version < 2 || step <= 0) return ROLE;
         OnboardingPage.Kind[] kinds = {OnboardingPage.Kind.STORY, OnboardingPage.Kind.APPEARANCE,
                 OnboardingPage.Kind.WALLET, OnboardingPage.Kind.APPS,
                 OnboardingPage.Kind.SECURITY, OnboardingPage.Kind.PERMISSIONS};

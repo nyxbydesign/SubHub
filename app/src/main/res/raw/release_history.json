@@ -26,7 +26,7 @@
   {
     "versionName": "0.6.0",
     "tag": "v0.6.0",
-    "notes": "## What’s new in SubHub 0.6.0\n\n### New\n\n- **Add portable SubHub Studio arrangements** — Introduce the always-available Studio surface and bounded .subhubpack format with drafts, previews, embedded art, role-aware sharing, reviewed section merges, reversible backups, optional locks, and legacy .bbpack import.\n",
+    "notes": "## What’s new in SubHub 0.6.0\n\n### New\n\n- **Add SubHub Studio** — Introduced arrangement drafts, previews, embedded artwork and sharing. Current releases use paired Contracts.\n",
     "htmlUrl": "https://github.com/bozo-industries/SubHub/releases/tag/v0.6.0",
     "publishedAt": "2026-08-28T00:57:16+02:00",
     "prerelease": false
