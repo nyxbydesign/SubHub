@@ -1,7 +1,6 @@
 package com.subhub.app.penance;
 
 import android.content.Intent;
-import android.text.TextUtils;
 import android.view.View;
 import android.widget.TextView;
 import androidx.annotation.StringRes;
@@ -12,6 +11,7 @@ import com.subhub.app.R;
 import com.subhub.app.databinding.ViewWalletConnectionBinding;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.AsyncUiScope;
+import com.subhub.app.util.UiIdentity;
 
 import java.net.URI;
 import java.util.Locale;
@@ -240,11 +240,11 @@ public final class WalletConnectionController implements AutoCloseable {
     private void refreshPayPalSandboxState() {
         if (binding == null || paypalCredentials == null) return;
         paypalReadyForDisplay = paypalCredentials.hasVerifiedCredentials();
-        setLabelText(summary, activity.getText(paypalReadyForDisplay
+        UiIdentity.setTextIfChanged(summary, activity.getText(paypalReadyForDisplay
                 ? R.string.settings_services_ready : R.string.settings_services_setup));
         refreshWalletCurrency();
         PayPalEnvironment environment = paypalCredentials.selectedEnvironment();
-        setLabelText(binding.paypalSandboxStatus,
+        UiIdentity.setTextIfChanged(binding.paypalSandboxStatus,
                 getString(
                         paypalReadyForDisplay
                                 ? R.string.paypal_environment_status_ready
@@ -269,7 +269,7 @@ public final class WalletConnectionController implements AutoCloseable {
             default:
                 vaultStatus = R.string.paypal_vault_status_off;
         }
-        setLabelText(binding.paypalVaultStatus,
+        UiIdentity.setTextIfChanged(binding.paypalVaultStatus,
                 vaultState.isReady() && !vaultState.maskedPayer().isEmpty()
                         ? getString(R.string.paypal_vault_status_linked, vaultState.maskedPayer())
                         : getString(vaultStatus));
@@ -282,7 +282,7 @@ public final class WalletConnectionController implements AutoCloseable {
                                 : vaultState.isReady()
                                         ? R.string.paypal_wallet_relink
                                         : R.string.paypal_wallet_link;
-        setLabelText(binding.buttonLinkPaypalWallet, activity.getText(linkLabel));
+        UiIdentity.setTextIfChanged(binding.buttonLinkPaypalWallet, activity.getText(linkLabel));
         binding.buttonLinkPaypalWallet.setEnabled(
                 editingAllowed() && paypalReadyForDisplay && !paypalVaultBusy);
         updatingAutoPay = true;
@@ -292,7 +292,7 @@ public final class WalletConnectionController implements AutoCloseable {
         boolean autoPayPaused = "PAUSED".equals(autoPay.status()) && !autoPayError.isEmpty();
         binding.paypalAutoPayStatus.setVisibility(autoPayPaused ? View.VISIBLE : View.GONE);
         if (autoPayPaused) {
-            setLabelText(binding.paypalAutoPayStatus,
+            UiIdentity.setTextIfChanged(binding.paypalAutoPayStatus,
                     getString(R.string.paypal_auto_pay_paused_status, autoPayError));
         }
     }
@@ -310,15 +310,11 @@ public final class WalletConnectionController implements AutoCloseable {
         binding.walletCurrencyUsd.setEnabled(editingAllowed() && primary.isEmpty());
         binding.buttonRefreshWalletCurrency.setEnabled(
                 editingAllowed() && !currencyReading && paypalReadyForDisplay);
-        setLabelText(binding.walletCurrencyStatus,
+        UiIdentity.setTextIfChanged(binding.walletCurrencyStatus,
                 primary.isEmpty()
                         ? getString(R.string.wallet_currency_help)
                         : getString(
                                 R.string.wallet_currency_primary, primary, wallet.getCurrency()));
-    }
-
-    private static void setLabelText(TextView label, CharSequence text) {
-        if (!TextUtils.equals(label.getText(), text)) label.setText(text);
     }
 
     private void readWalletCurrency() {

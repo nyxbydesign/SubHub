@@ -5,6 +5,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
@@ -14,6 +15,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import com.subhub.app.R;
+import com.subhub.app.util.UiIdentity;
 
 /** One app's retained daily allowance and live recorded usage, with no nested card surface. */
 final class AppLimitRow extends LinearLayout {
@@ -24,7 +26,6 @@ final class AppLimitRow extends LinearLayout {
     private final ImageView image;
     private final TextView usage, title;
     private final ProgressBar progress;
-    private String receipt = "";
 
     AppLimitRow(Context context, String packageName, String name, Drawable icon, String minutes) {
         super(context);
@@ -82,7 +83,7 @@ final class AppLimitRow extends LinearLayout {
 
     void metadata(String name, Drawable icon) {
         appLabel = name; localIcon = icon;
-        if (!android.text.TextUtils.equals(title.getText(), name)) title.setText(name);
+        UiIdentity.setTextIfChanged(title, name);
         allowance.setContentDescription(getContext().getString(R.string.app_timer_allowance_accessibility, name));
         refreshAppIcon();
     }
@@ -90,13 +91,13 @@ final class AppLimitRow extends LinearLayout {
     void refreshAppIcon() { com.subhub.app.configuration.FeatureEditorAppIcons.bind(image, packageName, localIcon); }
 
     void renderUsage(String description, int percent, boolean limited) {
-        String next = description + "|" + percent + "|" + limited;
-        if (next.equals(receipt)) return;
-        receipt = next;
-        usage.setText(description);
-        progress.setVisibility(limited ? VISIBLE : GONE);
-        progress.setProgress(percent);
-        progress.setContentDescription(description);
+        UiIdentity.setTextIfChanged(usage, description);
+        int visibility = limited ? VISIBLE : GONE;
+        if (progress.getVisibility() != visibility) progress.setVisibility(visibility);
+        if (progress.getProgress() != percent) progress.setProgress(percent);
+        if (!TextUtils.equals(progress.getContentDescription(), description)) {
+            progress.setContentDescription(description);
+        }
     }
 
     private TextView text(String value, int size, boolean secondary) {

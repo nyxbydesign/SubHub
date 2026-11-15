@@ -2,6 +2,7 @@ package com.subhub.app.util;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup.LayoutParams;
@@ -18,6 +19,11 @@ import com.subhub.app.R;
 /** Shared typography and spacing tokens for XML and dynamically created UI. */
 public final class UiIdentity {
     private UiIdentity() {}
+
+    /** Updates a plain label only when its visible text changes. */
+    public static void setTextIfChanged(TextView view, CharSequence text) {
+        if (!TextUtils.equals(view.getText(), text)) view.setText(text);
+    }
 
     public static void textSize(TextView view, @DimenRes int size) {
         view.setTextSize(TypedValue.COMPLEX_UNIT_PX, view.getResources().getDimensionPixelSize(size));
