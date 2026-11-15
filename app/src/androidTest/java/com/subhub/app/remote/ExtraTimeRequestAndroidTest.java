@@ -6,6 +6,8 @@ import android.content.SharedPreferences;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.appmode.ExtraTimeAllowance;
+import com.subhub.app.people.LocalPersonRepository;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.people.PersonId;
@@ -139,6 +141,40 @@ public final class ExtraTimeRequestAndroidTest {
             assertEquals(25, first.bonusMinutes);
             AppTimerManager timers = new AppTimerManager(context);
             java.util.Set<String> selected = java.util.Set.of(fixture.firstPackage, fixture.secondPackage);
+            AtomicInteger journalOpens = new AtomicInteger();
+            Context observed = new ContextWrapper(context) {
+                @Override public SharedPreferences getSharedPreferences(String name, int mode) {
+                    if (ExtraTimeStore.PREFS.equals(name)) journalOpens.incrementAndGet();
+                    return super.getSharedPreferences(name, mode);
+                }
+            };
+            for (String name : selected) ExtraTimeRequests.allowance(observed, name, measuredAt);
+            assertEquals(2, journalOpens.getAndSet(0));
+            Map<String, ExtraTimeAllowance> credits = ExtraTimeRequests.allowances(observed, selected, measuredAt);
+            assertEquals(1, journalOpens.get());
+            assertEquals(java.util.Set.of(fixture.firstPackage), credits.keySet());
+            ExtraTimeAllowance scalar = ExtraTimeRequests.allowance(context, fixture.firstPackage, measuredAt);
+            assertEquals(25 * 60_000L, credits.get(fixture.firstPackage).bonusMillis);
+            assertEquals(scalar.appCeilingMillis, credits.get(fixture.firstPackage).appCeilingMillis);
+            assertTrue(ExtraTimeRequests.allowances(context, selected, request.requestedAt - 1).isEmpty());
+            assertTrue(ExtraTimeRequests.allowances(context, selected, measuredAt + 26 * 3_600_000L).isEmpty());
+            RemoteStore telemetryStore = RemoteFeature.get(context).store;
+            RemoteStore.Peer telemetryPeer = telemetryStore.peers(false).stream()
+                    .filter(peer -> peer.localRole == RemoteProtocol.Role.SUB).findFirst().orElseThrow();
+            new RemoteTelemetry(context, telemetryStore).prepare(telemetryPeer);
+            RemoteProtocol.Change today = telemetryStore.published(telemetryPeer.identity,
+                    telemetryPeer.generation, RemoteProtocol.Stream.APP_USAGE).stream()
+                    .filter(change -> "today".equals(change.key)).findFirst().orElseThrow();
+            JSONObject budgets = new JSONObject(today.body).getJSONObject("effectiveBudgets");
+            assertEquals(2, budgets.length());
+            var profileAllowances = new LocalPersonRepository(context).loadAllowances();
+            for (String name : selected) {
+                long expected = credits.getOrDefault(name, ExtraTimeAllowance.NONE)
+                        .individualBudget(timers.allowanceMinutes(name) * 60_000L);
+                assertEquals(expected, budgets.getJSONObject(name).getLong("millis"));
+                assertEquals(expected, profileAllowances.stream().filter(row -> name.equals(row.packageName))
+                        .findFirst().orElseThrow().budgetMillis);
+            }
             for (ExtraTimeRequests.App app : after.apps) {
                 assertEquals(timers.snapshot(app.packageName, measuredAt).appUsedMillis, app.usedMillis);
                 assertEquals(timers.limitStatus(app.packageName, selected, measuredAt) != AppTimerManager.LimitStatus.NONE,
@@ -149,6 +185,7 @@ public final class ExtraTimeRequestAndroidTest {
             assertThrows(IllegalStateException.class,()->fixture.subRequests().submit(fixture.firstPackage,100,"EUR"));
             assertTrue(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit()
                     .putInt("app_timer_allowance_minutes:"+fixture.firstPackage,6).commit());
+            assertTrue(ExtraTimeRequests.allowances(context, selected, measuredAt).isEmpty());
             ExtraTimeRequests.Snapshot changed = fixture.subRequests().snapshot(System.currentTimeMillis());
             ExtraTimeRequests.Request expired = changed.requests.stream()
                     .filter(value->value.id.equals(request.id)).findFirst().orElseThrow();
@@ -201,7 +238,10 @@ public final class ExtraTimeRequestAndroidTest {
             assertEquals(sharedRequest.id, creditedApp.latest.id);
             assertEquals(2, new PenanceManager(context).snapshot(sharedAt).getEvents().size());
 
+            assertEquals(25 * 60_000L, ExtraTimeRequests.allowances(context, selected, sharedAt)
+                    .get(fixture.firstPackage).bonusMillis);
             assertTrue(SubFeaturePolicy.setAllowed(context, "limits", false));
+            assertTrue(ExtraTimeRequests.allowances(context, selected, sharedAt).isEmpty());
             ExtraTimeRequests.Snapshot withdrawn = sub.snapshot(System.currentTimeMillis());
             assertFalse(withdrawn.canRequest);
             ExtraTimeRequests.App withdrawnApp = withdrawn.apps.stream()

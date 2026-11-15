@@ -188,11 +188,7 @@ public final class ExtraTimeRequests {
             // Keep the last matching pending receipt, as in the ordered history scan.
             if (request.status == Status.PENDING) pending.put(request.packageName, request);
         }
-        Map<String, List<ExtraTimeStore.Row>> approvals = new HashMap<>();
-        for (ExtraTimeStore.Row row : rows) {
-            if (row.state.equals("APPROVED"))
-                approvals.computeIfAbsent(row.packageName, unused -> new ArrayList<>()).add(row);
-        }
+        Map<String, List<ExtraTimeStore.Row>> approvals = approvalsByPackage(rows, packages);
         for (String packageName : packages) {
             int dailyMinutes = timers.allowanceMinutes(packageName, budget);
             long dailyMillis = AppTimerManager.minutesToMillis(dailyMinutes);
@@ -416,28 +412,62 @@ public final class ExtraTimeRequests {
         return changed;
     }
     public static ExtraTimeAllowance allowance(Context context, String packageName, long now) {
+        return readAllowances(context, ExtraTimeAllowance.NONE,
+                rows -> allowanceForRows(rows, packageName, now, () -> configuration(context, packageName)));
+    }
+
+    /** A fresh display projection from one authorized journal read. Missing packages have no credit. */
+    public static Map<String, ExtraTimeAllowance> allowances(Context context, Set<String> packages, long now) {
+        if (packages.isEmpty()) return Map.of();
+        return readAllowances(context, Map.of(), rows -> {
+            Map<String, ExtraTimeAllowance> result = new HashMap<>();
+            for (var entry : approvalsByPackage(rows, packages).entrySet()) {
+                String packageName = entry.getKey();
+                try {
+                    ExtraTimeAllowance allowance = allowanceForRows(entry.getValue(), packageName, now,
+                            () -> configuration(context, packageName));
+                    if (allowance.bonusMillis > 0) result.put(packageName, allowance);
+                } catch (Exception unavailable) {
+                    // An unavailable configuration only denies credit for this package.
+                }
+            }
+            return result;
+        });
+    }
+
+    private static Map<String, List<ExtraTimeStore.Row>> approvalsByPackage(
+            List<ExtraTimeStore.Row> rows, Set<String> packages) {
+        Map<String, List<ExtraTimeStore.Row>> approvals = new HashMap<>();
+        for (ExtraTimeStore.Row row : rows) {
+            if (row.state.equals("APPROVED") && packages.contains(row.packageName))
+                approvals.computeIfAbsent(row.packageName, unused -> new ArrayList<>()).add(row);
+        }
+        return approvals;
+    }
+
+    private interface AllowanceReader<T> {
+        T read(List<ExtraTimeStore.Row> rows) throws Exception;
+    }
+
+    private static <T> T readAllowances(Context context, T unavailable, AllowanceReader<T> reader) {
         try {
-            RemoteFeature feature = RemoteFeature.get(context); if (!feature.recoveryReady()) return ExtraTimeAllowance.NONE;
+            RemoteFeature feature = RemoteFeature.get(context);
+            if (!feature.recoveryReady()) return unavailable;
             return feature.store.authorityObservation(() -> {
                 synchronized (SubFeaturePolicy.LOCK) { synchronized (feature.store) { synchronized (ExtraTimeStore.LOCK) {
-                    if (!SubFeaturePolicy.allowed(context,"limits")) return ExtraTimeAllowance.NONE;
+                    if (!SubFeaturePolicy.allowed(context,"limits")) return unavailable;
                     RemoteStore.Peer selected = null;
                     for (RemoteStore.Peer peer : feature.store.peers(false))
                         if (peer.state == RemoteStore.State.ACTIVE && peer.localRole == RemoteProtocol.Role.SUB) {
-                            if (selected != null) return ExtraTimeAllowance.NONE;
+                            if (selected != null) return unavailable;
                             selected = peer;
                         }
-                    return selected == null ? ExtraTimeAllowance.NONE : allowanceLocked(context,feature.store,selected,new ExtraTimeStore(context),packageName,now);
+                    if (selected == null) return unavailable;
+                    requireActive(feature.store, selected);
+                    return reader.read(new ExtraTimeStore(context).load(scope(selected)));
                 } } }
             });
-        } catch (Exception unavailable) { return ExtraTimeAllowance.NONE; }
-    }
-    private static ExtraTimeAllowance allowanceLocked(Context context, RemoteStore authority, RemoteStore.Peer peer,
-            ExtraTimeStore journal, String packageName, long now) throws Exception {
-        if (peer == null || peer.localRole != RemoteProtocol.Role.SUB) return ExtraTimeAllowance.NONE;
-        requireActive(authority, peer);
-        return allowanceForRows(journal.load(scope(peer)), packageName, now,
-                () -> configuration(context, packageName));
+        } catch (Exception failed) { return unavailable; }
     }
 
     private static ExtraTimeAllowance allowanceForRows(List<ExtraTimeStore.Row> rows, String packageName,

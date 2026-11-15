@@ -6,10 +6,12 @@ import android.os.Build;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.appmode.ExtraTimeAllowance;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
+import com.subhub.app.remote.ExtraTimeRequests;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
@@ -121,12 +123,13 @@ public final class LocalPersonRepository implements PersonRepository {
         Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
         List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
         if (limits.perAppEnabled) {
+            Map<String, ExtraTimeAllowance> credits = ExtraTimeRequests.allowances(context, packages, usageAt);
             for (String packageName : packages) {
                 AppTimerManager.UsageSnapshot used = usage.get(packageName);
                 int minutes = timers.allowanceMinutes(packageName, limits);
                 allowances.add(new PersonSnapshot.Allowance(packageName, appLabel(packageName),
                         used == null ? 0 : used.appUsedMillis, minutes, null,
-                        com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, usageAt)
+                        credits.getOrDefault(packageName, ExtraTimeAllowance.NONE)
                                 .individualBudget(minutes * 60_000L)));
             }
         }

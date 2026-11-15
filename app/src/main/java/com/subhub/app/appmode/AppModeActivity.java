@@ -504,6 +504,8 @@ public final class AppModeActivity extends AppCompatActivity {
                         : getString(R.string.limits_usage_only, formatUsage(totalUsed)));
         binding.limitsCombinedProgress.setVisibility(combined ? View.VISIBLE : View.GONE);
         binding.limitsCombinedProgress.setProgress(LimitsUsage.percent(totalUsed, totalBudget));
+        Map<String, ExtraTimeAllowance> credits = com.subhub.app.remote.ExtraTimeRequests.allowances(
+                FeatureEditorSession.context(this), appRows.keySet(), now);
         Map<String, Double> order = new LinkedHashMap<>();
         for (Map.Entry<String, AppLimitRow> entry : appRows.entrySet()) {
             AppTimerManager.UsageSnapshot current = usage.get(entry.getKey());
@@ -511,8 +513,7 @@ public final class AppModeActivity extends AppCompatActivity {
             Integer draft = readMinutes(entry.getValue().allowance, true);
             int minutes = draft == null ? timers.allowanceMinutes(entry.getKey()) : draft;
             long budget = AppTimerManager.minutesToMillis(minutes);
-            ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(
-                    FeatureEditorSession.context(this), entry.getKey(), now);
+            ExtraTimeAllowance extra = credits.getOrDefault(entry.getKey(), ExtraTimeAllowance.NONE);
             long effectiveBudget = extra.individualBudget(budget);
             LimitsUsage state =
                     LimitsUsage.forApp(
