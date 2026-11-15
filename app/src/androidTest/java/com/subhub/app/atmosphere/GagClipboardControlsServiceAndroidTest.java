@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.view.InputDevice;
 import android.view.MotionEvent;
+import android.view.accessibility.AccessibilityWindowInfo;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.BySelector;
@@ -29,25 +30,36 @@ public final class GagClipboardControlsServiceAndroidTest {
 
     @Test public void editSavesPrivatelyWhileTapPastesAndHoldSlidesToPinOrDelete() throws Exception {
         openFixture(true);
+        shell("input text Draft");
+        assertEditor("Draft");
         openClipboard();
-        await(By.pkg(APP).text(label(R.string.gag_clipboard_edit))).click();
-        await(By.pkg(APP).text(GagEditorFixtureActivity.CLIPBOARD_TEXT)).click();
-        await(By.pkg(APP).clazz(android.widget.EditText.class)).setText(EDITED);
+        UiObject2 firstEdit = openEditPopup();
+        assertPopupAboveKeyboard(firstEdit);
+        firstEdit.setText("Discard this draft");
+        await(By.pkg(APP).text(label(android.R.string.cancel))).click();
+        assertPopupClosed();
+        assertEditor("Draft");
+
+        openClipboard();
+        UiObject2 secondEdit = openEditPopup();
+        assertEquals(GagEditorFixtureActivity.CLIPBOARD_TEXT, secondEdit.getText());
+        secondEdit.setText(EDITED);
         await(By.pkg(APP).text(label(R.string.gag_clipboard_save))).click();
-        assertEditor("");
+        assertPopupClosed();
+        assertEditor("Draft");
 
         openClipboard();
         slideTo(EDITED, label(R.string.gag_clipboard_pin));
         await(By.pkg(APP).text(label(R.string.gag_clipboard_pinned)));
         await(By.pkg(APP).text(EDITED)).click();
-        assertEditor(EDITED);
+        assertEditor("Draft" + EDITED);
 
         openClipboard();
         slideTo(EDITED, label(R.string.gag_clipboard_unpin));
         assertTrue(device().wait(Until.gone(By.pkg(APP).text(label(R.string.gag_clipboard_pinned))), TIMEOUT));
         slideTo(EDITED, label(R.string.delete));
         assertTrue(device().wait(Until.gone(By.pkg(APP).text(EDITED)), TIMEOUT));
-        assertEditor(EDITED);
+        assertEditor("Draft" + EDITED);
     }
 
     @Test public void numberPadSpaceHasNoVisibleLabelAndStillInsertsSpace() throws Exception {
@@ -77,6 +89,39 @@ public final class GagClipboardControlsServiceAndroidTest {
         if (!device().hasObject(tool)) await(editor()).click();
         await(tool).click();
         await(By.pkg(APP).text(label(R.string.gag_clipboard_title)));
+    }
+
+    private static UiObject2 openEditPopup() {
+        await(By.pkg(APP).text(label(R.string.gag_clipboard_edit))).click();
+        await(By.pkg(APP).text(GagEditorFixtureActivity.CLIPBOARD_TEXT)).click();
+        await(By.pkg(APP).clazz(android.widget.TextView.class).text(label(R.string.gag_clipboard_edit)));
+        return await(popupInput());
+    }
+
+    private static void assertPopupAboveKeyboard(UiObject2 input) {
+        await(By.pkg(APP).text("q"));
+        device().waitForIdle();
+        Rect panel = input.getParent().getVisibleBounds();
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        var keyboard = instrumentation.getUiAutomation().getWindows().stream()
+                .filter(window -> window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD)
+                .findFirst().orElseThrow(() -> new AssertionError("Keyboard window missing"));
+        Rect keyboardBounds = new Rect();
+        keyboard.getBoundsInScreen(keyboardBounds);
+        float density = instrumentation.getTargetContext().getResources().getDisplayMetrics().density;
+        assertTrue("Edit must have bounded floating dimensions: " + panel,
+                panel.width() <= Math.round(300 * density) && panel.height() <= Math.round(240 * density));
+        int gap = keyboardBounds.top - panel.bottom;
+        assertTrue("Edit must sit immediately above the keyboard: " + panel + " vs " + keyboardBounds,
+                gap >= 0 && gap <= Math.round(24 * density));
+    }
+
+    private static void assertPopupClosed() {
+        assertTrue(device().wait(Until.gone(popupInput()), TIMEOUT));
+    }
+
+    private static BySelector popupInput() {
+        return By.pkg(APP).clazz(android.widget.EditText.class);
     }
 
     private static void slideTo(String text, String action) {

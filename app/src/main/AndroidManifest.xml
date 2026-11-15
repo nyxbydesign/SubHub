@@ -158,6 +158,7 @@
 
         <activity android:name=".atmosphere.GagClipboardEditActivity"
             android:exported="false" android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Material.Dialog.NoActionBar"
             android:taskAffinity="" android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
 
         <activity

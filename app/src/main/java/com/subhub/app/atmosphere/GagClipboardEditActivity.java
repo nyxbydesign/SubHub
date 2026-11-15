@@ -1,26 +1,31 @@
 package com.subhub.app.atmosphere;
 
+import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import androidx.appcompat.app.AppCompatActivity;
+import android.widget.TextView;
 import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import com.subhub.app.R;
 
 /** Edits a history entry in isolation from the receiving app. */
-public final class GagClipboardEditActivity extends AppCompatActivity {
+public final class GagClipboardEditActivity extends Activity {
     private static Edit pending;
     private Edit editing;
     private EditText input;
@@ -57,20 +62,48 @@ public final class GagClipboardEditActivity extends AppCompatActivity {
             finish();
             return;
         }
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        var window = getWindow();
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        setFinishOnTouchOutside(false);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        int padding = Math.round(16 * getResources().getDisplayMetrics().density);
-        ViewCompat.setOnApplyWindowInsetsListener(content, (view, insets) -> {
-            var bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            view.setPadding(bars.left + padding, bars.top + padding, bars.right + padding, bars.bottom);
-            return insets;
-        });
+        int padding = dp(12);
+        content.setPadding(padding, padding, padding, dp(4));
+        var background = new GradientDrawable();
+        background.setColor(0xff252527);
+        background.setCornerRadius(dp(14));
+        content.setBackground(background);
+
+        TextView title = new TextView(this);
+        title.setText(R.string.gag_clipboard_edit);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(16);
+        ViewCompat.setAccessibilityHeading(title, true);
+        content.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        input = new EditText(this);
+        input.setHint(R.string.gag_clipboard_edit_text);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(GagClipboard.MAX_TEXT_LENGTH)});
+        input.setMinLines(2);
+        input.setMaxLines(3);
+        input.setTextSize(16);
+        input.setSaveEnabled(false);
+        input.setText(editing.draft);
+        input.setSelection(input.length());
+        content.addView(input, new LinearLayout.LayoutParams(-1, -2));
+
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END);
         content.addView(actions, new LinearLayout.LayoutParams(-1, -2));
         Button cancel = new Button(this);
+        cancel.setAllCaps(false);
         cancel.setText(android.R.string.cancel);
         cancel.setOnClickListener(view -> finish());
         actions.addView(cancel);
@@ -79,19 +112,19 @@ public final class GagClipboardEditActivity extends AppCompatActivity {
         save.setText(R.string.gag_clipboard_save);
         save.setOnClickListener(view -> save());
         actions.addView(save);
-        input = new EditText(this);
-        input.setHint(R.string.gag_clipboard_edit_text);
-        input.setGravity(Gravity.TOP | Gravity.START);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        input.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(GagClipboard.MAX_TEXT_LENGTH)});
-        input.setSaveEnabled(false);
-        input.setText(editing.draft);
-        input.setSelection(input.length());
-        content.addView(input, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(content);
+        WindowManager.LayoutParams popup = window.getAttributes();
+        popup.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        popup.width = dp(Math.min(300, Math.max(1, getResources().getConfiguration().screenWidthDp - 24)));
+        popup.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        popup.y = dp(8);
+        if (Build.VERSION.SDK_INT >= 30) popup.setFitInsetsTypes(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
+        window.setAttributes(popup);
         input.requestFocus();
+    }
+
+    private int dp(int size) {
+        return Math.round(size * getResources().getDisplayMetrics().density);
     }
 
     private void save() {
