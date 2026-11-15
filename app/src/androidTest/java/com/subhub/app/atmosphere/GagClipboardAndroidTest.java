@@ -31,6 +31,155 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class GagClipboardAndroidTest {
+    @Test public void acceptsOnlyNamedImagesInScreenshotDirectories() {
+        assertTrue(GagScreenshotClipboard.screenshot("Screenshot_20261122-102021.png", "image/png",
+                "Pictures/Screenshots/", true));
+        assertTrue(GagScreenshotClipboard.screenshot("Screenshot_20261122-102021_edited.jpg", "image/jpeg",
+                "DCIM/Screenshots/", true));
+        assertTrue(GagScreenshotClipboard.screenshot("Screenshot-123.webp", "image/webp",
+                "/storage/emulated/0/Pictures/Screenshots/Screenshot-123.webp", false));
+        assertFalse(GagScreenshotClipboard.screenshot("Screenshot_20261122-102021.png", "image/png",
+                "DCIM/Camera/", true));
+        assertFalse(GagScreenshotClipboard.screenshot("Family.png", "image/png", "Pictures/Screenshots/", true));
+        assertFalse(GagScreenshotClipboard.screenshot("Screenshot_1.png", "image/png",
+                "Pictures/Screenshots/Private/", true));
+        assertFalse(GagScreenshotClipboard.screenshot("Screenshot_1.png", "video/mp4",
+                "Pictures/Screenshots/", true));
+    }
+
+    @Test public void savedScreenshotRevisionReplacesByMediaRowAndRevocationKeepsCopiedText() {
+        GagClipboard history = new GagClipboard();
+        history.remember("Explicitly copied", 10L, 10L, 15L);
+        Uri row = Uri.parse("content://media/external_primary/images/media/42");
+        GagClipboardImage original = screenshotImage(0xff000011);
+        GagClipboardImage edited = screenshotImage(0xff9955cc);
+        var first = new GagScreenshotClipboard.Candidate(row, "image/png", 11L,
+                new GagScreenshotClipboard.Revision(1, original.bytes().length, 1));
+        var second = new GagScreenshotClipboard.Candidate(row, "image/png", 12L,
+                new GagScreenshotClipboard.Revision(1, edited.bytes().length, 2));
+        history.rememberScreenshot(new GagScreenshotClipboard.Import(first, original), 13L, 15L);
+        assertEquals(original, history.entries(15L).get(0).image());
+        history.rememberScreenshot(new GagScreenshotClipboard.Import(second, edited), 13L, 15L);
+        assertEquals(2, history.entries(15L).size());
+        assertEquals(edited, history.entries(15L).get(0).image());
+        assertEquals(second.revision(), history.screenshotRevisions(15L).get(row));
+        assertTrue(history.retainScreenshots(java.util.Set.of()));
+        assertEquals(1, history.entries(15L).size());
+        assertEquals("Explicitly copied", history.entries(15L).get(0).text());
+    }
+
+    @Test public void screenshotCaptureRequiresSeparateConsentAndCurrentFullPhotoGrant() {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String fixturePrefs = "gag_screenshot_access_test";
+        var grants = new java.util.HashSet<String>();
+        var scoped = new android.content.ContextWrapper(target) {
+            @Override public int checkSelfPermission(String permission) {
+                return grants.contains(permission) ? android.content.pm.PackageManager.PERMISSION_GRANTED
+                        : android.content.pm.PackageManager.PERMISSION_DENIED;
+            }
+
+            @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                assertEquals(GagScreenshotClipboard.PREFS, name);
+                return super.getSharedPreferences(fixturePrefs, mode);
+            }
+        };
+        target.deleteSharedPreferences(fixturePrefs);
+        try {
+            GagScreenshotClipboard.enable(scoped);
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                grants.add(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED);
+                assertEquals(GagScreenshotClipboard.Access.SELECTED, GagScreenshotClipboard.access(scoped));
+                GagScreenshotClipboard.enable(scoped);
+                assertFalse(GagScreenshotClipboard.enabled(scoped));
+            }
+            grants.add(GagScreenshotClipboard.requestedPermissions()[0]);
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            GagScreenshotClipboard.enable(scoped);
+            assertTrue(GagScreenshotClipboard.enabled(scoped));
+            grants.clear();
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+            GagScreenshotClipboard.disable(scoped);
+            grants.add(GagScreenshotClipboard.requestedPermissions()[0]);
+            assertFalse(GagScreenshotClipboard.enabled(scoped));
+        } finally { target.deleteSharedPreferences(fixturePrefs); }
+    }
+
+    @Test
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void mediaStorePublishesScreenshotAndReadsTheEditedBytesFromTheSameRow() throws Exception {
+        var context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        var resolver = context.getContentResolver();
+        var collection = android.provider.MediaStore.Images.Media.getContentUri(
+                android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        long enabledSince = System.currentTimeMillis() - 2_000L;
+        var values = new android.content.ContentValues();
+        values.put("_display_name", "Screenshot_fixture_" + java.util.UUID.randomUUID() + ".png");
+        values.put("mime_type", "image/png");
+        values.put("relative_path", "Pictures/Screenshots/");
+        values.put("is_pending", 1);
+        Uri row = resolver.insert(collection, values);
+        assertNotNull(row);
+        try {
+            GagClipboardImage original = screenshotImage(0xff229944);
+            GagClipboardImage edited = screenshotImage(0xff443388);
+            writeImage(resolver, row, original);
+            var pending = scanMedia(resolver, enabledSince, java.util.Map.of(), java.util.Set.of());
+            assertFalse("A pending image cannot enter the clipboard", pending.eligible().contains(row));
+            var published = new android.content.ContentValues();
+            published.put("is_pending", 0);
+            assertEquals(1, resolver.update(row, published, null, null));
+            var imported = scanMedia(resolver, enabledSince, java.util.Map.of(), java.util.Set.of());
+            var first = mediaImage(imported, row);
+            assertEquals(0xff229944, first.image().thumbnail().getPixel(6, 6));
+            writeImage(resolver, row, edited);
+            var revision = scanMedia(resolver, enabledSince,
+                    java.util.Map.of(row, first.media().revision()),
+                    java.util.Set.of(android.content.ContentUris.parseId(row)));
+            var changed = mediaImage(revision, row);
+            assertEquals(row, changed.media().uri());
+            assertEquals(0xff443388, changed.image().thumbnail().getPixel(6, 6));
+        } finally {
+            resolver.delete(row, null, null);
+        }
+        assertFalse(scanMedia(resolver, enabledSince, java.util.Map.of(), java.util.Set.of()).eligible().contains(row));
+    }
+
+    private static GagScreenshotClipboard.Scan scanMedia(android.content.ContentResolver resolver,
+            long enabledSince, java.util.Map<Uri, GagScreenshotClipboard.Revision> previous,
+            java.util.Set<Long> changed) {
+        var scan = GagScreenshotClipboard.scan(resolver, enabledSince, 0, System.currentTimeMillis(),
+                previous, java.util.Map.of(), changed, new android.os.CancellationSignal());
+        assertNotNull("Screenshot MediaStore query failed", scan);
+        return scan;
+    }
+
+    private static GagScreenshotClipboard.Import mediaImage(GagScreenshotClipboard.Scan scan, Uri row) {
+        var entry = scan.imported().stream().filter(item -> row.equals(item.media().uri())).findFirst();
+        assertTrue("Missing published screenshot from MediaStore", entry.isPresent());
+        return entry.get();
+    }
+
+    private static void writeImage(android.content.ContentResolver resolver, Uri row, GagClipboardImage image)
+            throws java.io.IOException {
+        try (var stream = resolver.openOutputStream(row, "rwt")) {
+            assertNotNull(stream);
+            stream.write(image.bytes());
+        }
+    }
+
+    private static GagClipboardImage screenshotImage(int color) {
+        Bitmap source = Bitmap.createBitmap(12, 12, Bitmap.Config.ARGB_8888);
+        ByteArrayOutputStream data = new ByteArrayOutputStream();
+        try {
+            source.eraseColor(color);
+            assertTrue(source.compress(Bitmap.CompressFormat.PNG, 100, data));
+            GagClipboardImage result = GagClipboardImage.decode(data.toByteArray(), new ClipDescription("", new String[]{"image/png"}));
+            assertNotNull(result);
+            return result;
+        } finally { source.recycle(); }
+    }
+
     @Test public void skipsSensitiveRichAndOversizedClips() {
         String plain = "  Hello world  ";
         assertEquals(plain, GagClipboard.plainText(ClipData.newPlainText("label", plain)));

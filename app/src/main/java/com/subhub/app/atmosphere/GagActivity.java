@@ -14,6 +14,7 @@ import android.widget.LinearLayout;
 import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
@@ -43,9 +44,20 @@ public final class GagActivity extends AppCompatActivity {
     private View dictionaryButton;
     private View dictionaryContent;
     private StateToggle learningEnabled;
+    private StateToggle screenshotClipboard;
+    private TextView screenshotClipboardStatus;
+    private boolean bindingScreenshotClipboard;
+    private boolean localSetup;
+    private final androidx.activity.result.ActivityResultLauncher<String[]> screenshotPermission =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
+                if (localSetup && requireRole()
+                        && GagScreenshotClipboard.access(this) == GagScreenshotClipboard.Access.FULL) {
+                    GagScreenshotClipboard.enable(this);
+                }
+                refreshScreenshotClipboard();
+            });
     private LinearLayout customWords;
     private EditText customWord;
-    private boolean localSetup;
     private boolean keyboardAvailable;
 
     public static boolean canSetUp(Context context) { return ProfileStore.mayEdit(context, false); }
@@ -69,6 +81,10 @@ public final class GagActivity extends AppCompatActivity {
             keyboardStatus = findViewById(R.id.gag_keyboard_status);
             keyboardAction = findViewById(R.id.gag_keyboard_settings);
             keyboardAction.setOnClickListener(view -> openKeyboardSetup());
+            screenshotClipboard = findViewById(R.id.gag_screenshot_clipboard);
+            screenshotClipboardStatus = findViewById(R.id.gag_screenshot_clipboard_status);
+            screenshotClipboard.setOnCheckedChangeListener((view, checked) -> changeScreenshotClipboard(checked));
+            refreshScreenshotClipboard();
             bindDictionary(state != null && state.getBoolean(DICTIONARY_EXPANDED));
         } else {
             bindEditor(findViewById(android.R.id.content));
@@ -105,6 +121,7 @@ public final class GagActivity extends AppCompatActivity {
         super.onResume();
         if (requireRole() && keyboardAction != null) {
             refreshKeyboardStatus();
+            refreshScreenshotClipboard();
             if (dictionaryContent.getVisibility() == View.VISIBLE) refreshDictionary();
         }
     }
@@ -154,6 +171,29 @@ public final class GagActivity extends AppCompatActivity {
             InputMethodManager manager = getSystemService(InputMethodManager.class);
             if (manager != null) manager.showInputMethodPicker();
         }
+    }
+
+    private void refreshScreenshotClipboard() {
+        if (screenshotClipboard == null) return;
+        var access = GagScreenshotClipboard.access(this);
+        if (access != GagScreenshotClipboard.Access.FULL) GagScreenshotClipboard.disable(this);
+        bindingScreenshotClipboard = true;
+        screenshotClipboard.setChecked(GagScreenshotClipboard.enabled(this));
+        bindingScreenshotClipboard = false;
+        screenshotClipboardStatus.setText(access == GagScreenshotClipboard.Access.SELECTED
+                ? R.string.gag_screenshot_clipboard_selected : R.string.gag_screenshot_clipboard_description);
+    }
+
+    private void changeScreenshotClipboard(boolean checked) {
+        if (bindingScreenshotClipboard || !requireRole()) return;
+        if (!checked) {
+            GagScreenshotClipboard.disable(this);
+        } else if (GagScreenshotClipboard.access(this) == GagScreenshotClipboard.Access.FULL) {
+            GagScreenshotClipboard.enable(this);
+        } else {
+            screenshotPermission.launch(GagScreenshotClipboard.requestedPermissions());
+        }
+        refreshScreenshotClipboard();
     }
 
     private void bindDictionary(boolean expanded) {

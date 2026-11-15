@@ -194,6 +194,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/atmosphere/GagClipboard.java": "main_atmosphere_gag_clipboard",
     b"app/src/main/java/com/subhub/app/atmosphere/GagClipboardFileProvider.java": "main_atmosphere_gag_clipboard_file_provider",
     b"app/src/main/java/com/subhub/app/atmosphere/GagClipboardImage.java": "main_atmosphere_gag_clipboard_image",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagScreenshotClipboard.java": "main_atmosphere_gag_screenshot_clipboard",
     b"app/src/main/java/com/subhub/app/atmosphere/GagNextWords.java": "main_atmosphere_gag_next_words",
     b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionContext.java": "main_atmosphere_gag_suggestion_context",
     b"app/src/main/java/com/subhub/app/atmosphere/GagSuggestionSpace.java": "main_atmosphere_gag_suggestion_space",

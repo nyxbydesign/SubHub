@@ -140,6 +140,12 @@ public final class GagKeyboardService extends InputMethodService {
     private long clipboardCaptureGeneration;
     private final Runnable expireClipboard = this::refreshClipboard;
     private final ClipboardManager.OnPrimaryClipChangedListener clipboardChanged = this::captureClipboard;
+    private final Runnable scanScreenshots = this::scanScreenshots;
+    private final java.util.Set<Long> changedScreenshots = new java.util.HashSet<>();
+    private android.database.ContentObserver screenshotObserver;
+    private android.os.CancellationSignal screenshotCancellation;
+    private java.util.concurrent.Future<?> screenshotTask;
+    private boolean screenshotRescan;
     private boolean clipboardVisible;
     private InputConnection clipboardConnection;
     private android.view.Window clipboardSecuredWindow;
@@ -1045,6 +1051,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (clipboardManager != null || !clipboardVisible || !editorAllowed) return;
         InputConnection input = getCurrentInputConnection();
         if (!clipboard.attach(input, getCurrentInputEditorInfo(), getPackageName())) return;
+        startScreenshotClipboard();
         refreshClipboard();
         clipboardManager = getSystemService(ClipboardManager.class);
         if (clipboardManager != null) {
@@ -1055,6 +1062,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void stopClipboard() {
         clipboardVisible = false;
+        stopScreenshotClipboard();
         if (clipboardManager != null) {
             clipboardManager.removePrimaryClipChangedListener(clipboardChanged);
             clipboardManager = null;
@@ -1070,7 +1078,112 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean clipboardRetention() {
-        return getSharedPreferences("gag_clipboard", MODE_PRIVATE).getBoolean("retention", true);
+        return GagScreenshotClipboard.preferences(this).getBoolean(GagScreenshotClipboard.RETENTION, true);
+    }
+
+    private void startScreenshotClipboard() {
+        if (GagScreenshotClipboard.access(this) != GagScreenshotClipboard.Access.FULL)
+            GagScreenshotClipboard.disable(this);
+        if (!clipboardAllowed() || !clipboardRetention() || !GagScreenshotClipboard.enabled(this)) return;
+        if (screenshotObserver == null) {
+            var observer = new android.database.ContentObserver(main) {
+                @Override public void onChange(boolean selfChange, Uri uri) {
+                    if (this != screenshotObserver) return;
+                    if (uri != null && changedScreenshots.size() < 24) {
+                        try { changedScreenshots.add(android.content.ContentUris.parseId(uri)); }
+                        catch (NumberFormatException ignored) { }
+                    }
+                    scheduleScreenshotScan();
+                }
+            };
+            try {
+                getContentResolver().registerContentObserver(
+                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer);
+                screenshotObserver = observer;
+            } catch (SecurityException unavailable) { return; }
+        }
+        scheduleScreenshotScan();
+    }
+
+    private void scheduleScreenshotScan() {
+        main.removeCallbacks(scanScreenshots);
+        main.postDelayed(scanScreenshots, 220);
+    }
+
+    private void scanScreenshots() {
+        if (!clipboardAllowed() || !clipboardRetention() || !GagScreenshotClipboard.enabled(this)) {
+            stopScreenshotClipboard();
+            refreshClipboard();
+            return;
+        }
+        if (screenshotTask != null) {
+            screenshotRescan = true;
+            return;
+        }
+        android.os.CancellationSignal cancellation = new android.os.CancellationSignal();
+        screenshotCancellation = cancellation;
+        var prefs = GagScreenshotClipboard.preferences(this);
+        long enabledSince = prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0);
+        long clearedThrough = prefs.getLong(GagScreenshotClipboard.CLEARED_THROUGH, 0);
+        long wallNow = System.currentTimeMillis();
+        var previous = clipboard.screenshotRevisions(android.os.SystemClock.elapsedRealtime());
+        var dismissed = GagScreenshotClipboard.dismissed(this, wallNow);
+        var changed = java.util.Set.copyOf(changedScreenshots);
+        changedScreenshots.clear();
+        try {
+            screenshotTask = clipboardImages.submit(() -> {
+                GagScreenshotClipboard.Scan result = GagScreenshotClipboard.enabled(this)
+                        ? GagScreenshotClipboard.scan(getContentResolver(), enabledSince,
+                                clearedThrough, wallNow, previous, dismissed, changed, cancellation) : null;
+                main.post(() -> applyScreenshotScan(cancellation, enabledSince, clearedThrough, result));
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            screenshotCancellation = null;
+            changedScreenshots.addAll(changed);
+        }
+    }
+
+    private void applyScreenshotScan(android.os.CancellationSignal cancellation, long enabledSince,
+            long clearedThrough, GagScreenshotClipboard.Scan result) {
+        if (screenshotCancellation != cancellation) return;
+        screenshotCancellation = null;
+        screenshotTask = null;
+        if (screenshotRescan) {
+            screenshotRescan = false;
+            scheduleScreenshotScan();
+        }
+        var prefs = GagScreenshotClipboard.preferences(this);
+        if (!clipboardAllowed() || !clipboardRetention()) return;
+        if (!GagScreenshotClipboard.enabled(this)) {
+            stopScreenshotClipboard();
+            refreshClipboard();
+            return;
+        }
+        if (enabledSince != prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0)
+                || clearedThrough != prefs.getLong(GagScreenshotClipboard.CLEARED_THROUGH, 0)) return;
+        if (result == null) return;
+        boolean removed = clipboard.retainScreenshots(result.eligible());
+        long now = System.currentTimeMillis();
+        long elapsed = android.os.SystemClock.elapsedRealtime();
+        for (var item : result.imported()) clipboard.rememberScreenshot(item, now, elapsed);
+        if (removed || !result.imported().isEmpty()) refreshClipboard();
+    }
+
+    private void stopScreenshotClipboard() {
+        main.removeCallbacks(scanScreenshots);
+        if (screenshotObserver != null) {
+            getContentResolver().unregisterContentObserver(screenshotObserver);
+            screenshotObserver = null;
+        }
+        if (screenshotCancellation != null) screenshotCancellation.cancel();
+        screenshotCancellation = null;
+        if (screenshotTask != null) {
+            screenshotTask.cancel(true);
+            screenshotTask = null;
+            clipboardImages.purge();
+        }
+        screenshotRescan = false;
+        changedScreenshots.clear();
     }
 
     private void cancelClipboardImage() {
@@ -1145,6 +1258,7 @@ public final class GagKeyboardService extends InputMethodService {
         int height = keyboard.getHeight();
         keyboard.setVisibility(View.GONE);
         keyboardHost.addView(clipboardPanel, new LinearLayout.LayoutParams(-1, height));
+        startScreenshotClipboard();
         captureClipboard();
     }
 
@@ -1177,6 +1291,7 @@ public final class GagKeyboardService extends InputMethodService {
     private void refreshClipboard() {
         main.removeCallbacks(expireClipboard);
         long now = android.os.SystemClock.elapsedRealtime();
+        if (!GagScreenshotClipboard.enabled(this)) clipboard.retainScreenshots(java.util.Set.of());
         List<GagClipboard.Entry> entries = clipboard.entries(now);
         long nextExpiry = Long.MAX_VALUE;
         for (GagClipboard.Entry entry : entries) nextExpiry = Math.min(nextExpiry, entry.expiresAt());
@@ -1213,7 +1328,7 @@ public final class GagKeyboardService extends InputMethodService {
         retention.setMinimumHeight(dp(42));
         clipboardPanel.addView(retention, new LinearLayout.LayoutParams(-1, -2));
         retention.setOnCheckedChangeListener((button, enabled) -> {
-            getSharedPreferences("gag_clipboard", MODE_PRIVATE).edit().putBoolean("retention", enabled).apply();
+            GagScreenshotClipboard.preferences(this).edit().putBoolean(GagScreenshotClipboard.RETENTION, enabled).apply();
             clearClipboardHistory();
         });
         android.widget.ScrollView scroll = new android.widget.ScrollView(clipboardPanel.getContext());
@@ -1256,6 +1371,11 @@ public final class GagKeyboardService extends InputMethodService {
                     if (!clipboardEditing) pasteClipboard(panel, input, entry);
                     else if (panel == clipboardPanel && clipboardAllowed()) {
                         clipboard.remove(entry);
+                        if (entry.screenshot() != null) {
+                            stopScreenshotClipboard();
+                            GagScreenshotClipboard.dismiss(this, entry.screenshot());
+                            startScreenshotClipboard();
+                        }
                         if (clipboard.entries(android.os.SystemClock.elapsedRealtime()).isEmpty()) clipboardEditing = false;
                         refreshClipboard();
                     }
@@ -1269,7 +1389,11 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearClipboardHistory() {
         cancelClipboardImage();
-        clipboard.clearThrough(System.currentTimeMillis());
+        stopScreenshotClipboard();
+        long now = System.currentTimeMillis();
+        clipboard.clearThrough(now);
+        GagScreenshotClipboard.clearThrough(this, now);
+        startScreenshotClipboard();
         GagClipboardFileProvider.retireAll(getApplicationContext());
         clipboardEditing = false;
         refreshClipboard();
@@ -1295,6 +1419,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private String clipboardTitle(GagClipboard.Entry entry) {
+        if (entry.screenshot() != null) return getString(R.string.gag_clipboard_screenshot);
         return entry.image() == null ? entry.text() : getString(R.string.gag_clipboard_image);
     }
 
@@ -1338,6 +1463,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void pasteClipboard(View panel, InputConnection input, GagClipboard.Entry entry) {
         if ((panel != null && panel != clipboardPanel) || !clipboardAllowed() || !clipboardRetention()
+                || (entry.screenshot() != null && !GagScreenshotClipboard.enabled(this))
                 || !clipboard.allows(input)
                 || !clipboard.entries(android.os.SystemClock.elapsedRealtime()).contains(entry)) return;
         if (entry.image() != null) {
@@ -1388,6 +1514,7 @@ public final class GagKeyboardService extends InputMethodService {
                     boolean accepted = false;
                     try {
                         if (epoch != editorEpoch || !clipboardAllowed() || !clipboardRetention() || !clipboard.allows(input)
+                                || (entry.screenshot() != null && !GagScreenshotClipboard.enabled(this))
                                 || !image.supports(editor) || !clipboard.entries(now).contains(entry)) return;
                         leaveWordLiteral();
                         clearDeletionHistory();
@@ -1418,6 +1545,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean showClipboardSuggestion(InputConnection input) {
+        if (!GagScreenshotClipboard.enabled(this)) clipboard.retainScreenshots(java.util.Set.of());
         if (!clipboardAllowed() || !clipboardRetention() || !isEmptyEditor(input)) return false;
         List<GagClipboard.Entry> entries = clipboard.entries(android.os.SystemClock.elapsedRealtime());
         if (entries.isEmpty()) return false;

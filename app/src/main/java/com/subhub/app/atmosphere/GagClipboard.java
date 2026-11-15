@@ -8,6 +8,8 @@ import android.view.inputmethod.InputConnection;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /** Bounded IME-process history with a separate lease on the visible editor. */
 final class GagClipboard {
@@ -19,7 +21,8 @@ final class GagClipboard {
     private InputConnection attachedEditor;
     private long clearedThrough;
 
-    record Entry(String text, GagClipboardImage image, long copiedAt, long expiresAt) {}
+    record Entry(String text, GagClipboardImage image, long copiedAt, long expiresAt,
+            GagScreenshotClipboard.Candidate screenshot) {}
 
     boolean attach(InputConnection editor, EditorInfo info, String keyboardPackage) {
         attachedEditor = GagEditorPolicy.allowsReplacement(info, keyboardPackage) ? editor : null;
@@ -75,15 +78,31 @@ final class GagClipboard {
     }
 
     private void remember(String text, GagClipboardImage image, long copiedAt, long wallNow, long elapsedNow) {
+        remember(text, image, copiedAt, wallNow, elapsedNow, null);
+    }
+
+    void rememberScreenshot(GagScreenshotClipboard.Import item, long wallNow, long elapsedNow) {
+        remember(null, item.image(), item.media().savedAt(), wallNow, elapsedNow, item.media());
+    }
+
+    private void remember(String text, GagClipboardImage image, long copiedAt, long wallNow, long elapsedNow,
+            GagScreenshotClipboard.Candidate screenshot) {
         removeExpired(elapsedNow);
         long age = wallNow - copiedAt;
         if (!eligibleTimestamp(copiedAt) || age < 0 || age >= LIFETIME_MS) return;
-        for (Entry entry : history)
-            if (sameItem(entry, text, image) && entry.copiedAt() >= copiedAt) return;
+        if (screenshot != null) {
+            // Revisions from one media row occupy a single slot. A manually copied image
+            // remains independently authorized if screenshot access later changes.
+            history.removeIf(entry -> entry.screenshot() != null && entry.screenshot().uri().equals(screenshot.uri()));
+        }
+        for (Entry entry : history) {
+            if (sameItem(entry, text, image)
+                    && (entry.copiedAt() >= copiedAt || (screenshot != null && entry.screenshot() == null))) return;
+        }
         history.removeIf(entry -> sameItem(entry, text, image));
         int position = 0;
         while (position < history.size() && history.get(position).copiedAt() > copiedAt) position++;
-        history.add(position, new Entry(text, image, copiedAt, elapsedNow + LIFETIME_MS - age));
+        history.add(position, new Entry(text, image, copiedAt, elapsedNow + LIFETIME_MS - age, screenshot));
         if (history.size() > MAX_ITEMS) history.remove(history.size() - 1);
     }
 
@@ -96,6 +115,19 @@ final class GagClipboard {
         return List.copyOf(history);
     }
 
+    Map<Uri, GagScreenshotClipboard.Revision> screenshotRevisions(long now) {
+        removeExpired(now);
+        Map<Uri, GagScreenshotClipboard.Revision> revisions = new java.util.HashMap<>();
+        for (Entry entry : history) {
+            if (entry.screenshot() != null) revisions.put(entry.screenshot().uri(), entry.screenshot().revision());
+        }
+        return Map.copyOf(revisions);
+    }
+
+    boolean retainScreenshots(Set<Uri> eligible) {
+        return history.removeIf(entry -> entry.screenshot() != null && !eligible.contains(entry.screenshot().uri()));
+    }
+
     void clear() { history.clear(); }
 
     void clearThrough(long copiedAt) {
@@ -104,7 +136,8 @@ final class GagClipboard {
     }
 
     void remove(Entry entry) {
-        if (history.remove(entry)) clearedThrough = Math.max(clearedThrough, entry.copiedAt());
+        if (history.remove(entry) && entry.screenshot() == null)
+            clearedThrough = Math.max(clearedThrough, entry.copiedAt());
     }
 
     private void removeExpired(long now) {

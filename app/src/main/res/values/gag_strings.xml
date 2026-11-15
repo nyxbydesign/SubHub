@@ -65,6 +65,10 @@
     <string name="gag_clipboard_title">Clipboard</string>
     <string name="gag_clipboard_recent">Recent</string>
     <string name="gag_clipboard_retention">Keep recent items for up to 6 hours</string>
+    <string name="gag_screenshot_clipboard">Add screenshots to clipboard</string>
+    <string name="gag_screenshot_clipboard_description">Android photo access lets Gagging add newly saved screenshots and edits. Clipboard history must be on.</string>
+    <string name="gag_screenshot_clipboard_selected">Android allowed selected photos only. Allow all photos to add future screenshots automatically.</string>
+    <string name="gag_clipboard_screenshot">Screenshot</string>
     <string name="gag_clipboard_edit">Edit</string>
     <string name="gag_clipboard_done">Done</string>
     <string name="gag_clipboard_image">Image</string>

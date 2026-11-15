@@ -11,4 +11,8 @@
     <string name="shortcut_start_protection">Enter Service</string><string name="shortcut_start_protection_long">Enter SubHub service</string>
     <string name="gag_keyboard_undo">Rückgängig</string>
     <string name="gag_keyboard_redo">Wiederholen</string>
+    <string name="gag_screenshot_clipboard">Screenshots zur Zwischenablage hinzufügen</string>
+    <string name="gag_screenshot_clipboard_description">Mit dem Fotozugriff von Android kann Gagging neue Screenshots und gespeicherte Bearbeitungen hinzufügen. Der Zwischenablageverlauf muss eingeschaltet sein.</string>
+    <string name="gag_screenshot_clipboard_selected">Android hat nur ausgewählte Fotos freigegeben. Erlaube den Zugriff auf alle Fotos, um neue Screenshots automatisch hinzuzufügen.</string>
+    <string name="gag_clipboard_screenshot">Screenshot</string>
 </resources>
