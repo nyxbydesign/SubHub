@@ -22,6 +22,8 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import com.subhub.app.R;
 
 /** Edits a history entry in isolation from the receiving app. */
@@ -34,6 +36,7 @@ public final class GagClipboardEditActivity extends Activity {
         final GagClipboard clipboard;
         final GagClipboard.Entry entry;
         String draft;
+        boolean requestedKeyboard;
 
         Edit(GagClipboard clipboard, GagClipboard.Entry entry) {
             this.clipboard = clipboard;
@@ -121,6 +124,17 @@ public final class GagClipboardEditActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 30) popup.setFitInsetsTypes(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
         window.setAttributes(popup);
         input.requestFocus();
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (!focused || input == null || editing.requestedKeyboard) return;
+        input.post(() -> {
+            if (editing.requestedKeyboard || isFinishing() || isDestroyed()
+                    || !input.isAttachedToWindow() || !input.hasWindowFocus() || !input.requestFocus()) return;
+            editing.requestedKeyboard = true;
+            WindowCompat.getInsetsController(getWindow(), input).show(WindowInsetsCompat.Type.ime());
+        });
     }
 
     private int dp(int size) {

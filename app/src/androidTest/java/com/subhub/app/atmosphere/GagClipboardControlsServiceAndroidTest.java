@@ -38,7 +38,10 @@ public final class GagClipboardControlsServiceAndroidTest {
         openClipboard();
         UiObject2 firstEdit = openEditPopup();
         assertPopupAboveKeyboard(firstEdit);
-        firstEdit.setText("Discard this draft");
+        UiObject2 key = await(By.pkg(APP).text(java.util.regex.Pattern.compile("[qQ]")));
+        String letter = key.getText();
+        key.click();
+        await(popupInput().text(GagEditorFixtureActivity.CLIPBOARD_TEXT + letter));
         await(By.pkg(APP).text(label(android.R.string.cancel))).click();
         assertPopupClosed();
         assertEditor("Draft");
@@ -127,7 +130,7 @@ public final class GagClipboardControlsServiceAndroidTest {
             panel = input.getParent().getVisibleBounds();
             keyboardBounds = inputMethodBounds();
             int gap = keyboardBounds.top - panel.bottom;
-            if (!panel.isEmpty() && panel.width() <= Math.round(300 * density)
+            if (input.isFocused() && !panel.isEmpty() && panel.width() <= Math.round(300 * density)
                     && panel.height() <= Math.round(240 * density) && !keyboardBounds.isEmpty()
                     && gap >= 0 && gap <= Math.round(24 * density)) return;
             SystemClock.sleep(100);
