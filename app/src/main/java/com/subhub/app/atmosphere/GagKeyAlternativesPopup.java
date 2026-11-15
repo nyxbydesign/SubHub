@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** A held key can slide into an option or release and tap it explicitly. */
+/** A held key commits an alternate when the finger slides onto it and releases. */
 final class GagKeyAlternativesPopup {
     private static final int PANEL_COLOR = 0xff363638;
     private static final int PANEL_BORDER = 0xff515156;
@@ -27,7 +27,6 @@ final class GagKeyAlternativesPopup {
     private PopupWindow popup;
     private View heldKey;
     private Button highlighted;
-    private boolean leftHeldKey;
 
     GagKeyAlternativesPopup(View keyboard) {
         this.keyboard = keyboard;
@@ -42,12 +41,11 @@ final class GagKeyAlternativesPopup {
         int inset = Math.min(dp(4), (Math.min(window.width(), window.height()) - 1) / 2);
         int availableWidth = window.width() - 2 * inset;
         int availableHeight = window.height() - 2 * inset;
-        int cell = Math.min(dp(48), availableWidth);
-        int minimumColumns = Math.min(choices.size(), Math.max(1, availableWidth / cell));
-        int rows = (choices.size() + minimumColumns - 1) / minimumColumns;
-        if (availableHeight < rows) return false;
+        int rows = choices.size() > 5 ? 2 : 1;
         int columns = (choices.size() + rows - 1) / rows;
-        int heightPerRow = Math.min(dp(48), availableHeight / rows);
+        int cell = Math.min(dp(44), availableWidth / columns);
+        int heightPerRow = Math.min(dp(rows == 2 ? 40 : 46), availableHeight / rows);
+        if (cell == 0 || heightPerRow == 0) return false;
         int width = columns * cell + 2 * inset;
         int height = rows * heightPerRow + 2 * inset;
         LinearLayout content = new LinearLayout(key.getContext());
@@ -58,6 +56,7 @@ final class GagKeyAlternativesPopup {
         background.setStroke(dp(1), PANEL_BORDER);
         for (int index = 0; index < choices.size(); ) {
             LinearLayout row = new LinearLayout(key.getContext());
+            row.setGravity(Gravity.CENTER_HORIZONTAL);
             content.addView(row, new LinearLayout.LayoutParams(-1, heightPerRow));
             for (int column = 0; column < columns && index < choices.size(); column++, index++) {
                 String choice = choices.get(index);
@@ -65,6 +64,7 @@ final class GagKeyAlternativesPopup {
                 button.setText(choice);
                 button.setAllCaps(false);
                 button.setTextSize(20);
+                button.setIncludeFontPadding(false);
                 button.setGravity(Gravity.CENTER);
                 button.setPadding(0, 0, 0, 0);
                 button.setMinimumWidth(0);
@@ -144,13 +144,11 @@ final class GagKeyAlternativesPopup {
         popup = null;
         heldKey = null;
         highlighted = null;
-        leftHeldKey = false;
         buttons.clear();
     }
 
     void highlight(View key, MotionEvent event, int pointer) {
-        leftHeldKey |= !overKey(key, event, pointer);
-        Button active = leftHeldKey ? optionAt(key, event, pointer) : null;
+        Button active = overKey(key, event, pointer) ? null : optionAt(key, event, pointer);
         if (active == highlighted) return;
         if (highlighted != null) highlighted.setSelected(false);
         highlighted = active;
@@ -158,9 +156,7 @@ final class GagKeyAlternativesPopup {
     }
 
     void release(View key, MotionEvent event, int pointer) {
-        // Releasing a stationary hold leaves the panel available for explicit taps or accessibility.
-        if (!leftHeldKey && overKey(key, event, pointer)) return;
-        Button active = optionAt(key, event, pointer);
+        Button active = overKey(key, event, pointer) ? null : optionAt(key, event, pointer);
         if (active != null) active.performClick();
         else dismiss();
     }

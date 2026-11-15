@@ -10,13 +10,19 @@ import org.junit.Test;
 public final class GagKeyAlternativesTest {
     @Test public void lettersKeepTheirHintAndExposeAccentsWithShift() {
         assertEquals(List.of("1"), GagKeyAlternatives.forLetter("q", "1", false));
-        assertEquals("@", GagKeyAlternatives.forLetter("a", "@", false).get(0));
-        assertTrue(GagKeyAlternatives.forLetter("a", "@", false).contains("ä"));
-        assertTrue(GagKeyAlternatives.forLetter("o", "9", false).contains("ö"));
-        assertTrue(GagKeyAlternatives.forLetter("u", "7", false).contains("ü"));
-        assertTrue(GagKeyAlternatives.forLetter("s", "#", false).contains("ß"));
-        assertTrue(GagKeyAlternatives.forLetter("a", "@", true).contains("Ä"));
-        assertTrue(GagKeyAlternatives.forLetter("s", "#", true).contains("ẞ"));
+        assertLetter("a", "@", "àáâäæãåā", "ÀÁÂÄÆÃÅĀ");
+        assertLetter("c", "'", "ç", "Ç");
+        assertLetter("e", "3", "éèêëēė", "ÉÈÊËĒĖ");
+        assertLetter("i", "8", "íîïīì", "ÍÎÏĪÌ");
+        assertLetter("n", "!", "ñń", "ÑŃ");
+        assertLetter("o", "9", "óôöòœøōõ", "ÓÔÖÒŒØŌÕ");
+        assertLetter("s", "#", "ßśš", "ẞŚŠ");
+        assertLetter("u", "7", "úûüùū", "ÚÛÜÙŪ");
+    }
+
+    private static void assertLetter(String key, String hint, String lowercase, String uppercase) {
+        assertEquals(hint + lowercase, String.join("", GagKeyAlternatives.forLetter(key, hint, false)));
+        assertEquals(hint + uppercase, String.join("", GagKeyAlternatives.forLetter(key, hint, true)));
     }
 
     @Test public void bothSymbolPagesHoldUsableAlternates() {

@@ -135,17 +135,44 @@ public final class GagSuggestionServiceAndroidTest {
 
     @Test public void longPressInsertsAlternativesFromLettersAndBothSymbolPages() throws Exception {
         openEditor(false);
-        await(By.pkg("com.subhub.app").text("a")).longClick();
-        key("ä");
+        holdAndRelease("a", "ä", true);
         assertText("ä");
         keyDescription(R.string.gag_keyboard_symbols);
-        await(By.pkg("com.subhub.app").text("1")).longClick();
-        key("⅒");
+        holdAndRelease("1", "⅒", true);
         assertText("ä⅒");
         keyDescription(R.string.gag_keyboard_more_symbols);
-        await(By.pkg("com.subhub.app").text("•")).longClick();
-        key("·");
+        holdAndRelease("•", "·", true);
         assertText("ä⅒·");
+    }
+
+    @Test public void oneOptionHoldCancelsInPlaceAndOnlyAReleasedSlideInsertsIt() throws Exception {
+        openEditor(false);
+        holdAndRelease("q", "1", false);
+        assertText("");
+        key("q");
+        assertText("q");
+        holdAndRelease("q", "1", true);
+        assertText("q1");
+    }
+
+    private static void holdAndRelease(String key, String option, boolean slide) {
+        Rect anchor = await(By.pkg("com.subhub.app").text(key)).getVisibleBounds();
+        // The same character can appear as a passive hint on the letter key.
+        var choice = By.clazz(android.widget.Button.class).pkg("com.subhub.app").text(option);
+        long down = SystemClock.uptimeMillis();
+        touch(down, MotionEvent.ACTION_DOWN, anchor.centerX(), anchor.centerY());
+        Rect target = anchor;
+        try {
+            Rect optionBounds = await(choice).getVisibleBounds();
+            if (slide) {
+                target = optionBounds;
+                touch(down, MotionEvent.ACTION_MOVE, target.centerX(), target.centerY());
+                await(By.clazz(android.widget.Button.class).pkg("com.subhub.app").text(option).selected(true));
+            }
+        } finally {
+            touch(down, MotionEvent.ACTION_UP, target.centerX(), target.centerY());
+        }
+        assertTrue(device().wait(Until.gone(choice), TIMEOUT_MS));
     }
 
     @Test public void characterPreviewTracksTouchAndDoesNotCommitOnSlideOrCancel() throws Exception {

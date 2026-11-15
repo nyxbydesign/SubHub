@@ -67,6 +67,7 @@ public final class GagKeyAlternativesAndroidTest {
             var middle = device.findObject(By.text("ä"));
             assertNotNull(middle);
             Rect middleOption = middle.getVisibleBounds();
+            assertTrue("The first and last five options use separate rows", middleOption.bottom <= edgeOption.top);
             touch(automation, down, MotionEvent.ACTION_MOVE, middleOption.centerX(), middleOption.centerY());
             assertNotNull(device.wait(Until.findObject(By.text("ä").selected(true)), 5_000L));
             touch(automation, down, MotionEvent.ACTION_MOVE, edgeOption.centerX(), edgeOption.centerY());
@@ -103,8 +104,8 @@ public final class GagKeyAlternativesAndroidTest {
             var umlaut = device.wait(Until.findObject(By.text("ä")), 5_000L);
             assertNotNull(umlaut);
             touch(automation, down, MotionEvent.ACTION_UP, keyBounds.centerX(), keyBounds.centerY());
-            umlaut.click();
-            host.onActivity(activity -> assertEquals(List.of("a", "ā", "ä"), output));
+            assertTrue(device.wait(Until.gone(By.text("ä")), 5_000L));
+            host.onActivity(activity -> assertEquals(List.of("a", "ā"), output));
         }
     }
 

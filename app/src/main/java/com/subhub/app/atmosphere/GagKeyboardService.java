@@ -905,13 +905,13 @@ public final class GagKeyboardService extends InputMethodService {
     private void renderDigits(LinearLayout row, String digits) {
         for (int i = 0; i < digits.length(); i++) {
             String digit = digits.substring(i, i + 1);
-            bindCharacterPress(key(row, digit, 1, LETTER_SURFACE, 26, () -> type(digit)), null, null);
+            bindCharacterPress(key(row, digit, 1, LETTER_SURFACE, 26, () -> type(digit)), null);
         }
     }
 
     private void renderNumericSymbol(LinearLayout row, String symbol) {
         if (symbol.isEmpty()) spacer(row, 1f);
-        else bindCharacterPress(key(row, symbol, 1f, MODIFIER_SURFACE, 24, () -> type(symbol)), null, null);
+        else bindCharacterPress(key(row, symbol, 1f, MODIFIER_SURFACE, 24, () -> type(symbol)), null);
     }
 
     private void pageKey(LinearLayout row, String title, float weight, int description, Page target) {
@@ -1662,7 +1662,7 @@ public final class GagKeyboardService extends InputMethodService {
         addKeySlot(row, cap, 1);
         Button button = makeKey(row.getContext(), label, LETTER_SURFACE, 26, () ->
                 type(shifted ? label.toUpperCase(Locale.ROOT) : label));
-        bindCharacterPress(button, () -> GagKeyAlternatives.forLetter(label, alternate, shifted), alternate);
+        bindCharacterPress(button, () -> GagKeyAlternatives.forLetter(label, alternate, shifted));
         cap.addView(button, new FrameLayout.LayoutParams(-1, -1));
         TextView hint = new TextView(row.getContext());
         hint.setText(alternate);
@@ -1679,23 +1679,19 @@ public final class GagKeyboardService extends InputMethodService {
     private Button symbolKey(LinearLayout row, String label, int surface, int textSize) {
         Button button = key(row, label, 1f, surface, textSize, () -> type(label));
         List<String> choices = GagKeyAlternatives.forSymbol(label);
-        bindCharacterPress(button, choices.isEmpty() ? null : () -> choices, null);
+        bindCharacterPress(button, choices.isEmpty() ? null : () -> choices);
         return button;
     }
 
-    private void bindCharacterPress(Button button, java.util.function.Supplier<List<String>> choices, String direct) {
+    private void bindCharacterPress(Button button, java.util.function.Supplier<List<String>> choices) {
         GagKeyPress press = new GagKeyPress(main, null, keyPreviewAllowed ? keyPreview : null);
         press.setAlternatives(keyAlternatives);
         button.setOnTouchListener(press);
         if (choices == null) return;
         button.setOnLongClickListener(view -> {
             keyPreview.dismiss();
-            List<String> options = choices.get();
-            if (direct != null && options.size() == 1) {
-                type(direct);
-                return true;
-            }
-            return keyAlternatives != null && keyAlternatives.show(view, options, this::type);
+            keyAlternatives.show(view, choices.get(), this::type);
+            return true;
         });
     }
 

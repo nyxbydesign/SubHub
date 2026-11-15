@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** Hold alternatives for the keyboard's English QWERTY layout and symbol pages. */
+/** Hold alternatives for the keyboard's shared English and German QWERTY layout. */
 final class GagKeyAlternatives {
     private GagKeyAlternatives() {}
 
@@ -12,11 +12,11 @@ final class GagKeyAlternatives {
         String accents = switch (letter) {
             case "a" -> "àáâäæãåā";
             case "c" -> "ç";
-            case "e" -> "éèêëē";
+            case "e" -> "éèêëēė";
             case "i" -> "íîïīì";
-            case "n" -> "ñ";
+            case "n" -> "ñń";
             case "o" -> "óôöòœøōõ";
-            case "s" -> "ß";
+            case "s" -> "ßśš";
             case "u" -> "úûüùū";
             default -> "";
         };
