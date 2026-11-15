@@ -2,7 +2,7 @@ package com.subhub.app.detection;
 
 /** Monotonic foreground inactivity, independent of capture or inference progress. */
 public final class PipelineIdlePolicy {
-    public static final long HIGH_GRACE_MILLIS = 3 * 60 * 1000L;
+    public static final long HIGH_GRACE_MILLIS = 30_000L;
     private long inactiveSince = -1;
 
     public long delayMillis(boolean active, boolean high, boolean powerSave, long now) {
