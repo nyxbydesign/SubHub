@@ -602,13 +602,16 @@ public class TaskEngineTest {
             engine.apply(outcome, outcome.domAction());
             assertFalse(engine.apply(outcome, outcome.domAction()));
             engine.apply(action("ignored-timeout", task, TIMEOUT, end + 200), false);
-            assertEquals(kind.name(), entered, replay(engine).occurrence(task.id, DATE, end + 1000).historyEnteredAt);
+            TaskEngine.Occurrence original = replay(engine).occurrence(task.id, DATE, end + 1000);
+            assertEquals(kind.name(), entered, original.historyEnteredAt);
+            assertEquals(kind.name(), entered, original.outcomeAt);
             // Cancellation may change the outcome, but a backdated action must not rewrite its first entry.
             engine.apply(action("cancel-after-outcome", task, CANCEL_ONCE, start + 1), true);
             engine.apply(action("ignored-offline-proof", task, OUTSIDE, start + 2), false);
             TaskEngine.Occurrence restored = replay(engine).occurrence(task.id, DATE, end + 1000);
             assertEquals(CANCELLED, restored.status);
             assertEquals(entered, restored.historyEnteredAt);
+            assertEquals(outcome.cancellation() ? entered : start + 1, restored.outcomeAt);
             assertNull(restored.submission);
             assertEquals(1, engine.json().length());
         }
@@ -659,6 +662,7 @@ public class TaskEngineTest {
             TaskEngine.Occurrence row = restored.occurrence(task.id, date, cancelled);
             assertEquals(CANCELLED, row.status);
             assertEquals(cancelled, row.historyEnteredAt);
+            assertEquals(cancelled, row.outcomeAt);
             assertNull(row.submission);
         }
         // A suppressed future date has no History card until an action actually records that date.
@@ -720,6 +724,7 @@ public class TaskEngineTest {
             assertEquals(CANCELLED, row.status);
             assertNull(row.submission);
             assertEquals(reviewFirst ? review.at : cancel.at, row.historyEnteredAt);
+            assertEquals(cancel.at, row.outcomeAt);
             assertEquals(RemoteProtocol.canonical(engine.json()), RemoteProtocol.canonical(restored.json()));
         }
     }

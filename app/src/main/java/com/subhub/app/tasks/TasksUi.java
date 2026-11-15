@@ -26,7 +26,11 @@ final class TasksUi {
         TextView title = PersonUi.text(card, task.title, true);
         title.setTextSize(24);
         ViewCompat.setAccessibilityHeading(title, true);
-        if (statusLabel != 0) badge(card, context.getString(statusLabel));
+        boolean inline = statusLabel != 0 && switch (occurrence.status) {
+            case SCHEDULED, TIMED_OUT, CANCELLED -> true;
+            default -> false;
+        };
+        if (statusLabel != 0 && !inline) badge(card, context.getString(statusLabel));
 
         ZonedDateTime start = task.start(occurrence.date).atZone(task.zone);
         ZonedDateTime end = task.end(occurrence.date).atZone(task.zone);
@@ -37,7 +41,9 @@ final class TasksUi {
         if (task.recurring()) {
             schedule = context.getString(R.string.tasks_window_with_days, schedule, scheduleDays(context, task.weekdays));
         }
-        TextView window = PersonUi.text(card, schedule, false);
+        TextView window = inline
+                ? inlineTiming(card, context.getString(statusLabel), schedule, "task_detail_status:" + occurrence.id)
+                : PersonUi.text(card, schedule, false);
         window.setTag("task_window:" + occurrence.id);
         window.setTextColor(context.getColor(R.color.accent_text));
         window.setTypeface(null, Typeface.BOLD);
@@ -101,25 +107,28 @@ final class TasksUi {
     }
 
     static void previewTiming(LinearLayout copy, String id, String status, String timing) {
-        Context context = copy.getContext();
-        PreviewTiming row = new PreviewTiming(context);
-        copy.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        inlineTiming(copy, status, timing, "task_preview_status:" + id).setTag("task_preview_timing:" + id);
+    }
+
+    private static TextView inlineTiming(LinearLayout parent, String status, String timing, String badgeTag) {
+        LinearLayout row = new InlineTiming(parent.getContext());
+        parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         TextView badge = badge(row, status);
-        badge.setTag("task_preview_status:" + id);
+        badge.setTag(badgeTag);
         LinearLayout.LayoutParams badgeSize = (LinearLayout.LayoutParams) badge.getLayoutParams();
         badgeSize.topMargin = 0;
         badgeSize.bottomMargin = 0;
         TextView date = PersonUi.text(row, timing, false);
         date.setPadding(0, 0, 0, 0);
         date.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
-        date.setTag("task_preview_timing:" + id);
+        return date;
     }
 
     /** Keep the badge beside the date unless the date needs more than two lines at that width. */
-    private static final class PreviewTiming extends LinearLayout {
+    private static final class InlineTiming extends LinearLayout {
         private final int inlineGap, stackedGap;
 
-        PreviewTiming(Context context) {
+        InlineTiming(Context context) {
             super(context);
             inlineGap = PersonUi.dp(context, 8);
             stackedGap = PersonUi.dp(context, 4);

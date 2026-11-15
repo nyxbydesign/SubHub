@@ -33,7 +33,6 @@
     <string name="tasks_scheduled">Scheduled</string>
     <string name="tasks_pending">Pending review</string>
     <string name="tasks_history">History</string>
-    <string name="tasks_accepted">Accepted</string>
     <string name="tasks_denied">Denied</string>
     <string name="tasks_timed_out">Expired</string>
     <string name="tasks_skipped">Skipped</string>

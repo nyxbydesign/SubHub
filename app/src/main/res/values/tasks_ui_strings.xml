@@ -40,7 +40,6 @@
     <string name="tasks_cancel_confirm">Cancel “%1$s”?</string>
     <string name="tasks_cancelled">Cancelled</string>
     <string name="tasks_approved">Approved</string>
-    <string name="tasks_declined">Declined</string>
     <string name="tasks_submission_timestamp">Submitted %1$s</string>
     <string name="tasks_cancel_update">Update both devices to cancel tasks.</string>
 </resources>

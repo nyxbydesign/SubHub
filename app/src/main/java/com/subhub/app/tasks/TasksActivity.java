@@ -379,13 +379,14 @@ public final class TasksActivity extends RolePage {
         DateTimeFormatter dateTime = TasksUi.shortDateTime(this);
         for (TaskEngine.Occurrence occurrence : visible) {
             DateTimeFormatter display = dateTime.withZone(occurrence.task.zone);
-            String timing = getString(occurrence.status == TaskEngine.Status.SCHEDULED
-                    ? R.string.tasks_starts : R.string.tasks_due,
-                    display.format(occurrence.status == TaskEngine.Status.SCHEDULED
-                            ? occurrence.task.start(occurrence.date) : occurrence.task.end(occurrence.date)));
+            String timing = switch (occurrence.status) {
+                case SCHEDULED -> getString(R.string.tasks_starts, display.format(occurrence.task.start(occurrence.date)));
+                case ACTIVE -> getString(R.string.tasks_due, display.format(occurrence.task.end(occurrence.date)));
+                case PENDING -> display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at));
+                default -> display.format(java.time.Instant.ofEpochMilli(occurrence.outcomeAt));
+            };
             List<Object> signature = java.util.Arrays.asList(state.scope, state.dom,
-                    occurrence.task.title, timing, occurrence.status,
-                    occurrence.submission == null ? null : occurrence.submission.at);
+                    occurrence.task.title, timing, occurrence.status);
             shownCards.add(occurrence.id);
             TaskCard previous = taskCards.get(occurrence.id);
             if (previous != null && signature.equals(previous.signature)) {
@@ -395,16 +396,14 @@ public final class TasksActivity extends RolePage {
             LinearLayout card = PersonUi.card(body);
             card.setTag("task:" + occurrence.id);
             taskCards.put(occurrence.id, new TaskCard(card, signature));
-            int previewStatus = occurrence.status == TaskEngine.Status.ACCEPTED ? R.string.tasks_approved
-                    : occurrence.status == TaskEngine.Status.DENIED ? R.string.tasks_declined : statusLabel(occurrence.status);
+            String status = getString(statusLabel(occurrence.status));
             PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, "", () -> {
                 if (model.busy || model.loading) return;
                 model.selected = occurrence.id;
                 model.proofAttachments = false;
                 render(); scrollTop();
-            }, copy -> TasksUi.previewTiming(copy, occurrence.id, getString(previewStatus), timing))
+            }, copy -> TasksUi.previewTiming(copy, occurrence.id, status, timing))
                     .setTag("task_open:" + occurrence.id);
-            if (occurrence.inHistory()) completionTime(card, occurrence);
         }
     }
 
@@ -770,7 +769,7 @@ public final class TasksActivity extends RolePage {
             case ACTIVE: return R.string.tasks_active;
             case SCHEDULED: return R.string.tasks_scheduled;
             case PENDING: return R.string.tasks_pending;
-            case ACCEPTED: return R.string.tasks_accepted;
+            case ACCEPTED: return R.string.tasks_approved;
             case DENIED: return R.string.tasks_denied;
             case TIMED_OUT: return R.string.tasks_timed_out;
             case SKIPPED: return R.string.tasks_skipped;

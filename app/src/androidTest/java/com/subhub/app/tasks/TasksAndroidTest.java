@@ -555,9 +555,9 @@ public final class TasksAndroidTest {
             TaskAction last = TaskAction.parse(actions.getJSONObject(actions.length() - 1));
             assertEquals(TaskAction.Kind.ACCEPT, last.kind);
             assertEquals(submitted.id, last.submissionId);
-            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_accepted);
+            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_approved);
             page.recreate();
-            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_accepted);
+            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_approved);
             capture("submission-approved");
         }
     }
@@ -749,7 +749,7 @@ public final class TasksAndroidTest {
     @Test public void historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation() throws Exception {
         long at = System.currentTimeMillis() - 600_000L;
         ZoneId zone = ZoneId.of("Asia/Kathmandu");
-        TaskDefinition approved, declined, cancelled, refused, skipped, scheduled, expired;
+        TaskDefinition approved, declined, cancelled, refused, skipped, scheduled, running, expired;
         TaskAction approvedProof, declinedProof;
         synchronized (SubFeaturePolicy.LOCK) {
             approved = historyTask("old schedule approved", at - 8 * 3_600_000L, zone, 86_400_000L);
@@ -758,6 +758,7 @@ public final class TasksAndroidTest {
             refused = historyTask("refused without completion", at - 2 * 3_600_000L, zone, 86_400_000L);
             skipped = historyTask("skipped without completion", at - 3 * 3_600_000L, zone, 60_000L);
             scheduled = historyTask("prepare the shared reading list", at + 3_600_000L, zone, 3_600_000L);
+            running = historyTask("read the shared notes", at - 3_600_000L, zone, 86_400_000L);
             expired = historyTask("missed the morning check-in", at - 6 * 3_600_000L, zone, 60_000L);
             approvedProof = historyAction(approved, TaskAction.Kind.SUBMIT,
                     approved.start(approved.firstStart.toLocalDate()).toEpochMilli() + 60_000L, "");
@@ -771,7 +772,7 @@ public final class TasksAndroidTest {
             store.append(scope, historyAction(refused, TaskAction.Kind.REFUSE_ONCE, at - 10_000L, ""), false, false);
             store.append(scope, historyAction(skipped, TaskAction.Kind.SKIP, at - 10_000L, ""), false, false);
             store.append(scope, historyAction(expired, TaskAction.Kind.TIMEOUT,
-                    expired.end(expired.firstStart.toLocalDate()).toEpochMilli(), ""), false, false);
+                    at - 3_600_000L, ""), false, false);
         }
         String requested = submissionTimeText(approved, approvedProof.at);
         List<String> expected = new ArrayList<>(List.of(occurrenceId(approved), occurrenceId(declined), occurrenceId(cancelled)));
@@ -779,8 +780,16 @@ public final class TasksAndroidTest {
         java.util.Collections.sort(tied); expected.addAll(tied);
         expected.add(occurrenceId(expired));
         try (ActivityScenario<TasksActivity> page = launch()) {
-            assertPreviewTiming(page, scheduled, R.string.tasks_scheduled, R.string.tasks_starts);
+            assertPreviewTiming(page, scheduled, R.string.tasks_scheduled, R.string.tasks_starts,
+                    scheduled.start(scheduled.firstStart.toLocalDate()));
+            assertPreviewTiming(page, running, R.string.tasks_active, R.string.tasks_due,
+                    running.end(running.firstStart.toLocalDate()));
+            assertPreviewTiming(page, approved, R.string.tasks_pending, 0,
+                    Instant.ofEpochMilli(approvedProof.at));
             page.onActivity(this::assertNarrowPreviewTiming);
+            openTask(page, scheduled);
+            assertDetailTiming(page, scheduled, R.string.tasks_scheduled);
+            androidx.test.espresso.Espresso.pressBack();
             openTask(page, approved);
             assertCompletionText(page, approved, requested);
             androidx.test.espresso.Espresso.pressBack();
@@ -788,27 +797,24 @@ public final class TasksAndroidTest {
             onView(withTagValue(is("task_completion_time:" + occurrenceId(approved)))).check(doesNotExist());
             // A live review moves a pending card into History; its earlier request time stays unchanged.
             store.append(scope, historyAction(approved, TaskAction.Kind.ACCEPT, at + 20_000L, approvedProof.id), true, false);
-            assertCompletionText(page, approved, requested);
-            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
-            assertPreviewTiming(page, approved, R.string.tasks_approved, R.string.tasks_due);
-            assertPreviewTiming(page, expired, R.string.tasks_timed_out, R.string.tasks_due);
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped, expired);
+            assertPreviewTiming(page, approved, R.string.tasks_approved, 0, Instant.ofEpochMilli(at + 20_000L));
+            assertPreviewTiming(page, declined, R.string.tasks_denied, 0, Instant.ofEpochMilli(at + 10_000L));
+            assertPreviewTiming(page, cancelled, R.string.tasks_cancelled, 0, Instant.ofEpochMilli(at));
+            assertPreviewTiming(page, expired, R.string.tasks_timed_out, 0, Instant.ofEpochMilli(at - 3_600_000L));
             captureHistoryView(page, "history-dom", null);
             page.recreate();
-            assertCompletionText(page, approved, requested);
-            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped, expired);
+            assertPreviewTiming(page, approved, R.string.tasks_approved, 0, Instant.ofEpochMilli(at + 20_000L));
             try (TaskStore reopened = new TaskStore(context)) {
                 TaskEngine.Occurrence saved = reopened.load(scope).occurrence(approved.id,
                         approved.firstStart.toLocalDate(), System.currentTimeMillis());
                 assertEquals(approvedProof.at, saved.submission.at);
                 assertEquals(at + 20_000L, saved.historyEnteredAt);
             }
-            TaskDefinition unrelated = seed("unrelated refresh", false);
-            awaitTag(page, "task:" + occurrenceId(unrelated));
-            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
-            assertCompletionText(page, approved, requested);
             openTask(page, approved);
             assertCompletionText(page, approved, requested);
-            assertSubmissionVerdict(page, occurrenceId(approved), approvedProof.id, R.string.tasks_accepted);
+            assertSubmissionVerdict(page, occurrenceId(approved), approvedProof.id, R.string.tasks_approved);
             page.recreate();
             assertCompletionText(page, approved, requested);
             captureHistoryView(page, "approved-detail", "task_submission:" + occurrenceId(approved));
@@ -819,17 +825,23 @@ public final class TasksAndroidTest {
             assertSubmissionVerdict(page, occurrenceId(declined), declinedProof.id, R.string.tasks_denied);
             captureHistoryView(page, "declined-detail", "task_submission:" + occurrenceId(declined));
             androidx.test.espresso.Espresso.pressBack();
+            openTask(page, expired);
+            assertDetailTiming(page, expired, R.string.tasks_timed_out);
+            androidx.test.espresso.Espresso.pressBack();
             for (TaskDefinition noRequest : List.of(cancelled, refused, skipped)) {
                 openTask(page, noRequest);
+                if (noRequest == cancelled) assertDetailTiming(page, cancelled, R.string.tasks_cancelled);
                 onView(withTagValue(is("task_completion_time:" + occurrenceId(noRequest)))).check(doesNotExist());
                 androidx.test.espresso.Espresso.pressBack();
             }
             switchRole(page, false);
             awaitTag(page, "tasks_history");
-            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
-            assertPreviewTiming(page, approved, R.string.tasks_approved, R.string.tasks_due);
-            assertCompletionText(page, approved, requested);
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped, expired);
+            assertPreviewTiming(page, approved, R.string.tasks_approved, 0, Instant.ofEpochMilli(at + 20_000L));
             captureHistoryView(page, "history-sub", null);
+            TaskDefinition unrelated = seed("unrelated refresh", false);
+            awaitTag(page, "task:" + occurrenceId(unrelated));
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped, expired);
         }
     }
 
@@ -866,18 +878,19 @@ public final class TasksAndroidTest {
                 Instant start = scheduled.start(scheduled.firstStart.toLocalDate());
                 assertNotEquals(taskTime(start, zone, processLocale), taskTime(start, zone, resourceLocale));
                 assertRenderedTimestamp(activity, "task_preview_timing:" + occurrenceId(scheduled),
-                        R.string.tasks_starts, taskTime(start, zone, resourceLocale));
+                        "tasks_starts", taskTime(start, zone, resourceLocale));
             });
-            String submitted = "task_completion_time:" + occurrenceId(approved);
-            awaitTag(page, submitted);
-            onView(withTagValue(is(submitted))).perform(NativeUiActions.revealAboveNavigation());
+            String outcome = "task_preview_timing:" + occurrenceId(approved);
+            awaitTag(page, outcome);
+            onView(withTagValue(is(outcome))).perform(NativeUiActions.revealAboveNavigation());
             capture("tasks-locale-history");
+            page.onActivity(activity -> assertRenderedTimestamp(activity, outcome, null,
+                    taskTime(Instant.ofEpochMilli(proof.at + 60_000L), zone, resourceLocale)));
+            openTask(page, approved);
+            awaitTag(page, "task_completion_time:" + occurrenceId(approved));
             page.onActivity(activity -> {
-                Instant end = approved.end(approved.firstStart.toLocalDate());
-                assertRenderedTimestamp(activity, "task_preview_timing:" + occurrenceId(approved),
-                        R.string.tasks_due, taskTime(end, zone, resourceLocale));
                 assertRenderedTimestamp(activity, "task_completion_time:" + occurrenceId(approved),
-                        R.string.tasks_submission_timestamp, taskTime(Instant.ofEpochMilli(proof.at), zone, resourceLocale));
+                        "tasks_submission_timestamp", taskTime(Instant.ofEpochMilli(proof.at), zone, resourceLocale));
                 assertNarrowLocalizedWindow(activity, approved.firstStart, zone);
             });
         } finally {
@@ -885,10 +898,13 @@ public final class TasksAndroidTest {
         }
     }
 
-    private static void assertRenderedTimestamp(TasksActivity activity, String tag, int label, String time) {
+    private static void assertRenderedTimestamp(TasksActivity activity, String tag, String label, String time) {
         android.widget.TextView text = activity.findViewById(android.R.id.content).findViewWithTag(tag);
         assertNotNull(tag, text);
-        assertEquals(tag, activity.getString(label, time), text.getText().toString());
+        // The test also runs on an older APK whose string resource IDs differ.
+        int id = label == null ? 0 : activity.getResources().getIdentifier(label, "string", activity.getPackageName());
+        if (label != null) assertTrue(label, id != 0);
+        assertEquals(tag, label == null ? time : activity.getString(id, time), text.getText().toString());
         assertTextFits(text);
     }
 
@@ -905,7 +921,7 @@ public final class TasksAndroidTest {
                 "Set aside time to review the reading list.", midnightStart, zone, 45 * 60_000L,
                 EnumSet.allOf(DayOfWeek.class), false, false, null);
         LocalDate date = midnightStart.toLocalDate();
-        TaskEngine.Occurrence occurrence = new TaskEngine.Occurrence(recurring, date, TaskEngine.Status.ACTIVE, null, null, 0);
+        TaskEngine.Occurrence occurrence = new TaskEngine.Occurrence(recurring, date, TaskEngine.Status.ACTIVE, null, null, 0, 0);
         Instant start = recurring.start(date), end = recurring.end(date);
         assertEquals(date.plusDays(1), end.atZone(zone).toLocalDate());
         String expected = german.getString(R.string.tasks_window,
@@ -951,14 +967,11 @@ public final class TasksAndroidTest {
     }
 
     private void assertPreviewTiming(ActivityScenario<TasksActivity> page, TaskDefinition task,
-            int statusLabel, int dateLabel) throws Exception {
+            int statusLabel, int dateLabel, Instant instant) throws Exception {
         String id = occurrenceId(task);
-        java.time.Instant instant = dateLabel == R.string.tasks_starts
-                ? task.start(task.firstStart.toLocalDate()) : task.end(task.firstStart.toLocalDate());
-        String dateText = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
-                .withZone(task.zone).format(instant);
+        String dateText = taskTime(instant, task.zone, context.getResources().getConfiguration().getLocales().get(0));
         assertLayoutText(page, "task_preview_status:" + id, context.getString(statusLabel));
-        assertLayoutText(page, "task_preview_timing:" + id, context.getString(dateLabel, dateText));
+        assertLayoutText(page, "task_preview_timing:" + id, dateLabel == 0 ? dateText : context.getString(dateLabel, dateText));
         page.onActivity(activity -> {
             View badge = activity.findViewById(android.R.id.content).findViewWithTag("task_preview_status:" + id);
             View date = activity.findViewById(android.R.id.content).findViewWithTag("task_preview_timing:" + id);
@@ -967,8 +980,25 @@ public final class TasksAndroidTest {
             assertEquals(0, metadata.indexOfChild(badge));
             ViewGroup copy = (ViewGroup) metadata.getParent();
             assertEquals(copy.getChildAt(0).getLeft(), metadata.getLeft() + badge.getLeft());
-            assertTrue(badge.getRight() <= date.getLeft());
+            assertTrue("Expected inline preview for " + context.getString(statusLabel)
+                    + " and " + dateText + " at metadata width " + metadata.getWidth(),
+                    badge.getRight() <= date.getLeft());
             assertTrue(badge.getTop() < date.getBottom() && date.getTop() < badge.getBottom());
+        });
+    }
+
+    private void assertDetailTiming(ActivityScenario<TasksActivity> page, TaskDefinition task,
+            int statusLabel) throws Exception {
+        String id = occurrenceId(task);
+        String badgeTag = "task_detail_status:" + id;
+        assertLayoutText(page, badgeTag, context.getString(statusLabel));
+        page.onActivity(activity -> {
+            View badge = activity.findViewById(android.R.id.content).findViewWithTag(badgeTag);
+            android.widget.TextView window = activity.findViewById(android.R.id.content).findViewWithTag("task_window:" + id);
+            assertSame(badge.getParent(), window.getParent());
+            assertTrue(badge.getRight() <= window.getLeft());
+            assertTrue(badge.getTop() < window.getBottom() && window.getTop() < badge.getBottom());
+            assertTextFits(window);
         });
     }
 
@@ -1000,8 +1030,8 @@ public final class TasksAndroidTest {
 
     private void assertHistoryPreviews(ActivityScenario<TasksActivity> page, List<String> expected,
             TaskDefinition approved, TaskDefinition declined, TaskDefinition cancelled,
-            TaskDefinition refused, TaskDefinition skipped) throws Exception {
-        for (TaskDefinition task : List.of(approved, declined, cancelled, refused, skipped))
+            TaskDefinition refused, TaskDefinition skipped, TaskDefinition expired) throws Exception {
+        for (TaskDefinition task : List.of(approved, declined, cancelled, refused, skipped, expired))
             awaitTag(page, "task:" + occurrenceId(task));
         page.onActivity(activity -> {
             ViewGroup body = activity.findViewById(R.id.role_page_body);
@@ -1014,17 +1044,16 @@ public final class TasksAndroidTest {
                 }
             }
             assertEquals("History must follow transition time, with stable identity ties", expected, actual);
-            for (TaskDefinition task : List.of(cancelled, refused, skipped))
+            for (TaskDefinition task : List.of(approved, declined, cancelled, refused, skipped, expired))
                 assertNull(body.findViewWithTag("task_completion_time:" + occurrenceId(task)));
         });
         String approvedTag = "task_preview_status:" + occurrenceId(approved);
         String declinedTag = "task_preview_status:" + occurrenceId(declined);
         onView(withTagValue(is(approvedTag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
-        assertLayoutText(page, approvedTag, "Approved");
+        assertLayoutText(page, approvedTag, context.getString(R.string.tasks_approved));
         onView(withTagValue(is(declinedTag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
-        assertLayoutText(page, declinedTag, "Declined");
+        assertLayoutText(page, declinedTag, context.getString(R.string.tasks_denied));
         assertLayoutText(page, "task_preview_status:" + occurrenceId(cancelled), context.getString(R.string.tasks_cancelled));
-        assertCompletionText(page, declined, submissionTimeText(declined, row(declined).submission.at));
     }
 
     private void assertLayoutText(ActivityScenario<TasksActivity> page, String tag, String expected) throws Exception {
