@@ -853,9 +853,11 @@ public final class TasksAndroidTest {
                 // Android adopts the activity locale during launch. Set the divergent FORMAT
                 // locale after launch and ask the regular history control to rerender the list.
                 Locale.setDefault(Locale.Category.FORMAT, processLocale);
-                View history = activity.findViewById(android.R.id.content).findViewWithTag("tasks_history");
+                android.widget.CheckBox history =
+                        activity.findViewById(android.R.id.content).findViewWithTag("tasks_history");
                 assertNotNull(history);
-                assertTrue(history.performClick());
+                assertFalse(history.isChecked());
+                history.setChecked(true);
             });
             capture("tasks-locale-list");
             page.onActivity(activity -> {
