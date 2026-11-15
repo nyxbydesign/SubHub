@@ -178,6 +178,13 @@ public final class DevUpdatesAndroidTest {
     @Test public void automaticSettingsRowsFitNarrowLayoutAndEnlargedText() {
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
             scenario.onActivity(activity -> {
+                TextView automaticTitle = activity.findViewById(R.id.automatic_checks_title);
+                TextView developmentTitle = activity.findViewById(R.id.dev_updates_title);
+                assertEquals(automaticTitle.getText(), activity.findViewById(R.id.automatic_checks)
+                        .createAccessibilityNodeInfo().getContentDescription());
+                assertEquals(developmentTitle.getText(), activity.findViewById(R.id.dev_updates)
+                        .createAccessibilityNodeInfo().getContentDescription());
+
                 Configuration large = new Configuration(activity.getResources().getConfiguration());
                 large.fontScale = 2f;
                 Context themed = new ContextThemeWrapper(activity.createConfigurationContext(large), activity.getTheme());
@@ -206,7 +213,6 @@ public final class DevUpdatesAndroidTest {
         assertEquals(Math.round(2 * density), help.getTop() - title.getBottom());
         assertTrue(column.getRight() < toggle.getLeft());
         assertTrue(toggle.getHeight() >= Math.round(48 * density));
-        assertEquals(title.getText(), toggle.createAccessibilityNodeInfo().getContentDescription());
         for (TextView label : List.of(title, help)) {
             assertNotNull(label.getLayout());
             assertTrue(label.getLayout().getHeight() <= label.getHeight());
