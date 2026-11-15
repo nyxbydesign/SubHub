@@ -703,22 +703,17 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         for (int i = 0; i < Math.min(sessionLimit, entries.size()); i++)
             session(sessionList, entries.get(i));
         if (entries.size() > 3) {
-            Button more =
-                    button(
-                            sessionList,
-                            getString(
-                                    sessionLimit >= entries.size()
-                                            ? R.string.stats_fewer_sessions
-                                            : R.string.stats_more_sessions),
-                            () -> {
-                                sessionLimit =
-                                        sessionLimit >= entries.size()
-                                                ? 3
-                                                : Math.min(entries.size(), sessionLimit + 3);
-                                bindSessions();
-                            });
-            more.setId(R.id.stats_sessions_more);
+            boolean expanded = sessionLimit >= entries.size();
+            addSessionHistoryAction(sessionList, expanded, () -> {
+                sessionLimit = expanded ? 3 : Math.min(entries.size(), sessionLimit + 3);
+                bindSessions();
+            });
         }
+    }
+
+    void addSessionHistoryAction(LinearLayout parent, boolean expanded, Runnable action) {
+        int label = expanded ? R.string.stats_fewer_sessions : R.string.stats_more_sessions;
+        button(parent, getString(label), action).setId(R.id.stats_sessions_more);
     }
 
     private void session(LinearLayout parent, StatsRepository.SessionEntry entry) {

@@ -2,6 +2,7 @@ package com.subhub.app.people;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
@@ -25,6 +26,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
 import com.subhub.app.OwnedUiIntegrationFixture;
+import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.remote.DummyPreviewEndpointFixture;
@@ -41,11 +43,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.*;
+import org.junit.rules.TestName;
 
 /** Real Activity navigation and input, with a private offline peer endpoint, never a dummy authority. */
 public final class DummySubPreviewAndroidTest {
     @Rule public final OwnedUiIntegrationFixture integration = new OwnedUiIntegrationFixture(false);
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+    @Rule public final TestName testName = new TestName();
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
     private final Map<String, Map<String, ?>> saved = new LinkedHashMap<>();
@@ -74,7 +78,19 @@ public final class DummySubPreviewAndroidTest {
         assertTrue(ControllerPinManager.verify(context, "2468"));
         assertTrue("Fixture role transition must respect the controller guard", DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
         OnboardingState.complete(context);
-        internalFixture = new InternalSubUiFixture(context);
+        String sessionHistory = "";
+        if ("signedInternalStatisticsRouteUsesOnlyInternalSourceAcrossRecreation".equals(testName.getMethodName())) {
+            long start = System.currentTimeMillis() - 600_000;
+            StringJoiner retained = new StringJoiner(";");
+            String zone = java.time.ZoneId.systemDefault().getId();
+            for (int i = 0; i < 5; i++) {
+                String identity = new UUID(0, i + 1).toString();
+                retained.add("3," + (start + i * 60_000) + ",30," + (i + 1)
+                        + ",0,0,0,0,0,0,0," + identity + "," + zone);
+            }
+            sessionHistory = retained.toString();
+        }
+        internalFixture = new InternalSubUiFixture(context, sessionHistory);
         endpoint = new DummyPreviewEndpointFixture(context);
         history = new com.subhub.app.stats.DummyPreviewHistoryWitness(context);
         instrumentation.waitForIdleSync();
@@ -749,9 +765,19 @@ public final class DummySubPreviewAndroidTest {
         try(ActivityScenario<com.subhub.app.stats.StatsActivity> scenario=ActivityScenario.launch(route.get())){
             AtomicReference<com.subhub.app.stats.StatsActivity> stats=new AtomicReference<>();scenario.onActivity(stats::set);
             await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
+            await(() -> stats.get().findViewById(R.id.stats_sessions_more) != null);
+            onView(withId(R.id.stats_sessions_more)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+            capture(stats.get(), "internal-stats-history-collapsed");
+            scenario.onActivity(a -> assertHistoryAction(a, 3, R.string.stats_more_sessions));
+            onView(withId(R.id.stats_sessions_more)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            scenario.onActivity(a -> assertHistoryAction(a, 5, R.string.stats_fewer_sessions));
             scenario.recreate();scenario.onActivity(stats::set);await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
             assertTrue(DummySubPreview.isAllowed(stats.get()));assertNotNull(tagged(stats.get(),"internal_statistics"));
             assertInternalStatisticsRows(stats.get());
+            await(() -> stats.get().findViewById(R.id.stats_sessions_more) != null);
+            scenario.onActivity(a -> assertHistoryAction(a, 5, R.string.stats_fewer_sessions));
+            onView(withId(R.id.stats_sessions_more)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            scenario.onActivity(a -> assertHistoryAction(a, 3, R.string.stats_more_sessions));
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_lifetime_summary))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
             capture(stats.get(), "internal-stats-summary");
@@ -774,6 +800,24 @@ public final class DummySubPreviewAndroidTest {
                         stats.getString(com.subhub.app.R.string.stats_sessions), sessions)
                 && hasStatisticsRow(stats.findViewById(com.subhub.app.R.id.stats_totals_details),
                         stats.getString(com.subhub.app.R.string.statistics_current_streak), streak));
+    }
+
+    private static void assertHistoryAction(Activity stats, int expectedRows, int label) {
+        android.widget.Button action = stats.findViewById(R.id.stats_sessions_more);
+        assertNotNull(action);
+        assertEquals(stats.getString(label), action.getText().toString());
+        assertTrue(action.isEnabled() && action.hasOnClickListeners());
+        android.widget.LinearLayout.LayoutParams params = (android.widget.LinearLayout.LayoutParams) action.getLayoutParams();
+        assertEquals("History action uses the shared top margin",
+                stats.getResources().getDimensionPixelSize(R.dimen.ui_gap_control), params.topMargin);
+        assertEquals(ViewGroup.LayoutParams.MATCH_PARENT, params.width);
+        assertTrue(action.getMinHeight() >= Math.round(48 * stats.getResources().getDisplayMetrics().density));
+        ViewGroup historyCard = (ViewGroup) action.getParent();
+        int rows = 0;
+        for (int i = 0; i < historyCard.getChildCount(); i++) {
+            if ("stats:session".equals(historyCard.getChildAt(i).getTag())) rows++;
+        }
+        assertEquals(expectedRows, rows);
     }
 
     private static boolean hasStatisticsRow(View container, String label, String value) {

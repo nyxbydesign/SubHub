@@ -105,9 +105,16 @@ final class InternalStatsPane extends LinearLayout {
             activity.row(line, R.string.stats_censors, activity.number(entry.getBlocks()));
             activity.row(line,R.string.stats_limited_app_time,activity.duration(entry.getLimitedAppMillis()/1000));
         }
-        if(entries.size()>3){Button more=new Button(activity);more.setId(R.id.stats_sessions_more);
-            more.setText(sessionLimit>=entries.size()?R.string.stats_fewer_sessions:R.string.stats_more_sessions);
-            more.setOnClickListener(v->{if(!source.accessible()||rendered==null||rendered.snapshot!=snapshot){unavailable();return;}
-                sessionLimit=sessionLimit>=entries.size()?3:Math.min(entries.size(),sessionLimit+3);renderSessions(snapshot);});sessions.addView(more);}
+        if (entries.size() > 3) {
+            boolean expanded = sessionLimit >= entries.size();
+            activity.addSessionHistoryAction(sessions, expanded, () -> {
+                if (!source.accessible() || rendered == null || rendered.snapshot != snapshot) {
+                    unavailable();
+                    return;
+                }
+                sessionLimit = expanded ? 3 : Math.min(entries.size(), sessionLimit + 3);
+                renderSessions(snapshot);
+            });
+        }
     }
 }

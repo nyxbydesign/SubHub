@@ -21,7 +21,8 @@ final class InternalSubUiFixture implements AutoCloseable {
     private android.database.sqlite.SQLiteDatabase closedDatabase;
     final InternalSubData data;
     private final java.io.File parent;
-    @SuppressWarnings("unchecked") InternalSubUiFixture(Context context)throws Exception {
+    InternalSubUiFixture(Context context) throws Exception { this(context, ""); }
+    @SuppressWarnings("unchecked") InternalSubUiFixture(Context context, String sessionHistory) throws Exception {
         app=context.getApplicationContext();
         registry=new LinkedHashMap<>(app.getSharedPreferences("subhub_internal_registry",0).getAll());
         tasksRegistry=new LinkedHashMap<>(app.getSharedPreferences("subhub_internal_tasks_registry",0).getAll());
@@ -37,9 +38,21 @@ final class InternalSubUiFixture implements AutoCloseable {
         try {
             visibility = new InternalVisibilityIdleFixture(app, candidate -> candidate == data);
             persistenceField.setBoolean(null,false);
-            if(!app.getSharedPreferences("subhub_internal_owner_data_registry",0).edit().clear().commit())
+            var ownerEvidence = app.getSharedPreferences("subhub_internal_owner_data_registry", 0);
+            if(!ownerEvidence.edit().clear().commit())
                 throw new AssertionError("Fixture owner-data registry acknowledgement failed");
-            data.initializeOwnerData(app,OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE);
+            OwnerDataProvisioning.Decision decision = OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE;
+            if (!sessionHistory.isEmpty()) {
+                // Seed retained data inside the fixture's new directory before the owner opens it.
+                try (FileInternalRuntimeBackend runtime = FileInternalRuntimeBackend.provisionNew(data.storage);
+                     InternalRuntimePreferences preferences = InternalRuntimePreferences.open(runtime, Runnable::run)) {
+                    preferences.preferences("statistics").edit().putString("session_history", sessionHistory).commit();
+                }
+                if (!ownerEvidence.edit().putString("runtime_v1", "ready").commit())
+                    throw new AssertionError("Fixture retained owner data was not acknowledged");
+                decision = OwnerDataProvisioning.Decision.OPEN_EXISTING;
+            }
+            data.initializeOwnerData(app, decision);
             if(!app.getSharedPreferences("subhub_internal_registry",0).edit().putString("provisioning","ready").commit())
                 throw new AssertionError("Fixture registry acknowledgement failed");
         }catch(Throwable failure){
