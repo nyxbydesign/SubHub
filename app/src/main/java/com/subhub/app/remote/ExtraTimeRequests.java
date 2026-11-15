@@ -14,7 +14,9 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.json.JSONArray;
@@ -62,19 +64,26 @@ public final class ExtraTimeRequests {
         public final String unavailableReason, domName, personName, currency;
         /** Opaque local UI fence for the current peer and relationship generation. */
         public final String scope;
-        public final int tributeCents, pendingCount;
+        public final String subDay, subZone;
+        public final int tributeCents;
         public final List<App> apps;
         public final List<Request> requests;
         private Snapshot(boolean dom, boolean supported, boolean canRequest, String reason, String domName,
                 String personName, int tributeCents, String currency, List<App> apps, List<Request> requests,
-                String scope) {
+                String scope, long now) {
             this.dom = dom; this.supported = supported; this.canRequest = canRequest;
             this.scope = scope;
+            ZoneId zone = ZoneId.systemDefault();
+            subDay = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().toString();
+            subZone = zone.getId();
             unavailableReason = reason; this.domName = domName; this.personName = personName;
             this.tributeCents = tributeCents; this.currency = currency;
             this.apps = Collections.unmodifiableList(apps); this.requests = Collections.unmodifiableList(requests);
-            int count = 0; for (Request row : requests) if (row.status == Status.PENDING) count++;
-            pendingCount = count;
+        }
+
+        /** The Overview follows the Sub's allowance day, including the captured zone. */
+        public boolean isOnSubDay(Request request) {
+            return subDay.equals(request.day) && subZone.equals(request.zone);
         }
     }
     private final Context context;
@@ -105,6 +114,26 @@ public final class ExtraTimeRequests {
         if (peer.localRole != RemoteProtocol.Role.DOM) throw new SecurityException("Choose your Sub's profile");
         return peer;
     }
+    /** Read the review badge from the authorized Dom journal without building request details. */
+    public int pendingReviewCount(long now) {
+        if (person.isLocal()) throw new SecurityException("Choose your Sub's profile");
+        return authority.authorityAccess(() -> {
+            synchronized (SubFeaturePolicy.LOCK) {
+                synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                    synchronized (authority) {
+                        synchronized (ExtraTimeStore.LOCK) {
+                            int count = 0;
+                            for (ExtraTimeStore.Row row : journal.load(scope(target()))) {
+                                if (row.state.equals("PENDING") && row.today(now)) count++;
+                            }
+                            return count;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     public Snapshot snapshot(long now) throws Exception {
         boolean[] changed = {false};
         Snapshot result = authority.authorityAccess(() -> {
@@ -125,27 +154,11 @@ public final class ExtraTimeRequests {
                 int quote = dom ? 0 : tribute.quoteExtraTimeRequest(now);
                 List<App> apps = new ArrayList<>();
                 if (!dom) {
-                    AppModeManager mode = new AppModeManager(context); AppTimerManager timers = new AppTimerManager(context);
+                    AppModeManager mode = new AppModeManager(context);
                     Set<String> packages = mode.getIncludedPackages();
-                    for (String packageName : packages) {
-                        Request pending = null, latest = null;
-                        for (Request row : requests) if (row.packageName.equals(packageName)) {
-                            if (latest == null) latest = row;
-                            if (row.status == Status.PENDING) pending = row;
-                        }
-                        ExtraTimeAllowance extra = allowanceLocked(context, authority, peer, journal, packageName, now);
-                        AppTimerManager.UsageSnapshot usage = timers.snapshot(packageName, now);
-                        AppTimerManager.Settings budget = timers.loadSettings();
-                        long remaining = extra.remaining(usage.appUsedMillis,AppTimerManager.minutesToMillis(timers.allowanceMinutes(packageName)),
-                                usage.totalUsedMillis,AppTimerManager.minutesToMillis(budget.totalMinutes),budget.perAppEnabled,budget.totalEnabled);
-                        apps.add(new App(packageName, label(context, packageName), budget.perAppEnabled ? timers.allowanceMinutes(packageName) : 0,
-                                (int) (extra.bonusMillis / 60_000L), timers.snapshot(packageName, now).appUsedMillis,
-                                timers.limitStatus(packageName, packages, now) != AppTimerManager.LimitStatus.NONE,
-                                remaining, budget.totalEnabled && usage.totalUsedMillis >= AppTimerManager.minutesToMillis(budget.totalMinutes), pending, latest,
-                                budget.perAppEnabled ? extra.individualBudget(timers.allowanceMinutes(packageName)*60_000L)
-                                        : budget.totalEnabled ? Math.max(budget.totalMinutes*60_000L,extra.appCeilingMillis) : 0,
-                                com.subhub.app.appmode.AppTimeOrder.forApp(usage.appUsedMillis,timers.allowanceMinutes(packageName)*60_000L,
-                                        usage.totalUsedMillis,budget.totalMinutes*60_000L,budget.perAppEnabled,budget.totalEnabled,extra)));
+                    if (!packages.isEmpty()) {
+                        if (peer != null) requireActive(authority, peer);
+                        apps.addAll(appSnapshots(new AppTimerManager(context), packages, requests, rows, now));
                     }
                     apps.sort((left, right) -> com.subhub.app.appmode.AppTimeOrder.compareFractions(
                             left.remainingFraction,left.label,left.packageName,right.remainingFraction,right.label,right.packageName));
@@ -157,11 +170,45 @@ public final class ExtraTimeRequests {
                         : !eligible ? "App limits must be active to request time" : "";
                 return new Snapshot(dom, supported, !dom && eligible, reason,
                         !dom && peer != null ? peer.name : "", dom && peer != null ? peer.name : "",
-                        quote, tribute.getCurrency(), apps, requests, peer == null ? "" : scope(peer));
+                        quote, tribute.getCurrency(), apps, requests, peer == null ? "" : scope(peer), now);
             } } } }
         });
         if (changed[0]) feature.changed();
         return result;
+    }
+    private List<App> appSnapshots(AppTimerManager timers, Set<String> packages, List<Request> requests,
+            List<ExtraTimeStore.Row> rows, long now) throws Exception {
+        List<App> apps = new ArrayList<>();
+        AppTimerManager.Settings budget = timers.loadSettings();
+        Map<String, AppTimerManager.UsageSnapshot> measurements = timers.snapshots(packages, now);
+        long totalMillis = AppTimerManager.minutesToMillis(budget.totalMinutes);
+        Map<String, Request> latest = new HashMap<>(), pending = new HashMap<>();
+        for (Request request : requests) {
+            latest.putIfAbsent(request.packageName, request);
+            // Keep the last matching pending receipt, as in the ordered history scan.
+            if (request.status == Status.PENDING) pending.put(request.packageName, request);
+        }
+        Map<String, List<ExtraTimeStore.Row>> approvals = approvalsByPackage(rows, packages);
+        for (String packageName : packages) {
+            int dailyMinutes = timers.allowanceMinutes(packageName, budget);
+            long dailyMillis = AppTimerManager.minutesToMillis(dailyMinutes);
+            ExtraTimeAllowance extra = allowanceForRows(
+                    approvals.getOrDefault(packageName, Collections.emptyList()), packageName, now,
+                    () -> configuration(packageName, true, budget, dailyMinutes));
+            AppTimerManager.UsageSnapshot usage = measurements.get(packageName);
+            long remaining = extra.remaining(usage.appUsedMillis, dailyMillis, usage.totalUsedMillis,
+                    totalMillis, budget.perAppEnabled, budget.totalEnabled);
+            apps.add(new App(packageName, label(context, packageName), budget.perAppEnabled ? dailyMinutes : 0,
+                    (int) (extra.bonusMillis / 60_000L), usage.appUsedMillis,
+                    timers.projectedLimit(budget, usage, dailyMinutes, extra) != AppTimerManager.LimitStatus.NONE,
+                    remaining, budget.totalEnabled && usage.totalUsedMillis >= totalMillis,
+                    pending.get(packageName), latest.get(packageName),
+                    budget.perAppEnabled ? extra.individualBudget(dailyMillis)
+                            : budget.totalEnabled ? Math.max(totalMillis, extra.appCeilingMillis) : 0,
+                    com.subhub.app.appmode.AppTimeOrder.forApp(usage.appUsedMillis, dailyMillis,
+                            usage.totalUsedMillis, totalMillis, budget.perAppEnabled, budget.totalEnabled, extra)));
+        }
+        return apps;
     }
     public Request submit(String packageName, int expectedTributeCents, String expectedCurrency) throws Exception {
         return submitCurrent(packageName, expectedTributeCents, expectedCurrency, null);
@@ -365,29 +412,71 @@ public final class ExtraTimeRequests {
         return changed;
     }
     public static ExtraTimeAllowance allowance(Context context, String packageName, long now) {
+        return readAllowances(context, ExtraTimeAllowance.NONE,
+                rows -> allowanceForRows(rows, packageName, now, () -> configuration(context, packageName)));
+    }
+
+    /** A fresh display projection from one authorized journal read. Missing packages have no credit. */
+    public static Map<String, ExtraTimeAllowance> allowances(Context context, Set<String> packages, long now) {
+        if (packages.isEmpty()) return Map.of();
+        return readAllowances(context, Map.of(), rows -> {
+            Map<String, ExtraTimeAllowance> result = new HashMap<>();
+            for (var entry : approvalsByPackage(rows, packages).entrySet()) {
+                String packageName = entry.getKey();
+                try {
+                    ExtraTimeAllowance allowance = allowanceForRows(entry.getValue(), packageName, now,
+                            () -> configuration(context, packageName));
+                    if (allowance.bonusMillis > 0) result.put(packageName, allowance);
+                } catch (Exception unavailable) {
+                    // An unavailable configuration only denies credit for this package.
+                }
+            }
+            return result;
+        });
+    }
+
+    private static Map<String, List<ExtraTimeStore.Row>> approvalsByPackage(
+            List<ExtraTimeStore.Row> rows, Set<String> packages) {
+        Map<String, List<ExtraTimeStore.Row>> approvals = new HashMap<>();
+        for (ExtraTimeStore.Row row : rows) {
+            if (row.state.equals("APPROVED") && packages.contains(row.packageName))
+                approvals.computeIfAbsent(row.packageName, unused -> new ArrayList<>()).add(row);
+        }
+        return approvals;
+    }
+
+    private interface AllowanceReader<T> {
+        T read(List<ExtraTimeStore.Row> rows) throws Exception;
+    }
+
+    private static <T> T readAllowances(Context context, T unavailable, AllowanceReader<T> reader) {
         try {
-            RemoteFeature feature = RemoteFeature.get(context); if (!feature.recoveryReady()) return ExtraTimeAllowance.NONE;
+            RemoteFeature feature = RemoteFeature.get(context);
+            if (!feature.recoveryReady()) return unavailable;
             return feature.store.authorityObservation(() -> {
                 synchronized (SubFeaturePolicy.LOCK) { synchronized (feature.store) { synchronized (ExtraTimeStore.LOCK) {
-                    if (!SubFeaturePolicy.allowed(context,"limits")) return ExtraTimeAllowance.NONE;
+                    if (!SubFeaturePolicy.allowed(context,"limits")) return unavailable;
                     RemoteStore.Peer selected = null;
                     for (RemoteStore.Peer peer : feature.store.peers(false))
                         if (peer.state == RemoteStore.State.ACTIVE && peer.localRole == RemoteProtocol.Role.SUB) {
-                            if (selected != null) return ExtraTimeAllowance.NONE;
+                            if (selected != null) return unavailable;
                             selected = peer;
                         }
-                    return selected == null ? ExtraTimeAllowance.NONE : allowanceLocked(context,feature.store,selected,new ExtraTimeStore(context),packageName,now);
+                    if (selected == null) return unavailable;
+                    requireActive(feature.store, selected);
+                    return reader.read(new ExtraTimeStore(context).load(scope(selected)));
                 } } }
             });
-        } catch (Exception unavailable) { return ExtraTimeAllowance.NONE; }
+        } catch (Exception failed) { return unavailable; }
     }
-    private static ExtraTimeAllowance allowanceLocked(Context context, RemoteStore authority, RemoteStore.Peer peer,
-            ExtraTimeStore journal, String packageName, long now) throws Exception {
-        if (peer == null || peer.localRole != RemoteProtocol.Role.SUB) return ExtraTimeAllowance.NONE;
-        requireActive(authority, peer); long bonus = 0, ceiling = 0; String config = null;
-        for (ExtraTimeStore.Row row : journal.load(scope(peer))) if (row.packageName.equals(packageName)
+
+    private static ExtraTimeAllowance allowanceForRows(List<ExtraTimeStore.Row> rows, String packageName,
+            long now, LinkingWitness.CheckedWork<String> configuration) throws Exception {
+        long bonus = 0, ceiling = 0;
+        String config = null;
+        for (ExtraTimeStore.Row row : rows) if (row.packageName.equals(packageName)
                 && row.state.equals("APPROVED") && now >= row.at && row.today(now) && row.zone.equals(ZoneId.systemDefault().getId())) {
-            if (config == null) config = configuration(context,packageName);
+            if (config == null) config = configuration.run();
             if (row.configuration.equals(config)) {
                 bonus = Math.min(86_400_000L, bonus + row.minutes * 60_000L); ceiling = Math.max(ceiling,row.ceiling);
             }
@@ -410,9 +499,14 @@ public final class ExtraTimeRequests {
     static String scope(RemoteStore.Peer peer) { return peer.identity + "_" + peer.generation; }
     private static String configuration(Context context, String packageName) throws Exception {
         AppTimerManager timers = new AppTimerManager(context); AppTimerManager.Settings settings = timers.loadSettings();
+        return configuration(packageName, new AppModeManager(context).getIncludedPackages().contains(packageName),
+                settings, timers.allowanceMinutes(packageName));
+    }
+    private static String configuration(String packageName, boolean included, AppTimerManager.Settings settings,
+            int dailyMinutes) throws Exception {
         JSONObject value = new JSONObject().put("package",packageName)
-                .put("included",new AppModeManager(context).getIncludedPackages().contains(packageName))
-                .put("individual",settings.perAppEnabled).put("daily",timers.allowanceMinutes(packageName))
+                .put("included",included)
+                .put("individual",settings.perAppEnabled).put("daily",dailyMinutes)
                 .put("combined",settings.totalEnabled).put("total",settings.totalMinutes);
         return RemoteProtocol.sha256(RemoteProtocol.canonical(value).getBytes(StandardCharsets.UTF_8));
     }

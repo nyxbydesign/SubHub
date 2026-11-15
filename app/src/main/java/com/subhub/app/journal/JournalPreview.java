@@ -15,7 +15,6 @@ import com.subhub.app.people.PersonUi;
 import com.subhub.app.util.AsyncUiScope;
 import java.text.DateFormat;
 import java.util.Date;
-import java.util.List;
 
 /** A small live preview reads through exactly the same workspace and audience checks as Journal. */
 public final class JournalPreview extends LinearLayout implements DefaultLifecycleObserver {
@@ -27,6 +26,7 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
     private final boolean overview, link;
     private final View entryAction;
     private final TextView summary, metadata;
+    private boolean initialLoaded;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final String key = "journal-preview:" + java.util.UUID.randomUUID();
     private final Runnable poll = new Runnable() {
@@ -43,9 +43,35 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
         parent.addView(new JournalPreview((Activity) parent.getContext(), dom, target, open), new LayoutParams(-1, -2));
     }
 
+    public record Initial(JournalEntry entry, boolean available) {}
+
+    public static Initial loadInitial(android.content.Context context, boolean dom, PersonId target) {
+        try { return new Initial(JournalRuntime.get(context).latest(dom, target), true); }
+        catch (Exception unavailable) { return new Initial(null, false); }
+    }
+
+    public static void add(LinearLayout parent, boolean dom, PersonId target, Runnable open, Initial initial) {
+        addPreview(parent, dom, target, open, false, initial);
+    }
+
+    private static void addPreview(LinearLayout parent, boolean dom, PersonId target, Runnable open,
+            boolean overview, Initial initial) {
+        if (!(parent.getContext() instanceof Activity activity) || !(activity instanceof LifecycleOwner)) return;
+        JournalPreview view = new JournalPreview(activity, dom, target, open, overview, false);
+        if (initial != null) {
+            if (initial.available()) view.showEntry(initial.entry());
+            else view.showUnavailable();
+            view.initialLoaded = true;
+        }
+        parent.addView(view, new LayoutParams(-1, -2));
+    }
+
     public static void addOverview(LinearLayout parent, boolean dom, Runnable open) {
-        if (!(parent.getContext() instanceof Activity) || !(parent.getContext() instanceof LifecycleOwner)) return;
-        parent.addView(new JournalPreview((Activity) parent.getContext(), dom, PersonId.LOCAL, open, true, false), new LayoutParams(-1, -2));
+        addOverview(parent, dom, open, null);
+    }
+
+    public static void addOverview(LinearLayout parent, boolean dom, Runnable open, Initial initial) {
+        addPreview(parent, dom, PersonId.LOCAL, open, true, initial);
     }
 
     public static void addSharedLink(LinearLayout parent, boolean dom, PersonId target, Runnable open) {
@@ -125,24 +151,33 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
     }
     private void startPolling() {
         handler.removeCallbacks(poll);
-        if (isAttachedToWindow() && owner.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED))
-            handler.post(poll);
+        if (isAttachedToWindow() && owner.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) {
+            if (initialLoaded) handler.postDelayed(poll, 2000);
+            else handler.post(poll);
+        }
     }
     private void stopPolling() {
         handler.removeCallbacks(poll);
         data.cancel(key);
+        initialLoaded = false;
     }
 
     private void refresh() {
         if (data.isPending(key)) return;
         JournalRuntime selected = runtime; boolean workspace = dom; PersonId source = target;
         data.load(key, () -> {
-            selected.checkTarget(workspace, source);
-            if (link) return null;
-            List<JournalEntry> entries = selected.list(workspace, source, 0);
-            return entries.isEmpty() ? null : entries.get(0);
+            if (link) {
+                selected.checkTarget(workspace, source);
+                return null;
+            }
+            return selected.latest(workspace, source);
         }, entry -> {
             if (!isAttachedToWindow()) return;
+            showEntry(entry);
+        }, failure -> unavailable());
+    }
+
+    private void showEntry(JournalEntry entry) {
             try {
                 runtime.checkTarget(dom, target);
                 if (link) { entryAction.setEnabled(true); summary.setVisibility(GONE); return; }
@@ -164,12 +199,15 @@ public final class JournalPreview extends LinearLayout implements DefaultLifecyc
                 }
                 metadata.setVisibility(VISIBLE);
                 summary.setText(current.displayTitle());
-            } catch (Exception unavailable) { unavailable(); }
-        }, failure -> unavailable());
+            } catch (Exception unavailable) { showUnavailable(); }
     }
 
     private void unavailable() {
         if (!isAttachedToWindow()) return;
+        showUnavailable();
+    }
+
+    private void showUnavailable() {
         metadata.setVisibility(GONE);
         if (link) { entryAction.setEnabled(false); summary.setVisibility(VISIBLE); }
         summary.setText(dom && !com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()

@@ -1,6 +1,7 @@
 package com.subhub.app.people;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.text.TextUtils;
@@ -39,19 +40,24 @@ public final class ProfilePreview extends LinearLayout {
 
     public ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
             boolean expanded, Consumer<Boolean> expansion) {
-        this(context, profile, dom, prefix, expanded, expansion, false);
+        this(context, profile, dom, prefix, expanded, expansion, false, null);
+    }
+
+    ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
+            boolean expanded, Consumer<Boolean> expansion, Bitmap loadedAvatar) {
+        this(context, profile, dom, prefix, expanded, expansion, false, loadedAvatar);
     }
 
     public static ProfilePreview own(Context context, ProfileData profile, boolean dom) {
-        return new ProfilePreview(context, profile, dom, "self_profile", false, null, false);
+        return new ProfilePreview(context, profile, dom, "self_profile", false, null, false, null);
     }
 
     public static ProfilePreview roster(Context context, ProfileData profile, String prefix) {
-        return new ProfilePreview(context, profile, false, prefix, false, null, true);
+        return new ProfilePreview(context, profile, false, prefix, false, null, true, null);
     }
 
     private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
-            boolean expanded, Consumer<Boolean> expansion, boolean roster) {
+            boolean expanded, Consumer<Boolean> expansion, boolean roster, Bitmap loadedAvatar) {
         super(context);
         this.expansion = expansion; stateKey = prefix + ":" + dom;
         state = !roster && context instanceof androidx.lifecycle.ViewModelStoreOwner
@@ -61,7 +67,8 @@ public final class ProfilePreview extends LinearLayout {
         setTag("profile_preview:" + (dom ? "dom" : "sub"));
         LinearLayout identity = new LinearLayout(context); identity.setGravity(Gravity.CENTER_VERTICAL);
         identity.setTag(prefix + "_identity");
-        View avatar = ProfileViews.avatar(context, profile); avatar.setTag(prefix + "_avatar");
+        View avatar = new ProfileAvatarView(context, profile, loadedAvatar);
+        avatar.setTag(prefix + "_avatar");
         int avatarDp = roster ? 56 : AVATAR_DP;
         identity.addView(avatar, new LayoutParams(PersonUi.dp(context, avatarDp), PersonUi.dp(context, avatarDp)));
         LinearLayout copy = PersonUi.column(context);

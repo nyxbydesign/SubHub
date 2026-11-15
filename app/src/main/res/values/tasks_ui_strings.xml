@@ -8,7 +8,7 @@
     <string name="tasks_schedule">Schedule</string>
     <string name="tasks_completion">Completion</string>
     <string name="tasks_attachment_heading">Attachment</string>
-    <string name="tasks_submission_heading">Completion request</string>
+    <string name="tasks_submission_heading">Submission</string>
     <string name="tasks_attachments_title">Attachments</string>
     <plurals name="tasks_proof_attachment_count">
         <item quantity="one">%d attachment</item>
@@ -40,7 +40,6 @@
     <string name="tasks_cancel_confirm">Cancel “%1$s”?</string>
     <string name="tasks_cancelled">Cancelled</string>
     <string name="tasks_approved">Approved</string>
-    <string name="tasks_declined">Declined</string>
-    <string name="tasks_completion_requested_at">Completion requested %1$s · %2$s</string>
+    <string name="tasks_submission_timestamp">Submitted %1$s</string>
     <string name="tasks_cancel_update">Update both devices to cancel tasks.</string>
 </resources>

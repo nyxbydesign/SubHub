@@ -32,7 +32,21 @@ public final class People {
                             ? local.people() : java.util.Collections.emptyList();}
             @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
             @Override public PersonSnapshot loadSummary(PersonId id){return localProjection.apply(local.loadSummary(id));}
+            @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract){
+                return localProjection.apply(local.loadForPage(id, includeContract));
+            }
         }, remote, new InternalPersonRepository(application));
+    }
+
+    static PersonSnapshot localContract(Context context) {
+        return localProjection.apply(new LocalPersonRepository(context).loadContract());
+    }
+
+    static PersonSnapshot localOverview(Context context) {
+        PersonSnapshot result = localProjection.apply(new LocalPersonRepository(context).loadOverview());
+        if (result == null || !PersonId.LOCAL.equals(result.id))
+            throw new IllegalStateException("Person identity mismatch");
+        return result;
     }
 
     public static void installRemoteRepository(PersonRepository repository) { remote = repository; }

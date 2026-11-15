@@ -1,6 +1,8 @@
 package com.subhub.app;
 
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import android.app.Activity;
 import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewParent;
@@ -14,6 +16,11 @@ import org.hamcrest.Matchers;
 /** Real-touch setup: scroll and prove clearance; callers still inject Espresso clicks. */
 public final class NativeUiActions {
     private NativeUiActions() { }
+
+    public static void assertNoViewWithResourceId(Activity activity, String name) {
+        int id = activity.getResources().getIdentifier(name, "id", activity.getPackageName());
+        if (id != 0) assertNull("Unexpected view with resource ID " + name, activity.findViewById(id));
+    }
     public static ViewAction revealAboveNavigation() {
         return new ViewAction() {
             @Override public Matcher<View> getConstraints() {

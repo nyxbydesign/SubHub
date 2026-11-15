@@ -323,6 +323,41 @@ public class RemoteSessionAndroidTest {
         assertEquals(4, wireTrace.presenceFrames);
     }
 
+    @Test public void optedInBackgroundUsesExistingFramesAndKeepsDataIdle() throws Exception {
+        dh.foregroundPresence = true;
+        dh.backgroundSync = true;
+        sh.foregroundPresence = false;
+        sh.backgroundSync = false;
+        wireTrace = new WireTrace();
+        exchange(false, false);
+        RemoteStore.Peer peer = sub.peer(dt.localIdentity(), generation);
+        long seen = PeerPresence.read(sub, peer).lastOnlineAt;
+        assertEquals(PeerPresence.Status.ONLINE, PeerPresence.read(sub, peer).status);
+        assertEquals(2, wireTrace.presenceFrames);
+        dh.foregroundPresence = false;
+        dom.publish(st.localIdentity(), generation, RemoteProtocol.Stream.CONFIGURATION, "active",
+                new JSONObject().put("revision", 2), false, 1);
+        exchange(true, false);
+        assertEquals(2, sub.mirrored(peer.identity, generation, RemoteProtocol.Stream.CONFIGURATION, "active").getInt("revision"));
+        assertEquals(PeerPresence.Status.IDLE, PeerPresence.read(sub, peer).status);
+        assertEquals(seen, PeerPresence.read(sub, peer).lastOnlineAt);
+        assertEquals(4, wireTrace.presenceFrames);
+        // Expire the local lease without waiting, then let an ordinary empty exchange renew it.
+        String presenceKey = "foreground_presence_v1";
+        JSONObject expired = new JSONObject(sub.metadata(peer.identity, generation, presenceKey, ""));
+        sub.putMetadata(peer.identity, generation, presenceKey, expired.put("receivedElapsed", -1).toString());
+        assertEquals(PeerPresence.Status.OFFLINE, PeerPresence.read(sub, peer).status);
+        exchange(false, false);
+        assertEquals(PeerPresence.Status.IDLE, PeerPresence.read(sub, peer).status);
+        assertEquals(seen, PeerPresence.read(sub, peer).lastOnlineAt);
+        assertEquals(6, wireTrace.presenceFrames);
+        dh.onPrepare = () -> dh.backgroundSync = false;
+        exchange(true, false);
+        assertEquals(PeerPresence.Status.OFFLINE, PeerPresence.read(sub, peer).status);
+        assertEquals(seen, PeerPresence.read(sub, peer).lastOnlineAt);
+        assertEquals("The changed preference rides one existing checkpoint", 9, wireTrace.presenceFrames);
+    }
+
     @Test public void lateForegroundUsesTheNextExistingCheckpoint() throws Exception {
         dh.foregroundPresence = false;
         sh.foregroundPresence = false;
@@ -711,13 +746,16 @@ public class RemoteSessionAndroidTest {
     private static byte[] seed(){byte[] value=new byte[32];new SecureRandom().nextBytes(value);return value;}
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
-        Boolean foregroundPresence;
+        Boolean foregroundPresence, backgroundSync;
         long presenceSequence;
         int presenceReceipts;
-        @Override public JSONObject presence(Boolean previousForeground) throws Exception {
-            return foregroundPresence == null || foregroundPresence.equals(previousForeground) ? null
-                    : new JSONObject().put("version", 1).put("sequence", ++presenceSequence)
-                            .put("foreground", foregroundPresence);
+        @Override public JSONObject presence(Boolean previousForeground, Boolean previousBackgroundSync) throws Exception {
+            if (foregroundPresence == null || foregroundPresence.equals(previousForeground)
+                    && java.util.Objects.equals(backgroundSync, previousBackgroundSync)) return null;
+            JSONObject observed = new JSONObject().put("version", 1).put("sequence", ++presenceSequence)
+                    .put("foreground", foregroundPresence);
+            if (backgroundSync != null) observed.put("backgroundSync", backgroundSync);
+            return observed;
         }
         @Override public void presenceReceived(RemoteStore.Peer peer) { presenceReceipts++; }
 

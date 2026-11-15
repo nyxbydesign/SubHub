@@ -6,12 +6,15 @@ import android.content.res.Configuration;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.util.CompactChoiceGroup;
+import com.subhub.app.util.SelectionGrid;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -59,19 +62,63 @@ public final class CompactChoiceGroupAndroidTest {
         });
     }
     @Test public void choicesWrapWithoutClippingAtNarrowWideAndLargeTextSizes() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(this::checkChoiceScreens);
+    }
+
+    @Test public void reusedRowsShrinkAndReflowWhenChildrenChange() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Context context = ApplicationProvider.getApplicationContext();
+            CompactChoiceGroup radio = new CompactChoiceGroup(context, null);
+            radio.setPreferredColumns(2, 88);
+            SelectionGrid independent = new SelectionGrid(context, null);
+            int width = Math.round(900 * context.getResources().getDisplayMetrics().density);
+            for (LinearLayout group : new LinearLayout[]{radio, independent}) {
+                RadioButton tall = new RadioButton(context), second = new RadioButton(context);
+                RadioButton third = new RadioButton(context);
+                group.addView(tall, new RadioGroup.LayoutParams(0, 160));
+                group.addView(second, new RadioGroup.LayoutParams(0, 32));
+                group.addView(third, new RadioGroup.LayoutParams(0, 44));
+                assertEquals(204, measureAndLayout(group, width));
+                assertEquals(160, second.getHeight());
+                ViewGroup.LayoutParams params = tall.getLayoutParams();
+                params.height = 20;
+                tall.setLayoutParams(params);
+                assertEquals(76, measureAndLayout(group, width));
+                assertEquals(32, third.getTop());
+                second.setVisibility(View.GONE);
+                assertEquals(44, measureAndLayout(group, width));
+                assertEquals(0, third.getTop());
+                second.setVisibility(View.VISIBLE);
+                assertEquals(96, measureAndLayout(group, width / 10));
+                assertEquals(76, measureAndLayout(group, width));
+            }
+        });
+    }
+
+    private static int measureAndLayout(ViewGroup group, int width) {
+        group.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int height = group.getMeasuredHeight();
+        group.layout(0, 0, width, height);
+        return height;
+    }
+
+    private void checkChoiceScreens() {
         Context base = ApplicationProvider.getApplicationContext();
         for (int width : new int[]{320, 480}) for (float scale : new float[]{1f, 1.7f}) {
             Configuration config = new Configuration(base.getResources().getConfiguration());
             config.fontScale = scale;
             config.screenWidthDp = width;
             Context themed = new android.view.ContextThemeWrapper(base.createConfigurationContext(config), R.style.Theme_SubHub);
-            for (int layout : new int[]{R.layout.activity_settings, R.layout.activity_global_settings}) {
+            for (int layout : new int[]{R.layout.activity_settings, R.layout.activity_export_workspace}) {
                 View page = LayoutInflater.from(themed).inflate(layout, null, false);
                 int pixels = Math.round(width * themed.getResources().getDisplayMetrics().density);
                 page.measure(View.MeasureSpec.makeMeasureSpec(pixels, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(1280, View.MeasureSpec.EXACTLY));
                 page.layout(0, 0, pixels, 1280);
-                assertTrue(check(page) > 0);
+                int groups = check(page);
+                if (layout == R.layout.activity_export_workspace) assertEquals(2, groups);
+                else assertTrue("Censor settings has visible choice groups", groups > 0);
             }
         }
     }

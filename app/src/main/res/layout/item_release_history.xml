@@ -5,17 +5,19 @@
     android:layout_height="wrap_content"
     android:layout_marginTop="@dimen/ui_gap_control"
     android:background="@drawable/bg_home_module"
-    android:clickable="true"
-    android:focusable="true"
-    android:foreground="?attr/selectableItemBackground"
+    android:importantForAccessibility="no"
     android:orientation="vertical"
     android:paddingHorizontal="12dp"
     android:paddingVertical="10dp">
 
     <LinearLayout
+        android:id="@+id/release_item_heading"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
         android:gravity="center_vertical"
+        android:minHeight="@dimen/control_min_height"
         android:orientation="horizontal">
 
         <LinearLayout
@@ -28,6 +30,7 @@
                 android:id="@+id/release_version"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:importantForAccessibility="no"
                 android:includeFontPadding="false"
                 android:textColor="@color/text_primary"
                 android:textSize="@dimen/ui_text_body"
@@ -38,6 +41,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/ui_gap_inline"
+                android:importantForAccessibility="no"
                 android:includeFontPadding="false"
                 android:textColor="@color/text_muted"
                 android:textSize="@dimen/ui_text_caption" />
@@ -55,6 +59,7 @@
     <TextView
         android:id="@+id/release_details"
         style="@style/Widget.SubHub.FieldHelp"
+        android:importantForAccessibility="yes"
         android:layout_marginTop="@dimen/ui_gap_control"
         android:paddingBottom="@dimen/ui_gap_inline"
         android:visibility="gone" />

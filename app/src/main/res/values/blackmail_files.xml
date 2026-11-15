@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="blackmail_files_android_permission">Allow Android file access</string>
+    <string name="blackmail_files_review">Review file sharing</string>
+    <string name="blackmail_files_review_pair">Let %1$s browse files in Android-accessible shared folders.</string>
+    <string name="blackmail_files_permission_needed">Check file access in Blackmail settings on the Sub’s phone.</string>
+    <string name="blackmail_demo_files_permission_needed">Check file access in Demo Sub’s Blackmail settings.</string>
+    <string name="blackmail_files_android_10">On Android 10, Blackmail can browse previously shared folders.</string>
+</resources>

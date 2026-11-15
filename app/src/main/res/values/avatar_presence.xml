@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="avatar_presence_online">#3BA55D</color>
+    <color name="avatar_presence_idle">#F49A38</color>
     <color name="avatar_presence_offline">#949BA4</color>
 </resources>

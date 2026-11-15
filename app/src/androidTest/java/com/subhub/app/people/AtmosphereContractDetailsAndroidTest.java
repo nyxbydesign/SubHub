@@ -6,23 +6,36 @@ import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.Spanned;
 import android.text.style.StyleSpan;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.ImageView;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.NativeUiActions;
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.onboarding.OnboardingState;
+import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
+import com.subhub.app.remote.RemoteExtraTimeUiFixture;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderPresentationAndroidTest;
@@ -35,6 +48,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import org.json.JSONArray;
@@ -50,10 +65,14 @@ public final class AtmosphereContractDetailsAndroidTest {
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private Map<String, ?> originalConsent;
+    private Map<String, ?> originalGag;
     private SharedPreferences preferences;
 
     @Before public void prepare() {
         originalConsent = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+        SharedPreferences gag = context.getSharedPreferences("atmosphere_gag", 0);
+        originalGag = new LinkedHashMap<>(gag.getAll());
+        assertTrue(gag.edit().putBoolean("enabled", true).commit());
         assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
                 .putBoolean("subliminal", true).putBoolean("popup", true).commit());
         preferences = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
@@ -75,6 +94,7 @@ public final class AtmosphereContractDetailsAndroidTest {
 
     @After public void restore() {
         SharedPreferenceTestRestore.restore(context.getSharedPreferences(SubFeaturePolicy.STORE, 0), originalConsent);
+        SharedPreferenceTestRestore.restore(context.getSharedPreferences("atmosphere_gag", 0), originalGag);
     }
 
     @Test public void localSummaryListsSelectedCategoriesAndQualitativePopupDetails() {
@@ -84,6 +104,7 @@ public final class AtmosphereContractDetailsAndroidTest {
         assertFalse(details.matches("(?s).*\\d.*"));
         assertFalse(details.contains("Private fixture"));
         assertFalse(details.contains("spawn"));
+        assertTrue(AtmosphereContractDetails.local(context).summary.endsWith("\nGagging Unknown"));
     }
 
     @Test public void disabledEmptyAndCustomSettingsRemainExplicitWithoutInventedSelections() {
@@ -105,8 +126,13 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         assertTrue(preferences.edit().putStringSet(SubliminalSettingsRepository.KEY_PACKS, Set.of("beta"))
                 .putString(PopupStormSettings.K_POSITION_MODE, "random").commit());
-        assertEquals(expected(), AtmosphereContractDetails.remote(context, sections,
+        assertEquals(expectedAtmosphere() + "\n\nGagging\nUnknown", AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", true, "popup", true), PersonSnapshot.Freshness.CURRENT).details);
+        sections.put("gag", com.subhub.app.remote.GagContractFields.defaults().put("enabled", true));
+        AtmosphereContractDetails activeGag =
+                AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.CURRENT);
+        assertTrue(activeGag.summary.endsWith("\nGagging On"));
+        assertTrue(activeGag.details.endsWith("\n\nGagging\nOn"));
         sections.getJSONObject("subliminal").put(SubliminalSettingsRepository.KEY_PACKS, new JSONArray(List.of("findom")));
         assertTrue(AtmosphereContractDetails.remote(context, sections, Map.of(), PersonSnapshot.Freshness.UNKNOWN)
                 .details.contains("Categories: Findom"));
@@ -116,15 +142,15 @@ public final class AtmosphereContractDetailsAndroidTest {
         JSONObject sections = sections();
         AtmosphereContractDetails blocked = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.CURRENT);
-        assertEquals("Whispers Disabled by Sub\nPopup Storm On", blocked.summary);
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGagging Unknown", blocked.summary);
         for (PersonSnapshot.Freshness freshness : PersonSnapshot.Freshness.values()) {
             AtmosphereContractDetails missing = AtmosphereContractDetails.remote(context, sections, Map.of(), freshness);
-            assertEquals("Whispers Configured on\nPopup Storm Configured on", missing.summary);
+            assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", missing.summary);
             assertTrue(missing.details.contains("Consent: Unknown"));
         }
         AtmosphereContractDetails stale = AtmosphereContractDetails.remote(context, sections,
                 Map.of("subliminal", false, "popup", true), PersonSnapshot.Freshness.STALE);
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", stale.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", stale.summary);
         assertTrue(stale.details.contains("Consent: Last observed disabled by Sub"));
         assertTrue(stale.details.contains("Consent: Last observed allowed"));
     }
@@ -144,8 +170,226 @@ public final class AtmosphereContractDetailsAndroidTest {
         }
     }
 
+    @Test public void firstPopulatedSubContractFrameIncludesAllSavedSectionsAndPortrait() throws Exception {
+        readyUi(false);
+        Bitmap portrait = Bitmap.createBitmap(ProfileImages.EDGE, ProfileImages.EDGE, Bitmap.Config.ARGB_8888);
+        String encoded;
+        try { encoded = ProfileImages.encode(portrait); }
+        finally { portrait.recycle(); }
+        People.installLocalProjection(person -> person.withContractDom(
+                new ProfileData("Cached Dom", "", encoded, "", 0), null));
+        assertTrue(preferences.edit().putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings")).commit());
+        String appLabel = context.getPackageManager().getApplicationLabel(
+                context.getPackageManager().getApplicationInfo("com.android.settings", 0)).toString();
+
+        Application app = (Application) context.getApplicationContext();
+        CompletableFuture<Boolean> firstFrame = new CompletableFuture<>();
+        Application.ActivityLifecycleCallbacks observer = new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityStarted(Activity activity) {
+                if (!(activity instanceof ContractActivity)) return;
+                View body = activity.findViewById(R.id.role_page_body);
+                body.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                    @Override public boolean onPreDraw() {
+                        if (((ViewGroup) body).getChildCount() == 0) return true;
+                        body.getViewTreeObserver().removeOnPreDrawListener(this);
+                        try {
+                            for (String key : List.of("apps", "duration", "censor", "limits", "wallet", "atmosphere"))
+                                assertNotNull(key, tagged(activity, "contract_section:" + key));
+                            assertEquals("Cached Dom", text(tagged(activity, "contract_dom_name")));
+                            assertTrue(text(tagged(activity, "contract_details:apps")).contains(appLabel));
+                            assertTrue(text(tagged(activity, "contract_details:atmosphere")).contains("Placement: Center"));
+                            ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+                            ImageView image = (ImageView) avatar.getChildAt(1);
+                            assertEquals(View.VISIBLE, image.getVisibility());
+                            assertNotNull(image.getDrawable());
+                            firstFrame.complete(true);
+                        } catch (RuntimeException | AssertionError failure) {
+                            firstFrame.completeExceptionally(failure);
+                        }
+                        return true;
+                    }
+                });
+            }
+            @Override public void onActivityCreated(Activity activity, Bundle state) {}
+            @Override public void onActivityResumed(Activity activity) {}
+            @Override public void onActivityPaused(Activity activity) {}
+            @Override public void onActivityStopped(Activity activity) {}
+            @Override public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+            @Override public void onActivityDestroyed(Activity activity) {}
+        };
+        app.registerActivityLifecycleCallbacks(observer);
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            assertTrue(firstFrame.get(10, TimeUnit.SECONDS));
+            var firstBitmap = new java.util.concurrent.atomic.AtomicReference<Bitmap>();
+            page.onActivity(activity -> firstBitmap.set(contractPortrait(activity)));
+
+            People.installLocalProjection(person -> person.withContractDom(
+                    new ProfileData("Renamed Dom", "", encoded, "", 0), null));
+            page.onActivity(ContractActivity::refresh);
+            await(page, activity -> "Renamed Dom".equals(text(tagged(activity, "contract_dom_name"))));
+            page.onActivity(activity -> assertSame(firstBitmap.get(), contractPortrait(activity)));
+
+            People.installLocalProjection(person -> person.withContractDom(ProfileData.empty("No portrait"), null));
+            page.onActivity(ContractActivity::refresh);
+            await(page, activity -> "No portrait".equals(text(tagged(activity, "contract_dom_name"))));
+            page.onActivity(activity -> {
+                ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+                assertNull(((ImageView) avatar.getChildAt(1)).getDrawable());
+            });
+        } finally {
+            app.unregisterActivityLifecycleCallbacks(observer);
+        }
+    }
+
+    private static Bitmap contractPortrait(Activity activity) {
+        ViewGroup avatar = (ViewGroup) tagged(activity, "contract_dom_avatar");
+        return ((android.graphics.drawable.BitmapDrawable) ((ImageView) avatar.getChildAt(1))
+                .getDrawable()).getBitmap();
+    }
+
+    @Test public void subContractOmitsDisabledDetailsAndKeepsEnabledSiblings() throws Exception {
+        readyUi(false);
+        assertTrue(preferences.edit()
+                .putBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, false)
+                .putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
+                .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true)
+                .putInt(AppTimerManager.KEY_TOTAL_MINUTES, 79)
+                .putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings"))
+                .commit());
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", true).putBoolean("wallet", false)
+                .putBoolean("subliminal", false).commit());
+        String savedAllowance = context.getString(R.string.arrangement_app_allowance,
+                context.getPackageManager().getApplicationLabel(
+                        context.getPackageManager().getApplicationInfo("com.android.settings", 0)),
+                new AppTimerManager(context).allowanceMinutes("com.android.settings"));
+        assertTrue(new LocalContractDetails(context).forSection("limits").contains(savedAllowance));
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            await(page, a -> tagged(a, "contract_section:wallet") != null);
+            page.onActivity(a -> {
+                assertDisabledSection(a, "censor");
+                assertDisabledSection(a, "wallet");
+                View limits = tagged(a, "contract_details:limits");
+                assertNotNull(limits);
+                String limitCopy = text(limits);
+                assertTrue(limitCopy.contains(context.getString(R.string.arrangement_minutes, 79)));
+                assertFalse(limitCopy.contains(savedAllowance));
+            });
+            onView(withTagValue(is("contract_section:atmosphere")))
+                    .perform(NativeUiActions.revealAboveNavigation(), click());
+            await(page, a -> detailsReady(tagged(a, "contract_details:atmosphere")));
+            page.onActivity(a -> {
+                String copy = text(tagged(a, "contract_details:atmosphere"));
+                assertTrue(copy.contains("Whispers\nDisabled by Sub"));
+                assertFalse(copy.contains("Categories:"));
+                assertFalse(copy.contains("Intensity:"));
+                assertTrue(copy.contains("Placement: Center"));
+                assertTrue(copy.contains("Gagging\nUnknown"));
+            });
+        }
+        assertTrue(preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).commit());
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", false).commit());
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            await(page, a -> tagged(a, "contract_section:atmosphere") != null);
+            page.onActivity(a -> {
+                assertDisabledSection(a, "limits");
+                View atmosphere = tagged(a, "contract_section:atmosphere");
+                assertFalse(atmosphere.isClickable());
+                assertTrue(text(atmosphere).contains("Whispers Disabled by Sub"));
+                assertTrue(text(atmosphere).contains("Popup Storm Off"));
+                assertTrue(text(atmosphere).contains("Gagging Unknown"));
+                assertNull(tagged(a, "contract_details:atmosphere"));
+            });
+        }
+        try (RemoteExtraTimeUiFixture paired = RemoteExtraTimeUiFixture.setupSub(context)) {
+            assertTrue(context.getSharedPreferences("subhub_onboarding", 0).edit()
+                    .putBoolean("completed", true).commit());
+            RemotePersonRepository projection = new RemotePersonRepository(context, RemoteFeature.get(context));
+            People.installLocalProjection(projection::localProjection);
+            PersonSnapshot managed = People.repository(context).load(PersonId.LOCAL);
+            assertFalse(managed.can(PersonSnapshot.Capability.EDIT_CONTRACT));
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                    .putBoolean("censor", false).putBoolean("limits", false).putBoolean("wallet", false).commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> {
+                    assertDisabledSection(a, "censor");
+                    assertDisabledSection(a, "limits");
+                    assertDisabledSection(a, "wallet");
+                });
+            }
+        }
+    }
+
+    @Test public void subWalletKeepsPaidPauseOnlyAndHidesDetailsAfterLegacyDisable() throws Exception {
+        readyUi(false);
+        SharedPreferences wallet = context.getSharedPreferences(PenanceManager.PREFS_NAME, 0);
+        Map<String, ?> savedWallet = new LinkedHashMap<>(wallet.getAll());
+        try {
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                    .putBoolean("wallet", true).commit());
+            assertTrue(preferences.edit().putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true).commit());
+            assertTrue(wallet.edit().clear().putBoolean("enabled", true)
+                    .putBoolean("rule_new_detection_enabled", false).putBoolean(PaidPauseManager.KEY_ENABLED, true)
+                    .commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> {
+                    View header = tagged(a, "contract_section:wallet");
+                    assertTrue(text(header).contains(context.getString(R.string.role_wallet_rule_count, 0)));
+                    assertTrue(header.isClickable());
+                    assertNotNull(tagged(a, "contract_details:wallet"));
+                });
+            }
+            assertTrue(wallet.getBoolean(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED, false));
+            assertTrue(wallet.getBoolean(PaidPauseManager.KEY_ENABLED, false));
+
+            assertTrue(preferences.edit().putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, false).commit());
+            assertTrue(wallet.edit().remove(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED).putBoolean("enabled", true)
+                    .putBoolean(PaidPauseManager.KEY_ENABLED, true).commit());
+            try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+                await(page, a -> tagged(a, "contract_section:wallet") != null);
+                page.onActivity(a -> assertDisabledSection(a, "wallet"));
+            }
+            assertTrue(wallet.getBoolean(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED, false));
+            assertFalse(wallet.getBoolean(PaidPauseManager.KEY_ENABLED, true));
+            assertFalse(new LocalContractDetails(context).forSection("wallet").isEmpty());
+        } finally {
+            SharedPreferenceTestRestore.restore(wallet, savedWallet);
+        }
+    }
+
+    private void assertDisabledSection(ContractActivity activity, String feature) {
+        View header = tagged(activity, "contract_section:" + feature);
+        assertNotNull(header);
+        assertTrue(text(header).contains(context.getString(R.string.role_disabled)));
+        assertFalse(header.isClickable());
+        assertNull(tagged(activity, "contract_details:" + feature));
+    }
+
     @Test public void domContractShowsDetailsWhileKeepingItsExistingEditRoute() throws Exception {
         readyUi(true);
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("limits", true).commit());
+        assertTrue(preferences.edit()
+                .putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("com.android.settings"))
+                .putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, true)
+                .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true).commit());
+        PersonRepository repository = People.repository(context);
+        PersonSnapshot full = repository.load(PersonId.LOCAL);
+        assertEquals(2, full.allowances.size());
+        PersonSnapshot profile = repository.loadForPage(PersonId.LOCAL, false);
+        assertEquals(full.capabilities, profile.capabilities);
+        assertTrue(profile.sections.isEmpty());
+        assertTrue(profile.allowances.isEmpty());
+        PersonSnapshot contract = repository.loadForPage(PersonId.LOCAL, true);
+        assertTrue(contract.allowances.isEmpty());
+        assertEquals(PersonPresentation.contract(full), PersonPresentation.contract(contract));
+
         Intent intent = new Intent(context, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
                 .putExtra("person_section", "contracts");
         try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(intent)) {
@@ -165,8 +409,9 @@ public final class AtmosphereContractDetailsAndroidTest {
         for (boolean dom : new boolean[]{false, true}) {
             for (PersonSnapshot.Freshness freshness : List.of(PersonSnapshot.Freshness.STALE, PersonSnapshot.Freshness.UNKNOWN)) {
                 readyUi(dom);
+                List<PersonSnapshot.Section> savedSections = People.repository(context).load(PersonId.LOCAL).sections;
                 People.installLocalProjection(p -> new PersonSnapshot(p.id, p.name, p.device, p.contractName,
-                        p.serviceLabel, p.connection, p.freshness, p.lastSyncedAt, p.capabilities, p.sections,
+                        p.serviceLabel, p.connection, p.freshness, p.lastSyncedAt, p.capabilities, savedSections,
                         p.allowances, p.currency, p.protectedSeconds, p.activityEvents, p.tributeCents, p.sessions,
                         p.serviceActive, new PersonSnapshot.SyncState(freshness, p.sync.stats, p.sync.runtime, "", ""))
                         .withContractDom(ProfileData.empty("Dom"), null));
@@ -184,6 +429,11 @@ public final class AtmosphereContractDetailsAndroidTest {
                         } else {
                             assertTrue(copy.contains(expected()));
                             assertTrue(text(tagged(a, "person_contract_scope")).contains(context.getString(R.string.role_stale_data)));
+                            if (!dom) {
+                                assertTrue(text(tagged(a, headerTag)).contains(context.getResources()
+                                        .getQuantityString(R.plurals.atmosphere_effects_active, 2, 2)));
+                                assertNotNull(tagged(a, "contract_details:limits"));
+                            }
                         }
                     });
                 }
@@ -199,6 +449,10 @@ public final class AtmosphereContractDetailsAndroidTest {
     }
 
     private String expected() {
+        return expectedAtmosphere() + "\n\nGagging\nUnknown";
+    }
+
+    private String expectedAtmosphere() {
         return "Whispers\nOn\nCategories: Custom, Focus, Obedience\nIntensity: Strict\n\n"
                 + "Popup Storm\nOn\nPlacement: Center · Avoid detections\nEffects: Bursts, Bouncing, Tease (Blur)";
     }
@@ -216,7 +470,7 @@ public final class AtmosphereContractDetailsAndroidTest {
     private static boolean detailsReady(View value) {
         if (!(value instanceof ViewGroup) || !value.isShown()) return false;
         ViewGroup group = (ViewGroup) value;
-        if (group.getChildCount() != 2) return false;
+        if (group.getChildCount() != 3) return false;
         for (int index = 0; index < group.getChildCount(); index++) {
             View child = group.getChildAt(index);
             if (!(child instanceof TextView) || ((TextView) child).getLayout() == null
@@ -227,7 +481,7 @@ public final class AtmosphereContractDetailsAndroidTest {
 
     private void assertDetails(View value) {
         ViewGroup group = (ViewGroup) value;
-        assertEquals(2, group.getChildCount());
+        assertEquals(3, group.getChildCount());
         assertEquals(expected(), text(group));
         for (int index = 0; index < group.getChildCount(); index++) {
             TextView row = (TextView) group.getChildAt(index);

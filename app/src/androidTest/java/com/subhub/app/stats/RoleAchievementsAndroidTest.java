@@ -107,7 +107,7 @@ public final class RoleAchievementsAndroidTest {
         saved.edit().putStringSet("unlocked", new LinkedHashSet<>(Collections.singletonList("first_session")))
                 .putStringSet("pending_notifications", new LinkedHashSet<>(Collections.singletonList("first_session"))).commit();
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        assertEquals(25, dom.all().size());
+        assertEquals(31, dom.all().size());
         List<AchievementManager.Achievement> awarded = dom.checkDomAchievements(facts());
         assertFalse(awarded.isEmpty());
         long timestamp = dom.getUnlockedAt("dom_subs_1");
@@ -119,7 +119,7 @@ public final class RoleAchievementsAndroidTest {
         assertTrue(dom.all().isEmpty());
         assertTrue(dom.takePendingNotifications().isEmpty());
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        assertEquals(49, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
+        assertEquals(43, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
         assertFalse(sub.isUnlocked("dom_subs_1"));
         assertEquals("first_session", sub.takePendingNotifications().get(0).getId());
         ControllerPinManager.enterDomMode();
@@ -159,22 +159,83 @@ public final class RoleAchievementsAndroidTest {
         SharedPreferences saved = context.getSharedPreferences("betablocker_achievements", 0);
         Set<String> earned = new LinkedHashSet<>(Arrays.asList("first_custom_phrase", "phrase_library",
                 "paypal_vault", "dom_time_1hr", "dom_tribute_10", "text_filter_enabled",
-                "text_filter_catalog", "color_picker", "border_artist", "style_explorer"));
+                "text_filter_catalog", "color_picker", "border_artist", "style_explorer",
+                "app_mode_guardian", "app_assignment_curator", "limits_setter", "limits_dual_guard",
+                "wallet_keeper", "tribute_rulesmith", "paid_pause"));
         long date = 1_790_000_000_000L;
         SharedPreferences.Editor edit = saved.edit().putStringSet("unlocked", earned)
                 .putStringSet("pending_notifications", earned);
         for (String id : earned) edit.putLong("unlocked_at." + id, date);
         assertTrue(edit.commit());
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        for (String id : earned) { assertTrue(dom.isUnlocked(id)); assertEquals(date, dom.getUnlockedAt(id)); }
+        assertFalse(dom.isUnlocked("paypal_vault"));
+        assertEquals(0, dom.getUnlockedAt("paypal_vault"));
+        for (String id : earned) {
+            if ("paypal_vault".equals(id)) continue;
+            assertTrue(dom.isUnlocked(id));
+            assertEquals(date, dom.getUnlockedAt(id));
+        }
         assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
-        assertEquals(earned.size(), dom.takePendingNotifications().size());
+        assertEquals(earned.size() - 1, dom.takePendingNotifications().size());
         assertTrue(dom.takePendingNotifications().isEmpty());
         ControllerPinManager.enterSubMode();
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        for (String id : earned) assertFalse(sub.isUnlocked(id));
+        assertTrue(sub.isUnlocked("paypal_vault"));
+        assertEquals(date, sub.getUnlockedAt("paypal_vault"));
+        for (String id : earned) if (!"paypal_vault".equals(id)) assertFalse(sub.isUnlocked(id));
+        List<AchievementManager.Achievement> pending = sub.takePendingNotifications();
+        assertEquals(1, pending.size());
+        assertEquals("paypal_vault", pending.get(0).getId());
         assertTrue(sub.takePendingNotifications().isEmpty());
         assertEquals(earned, saved.getStringSet("unlocked", Collections.emptySet()));
+    }
+
+    @Test public void appModeAndLimitsMilestonesUnlockOnlyInDom() {
+        SharedPreferences configuration = new SettingsRepository(context).preferences();
+        assertTrue(configuration.edit()
+                .putBoolean(com.subhub.app.appmode.AppModeManager.KEY_ARMED, true)
+                .putBoolean(com.subhub.app.appmode.AppModeManager.KEY_ALL_APPS, false)
+                .putStringSet(com.subhub.app.appmode.AppModeManager.KEY_INCLUDED_PACKAGES,
+                        Set.of("fixture.one", "fixture.two", "fixture.three"))
+                .putBoolean(com.subhub.app.appmode.AppTimerManager.KEY_PER_APP_ENABLED, true)
+                .putBoolean(com.subhub.app.appmode.AppTimerManager.KEY_TOTAL_ENABLED, true)
+                .commit());
+        Set<String> moved = Set.of("app_mode_guardian", "app_assignment_curator",
+                "limits_setter", "limits_dual_guard");
+        AchievementManager sub = new AchievementManager(context);
+        sub.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        for (String id : moved) assertFalse(sub.isUnlocked(id));
+
+        AchievementManager dom = AchievementManager.forWorkspace(context);
+        List<String> unlocked = new ArrayList<>();
+        for (AchievementManager.Achievement badge : dom.checkDomAchievements(DomStatsSnapshot.empty()))
+            if (moved.contains(badge.getId())) unlocked.add(badge.getId());
+        assertEquals(moved, new LinkedHashSet<>(unlocked));
+        for (String id : moved) assertTrue(dom.getUnlockedAt(id) > 0);
+        assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
+    }
+
+    @Test public void tributeSetupMilestonesUnlockOnlyInDom() {
+        SharedPreferences wallet = context.getSharedPreferences("subhub_penance", 0);
+        // Saved rule choices are sufficient. No live payment, service, or consent changes.
+        assertTrue(wallet.edit()
+                .putBoolean(com.subhub.app.penance.PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED, true)
+                .putBoolean("rule_new_detection_enabled", true)
+                .putBoolean("rule_censored_dwell_enabled", true)
+                .putBoolean("rule_censored_tap_enabled", true)
+                .putBoolean(com.subhub.app.penance.PaidPauseManager.KEY_ENABLED, true).commit());
+        Set<String> moved = Set.of("wallet_keeper", "tribute_rulesmith", "paid_pause");
+        AchievementManager sub = new AchievementManager(context);
+        sub.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        for (String id : moved) assertFalse(sub.isUnlocked(id));
+
+        AchievementManager dom = AchievementManager.forWorkspace(context);
+        Set<String> newlyUnlocked = new LinkedHashSet<>();
+        for (AchievementManager.Achievement badge : dom.checkDomAchievements(DomStatsSnapshot.empty()))
+            if (moved.contains(badge.getId())) newlyUnlocked.add(badge.getId());
+        assertEquals(moved, newlyUnlocked);
+        for (String id : moved) assertTrue(dom.getUnlockedAt(id) > 0);
+        assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
     }
 
     @Test public void liveStreakAndTimedLockProgressDoNotRequireSessionRestart() {

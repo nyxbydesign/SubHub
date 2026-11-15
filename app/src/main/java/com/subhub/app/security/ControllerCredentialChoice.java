@@ -30,18 +30,27 @@ public final class ControllerCredentialChoice {
             input.setHint(ControllerPinManager.isConfigured(activity) ? R.string.keyholder_pin_or_code : R.string.authenticator_code);
     }
     public boolean verify() {
+        return verify(null);
+    }
+
+    boolean verify(Long localDomRevision) {
         if (workspaceOnly) {
             if (isCurrentAuthority() && ControllerPinManager.verifyLocalDomWorkspace(activity, input.getText().toString())) return true;
             input.setError(activity.getString(R.string.controller_pin_wrong));
             return false;
         }
-        if (!isCurrentAuthority() || authority==KeyholderProvider.State.PENDING || authority==KeyholderProvider.State.UNAVAILABLE) {
+        if (!isCurrentAuthority(localDomRevision) || authority == KeyholderProvider.State.PENDING
+                || authority == KeyholderProvider.State.UNAVAILABLE) {
             input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));
             return false;
         }
         String value = input.getText().toString();
-        if (authority == KeyholderProvider.State.NONE && ControllerPinManager.verify(activity, value)) return true;
-        if (!isCurrentAuthority()) {
+        if (authority == KeyholderProvider.State.NONE) {
+            boolean pinVerified = localDomRevision == null ? ControllerPinManager.verify(activity, value)
+                    : ControllerPinManager.verify(activity, value, provider, localDomRevision);
+            if (pinVerified) return true;
+        }
+        if (!isCurrentAuthority(localDomRevision)) {
             input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));return false;
         }
         boolean remote = authority != KeyholderProvider.State.NONE;
@@ -51,7 +60,11 @@ public final class ControllerCredentialChoice {
             input.setError(activity.getString(R.string.controller_pin_wrong));return false;
         }
         ControllerAuthenticator.Result result;
-        try { result = remote ? provider.verifyCode(value) : authenticator.verify(value); }
+        try {
+            if (remote) result = provider.verifyCode(value);
+            else if (localDomRevision == null) result = authenticator.verify(value);
+            else result = authenticator.verify(value, provider, localDomRevision);
+        }
         catch (RuntimeException unavailable) { result = ControllerAuthenticator.Result.UNAVAILABLE; }
         if (result == ControllerAuthenticator.Result.SUCCESS) return true;
         if (result == ControllerAuthenticator.Result.INVALID) com.subhub.app.penance.TamperTributeReporter.record(activity);
@@ -64,6 +77,11 @@ public final class ControllerCredentialChoice {
 
     public boolean isCurrentAuthority() { return provider == com.subhub.app.people.People.keyholder()
             && (workspaceOnly ? ControllerPinManager.canUnlockLocalDomWorkspace(activity) : authority == currentAuthority()); }
+
+    boolean isCurrentAuthority(Long localDomRevision) {
+        return isCurrentAuthority() && (localDomRevision == null || authority == KeyholderProvider.State.NONE
+                && ControllerPinManager.currentLocalDomSession(provider, localDomRevision));
+    }
 
     private static KeyholderProvider.State currentAuthority() {
         try { return com.subhub.app.people.People.keyholder().state(); }

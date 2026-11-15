@@ -45,10 +45,12 @@ final class LocalAppPresence implements AutoCloseable,Application.ActivityLifecy
                 && keyguard != null && !keyguard.isKeyguardLocked();
     }
 
-    synchronized JSONObject snapshot(Boolean previousForeground) throws JSONException {
+    synchronized JSONObject snapshot(Boolean previousForeground, Boolean previousBackgroundSync) throws JSONException {
         boolean visible = foreground();
+        boolean backgroundSync = BackgroundSyncPreferences.enabled(context);
         // The first existing frame carries presence. Later checkpoints carry only a change.
-        if (previousForeground != null && previousForeground == visible) return null;
+        if (Boolean.valueOf(visible).equals(previousForeground)
+                && Boolean.valueOf(backgroundSync).equals(previousBackgroundSync)) return null;
         synchronized (SEQUENCE_LOCK) {
             SharedPreferences preferences = context.getSharedPreferences("subhub_foreground_presence", 0);
             long previous = preferences.getLong("sequence", 0);
@@ -56,7 +58,8 @@ final class LocalAppPresence implements AutoCloseable,Application.ActivityLifecy
             long sequence = previous + 1;
             if (!preferences.edit().putLong("sequence", sequence).commit())
                 throw new JSONException("Presence sequence could not be saved");
-            return new JSONObject().put("version", 1).put("sequence", sequence).put("foreground", visible);
+            return new JSONObject().put("version", 1).put("sequence", sequence)
+                    .put("foreground", visible).put("backgroundSync", backgroundSync);
         }
     }
 

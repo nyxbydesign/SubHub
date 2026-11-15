@@ -109,7 +109,7 @@ public final class UpdateNotificationAndroidTest {
             assertEquals(-1L, new UpdateDownloadCoordinator(context).start(candidate));
             assertTrue(file.isFile());
             assertFalse(state.installRequested());
-        } finally { state.clearDownload(true); file.delete(); }
+        } finally { state.clearDownload(); file.delete(); }
     }
 
     @Test public void notificationDeniedKeepsTransferSilentAndReadyUsesPrivacyPresentation() throws Exception {
@@ -134,7 +134,7 @@ public final class UpdateNotificationAndroidTest {
             assertEquals(R.drawable.ic_discreet_filter, notice.getSmallIcon().getResId());
             assertEquals(context.getString(R.string.privacy_discreet_name),
                     notice.extras.getCharSequence(Notification.EXTRA_TITLE));
-        } finally { state.clearDownload(true); file.delete(); }
+        } finally { state.clearDownload(); file.delete(); }
     }
 
     @Test public void staleCompletionCannotClaimAnotherVerifiedFileOrCurrentGeneration() throws Exception {
@@ -157,7 +157,7 @@ public final class UpdateNotificationAndroidTest {
             state.setDownloadId(201);
             assertFalse(UpdateDownloadFinalizer.isCurrent(state, 201, revision, candidate));
             assertNull(find(null));
-        } finally { state.setDownloadId(-1); state.clearDownload(true); file.delete(); }
+        } finally { state.setDownloadId(-1); state.clearDownload(); file.delete(); }
     }
 
     @Test public void sameVersionManifestReplacementCancelsOldTransferAndBytes() throws Exception {
@@ -177,7 +177,7 @@ public final class UpdateNotificationAndroidTest {
             try { new UpdateDownloadCoordinator(context).start(candidate); fail("Stale candidate"); }
             catch (IllegalStateException expected) { }
             assertNull(find(null));
-        } finally { state.clearDownload(true); file.delete(); }
+        } finally { state.clearDownload(); file.delete(); }
     }
 
     @SuppressWarnings("deprecation")
@@ -213,7 +213,7 @@ public final class UpdateNotificationAndroidTest {
             assertEquals(-1L, state.downloadId());
             assertEquals("", state.verifiedPath());
             assertNull(find(null));
-        } finally { state.clearDownload(true); file.delete(); }
+        } finally { state.clearDownload(); file.delete(); }
     }
 
     @Test public void refusedReadyCommitInvalidatesMemoryBeforeConcurrentPreparation() throws Exception {

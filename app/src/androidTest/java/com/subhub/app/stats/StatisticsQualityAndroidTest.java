@@ -19,6 +19,8 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.security.ControllerPinManager;
 
 import org.junit.*;
@@ -102,6 +104,49 @@ public class StatisticsQualityAndroidTest {
                                 a.findViewById(R.id.stats_totals_details).getVisibility());
                     });
         }
+    }
+
+    @Test
+    public void localHistoryActionPagesAndRestoresRetainedSessions() throws Exception {
+        boolean originalDom = ControllerPinManager.isDomModeActive();
+        SharedPreferences preferences = context.getSharedPreferences(StatsRepository.PREFS_NAME, 0);
+        String originalHistory = preferences.getString("session_history", null);
+        long start = System.currentTimeMillis() - 600_000;
+        java.util.StringJoiner history = new java.util.StringJoiner(";");
+        for (int i = 0; i < 8; i++) history.add((start + i * 60_000) + ",30,0");
+        assertTrue(preferences.edit().putString("session_history", history.toString()).commit());
+        ControllerPinManager.enterSubMode();
+        Intent local = new Intent(context, StatsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
+        try (ActivityScenario<StatsActivity> stats = ActivityScenario.launch(local)) {
+            await(stats, R.id.stats_sessions_more);
+            assertHistoryPage(stats, 3, R.string.stats_more_sessions);
+            tapHistoryAction();
+            assertHistoryPage(stats, 6, R.string.stats_more_sessions);
+            stats.recreate();
+            await(stats, R.id.stats_sessions_more);
+            assertHistoryPage(stats, 6, R.string.stats_more_sessions);
+            tapHistoryAction();
+            assertHistoryPage(stats, 8, R.string.stats_fewer_sessions);
+            tapHistoryAction();
+            assertHistoryPage(stats, 3, R.string.stats_more_sessions);
+        } finally {
+            assertTrue(preferences.edit().putString("session_history", originalHistory).commit());
+            if (originalDom) ControllerPinManager.enterDomMode();
+        }
+    }
+
+    private static void tapHistoryAction() {
+        onView(withId(R.id.stats_sessions_more))
+                .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+    }
+
+    private static void assertHistoryPage(ActivityScenario<StatsActivity> scenario, int rows, int actionLabel) {
+        scenario.onActivity(activity -> {
+            Button action = activity.findViewById(R.id.stats_sessions_more);
+            assertEquals(activity.getString(actionLabel), action.getText().toString());
+            assertEquals(rows, countSessions((View) action.getParent()));
+        });
     }
 
     static void await(ActivityScenario<? extends android.app.Activity> scenario, int id)

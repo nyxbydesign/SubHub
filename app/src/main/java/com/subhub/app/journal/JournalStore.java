@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import com.subhub.app.remote.RemoteProtocol;
+import com.subhub.app.util.LowercaseHex;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -54,21 +55,36 @@ public final class JournalStore extends SQLiteOpenHelper {
     }
 
     public synchronized List<JournalEntry> localShared(boolean viewerDom, int offset) throws JSONException {
+        return localShared(viewerDom, offset, PAGE_SIZE + 1);
+    }
+
+    synchronized JournalEntry latest(boolean dom, String relationship, boolean localShared) throws JSONException {
+        List<JournalEntry> result = localShared ? localShared(dom, 0, 1)
+                : relationship == null ? list("entries", "role=?", new String[]{role(dom)}, 0, 1)
+                : list("incoming", "scope=?", new String[]{scope(relationship)}, 0, 1);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    private List<JournalEntry> localShared(boolean viewerDom, int offset, int limit) throws JSONException {
         if (offset < 0 || offset > MAX_ENTRIES) throw new IllegalArgumentException("Invalid journal page");
         List<JournalEntry> result = new ArrayList<>();
         try (Cursor c = getReadableDatabase().rawQuery("SELECT e.body FROM entries e JOIN audiences a ON e.id=a.id "
                 + "WHERE e.role=? AND a.scope=? ORDER BY e.created DESC,e.id DESC LIMIT ? OFFSET ?",
-                new String[]{role(!viewerDom), viewerDom ? "local-dom" : "local-sub", Integer.toString(PAGE_SIZE + 1), Integer.toString(offset)})) {
+                new String[]{role(!viewerDom), viewerDom ? "local-dom" : "local-sub", Integer.toString(limit), Integer.toString(offset)})) {
             while (c.moveToNext()) result.add(JournalEntry.parse(new JSONObject(c.getString(0))));
         }
         return result;
     }
 
     private List<JournalEntry> list(String table, String where, String[] args, int offset) throws JSONException {
+        return list(table, where, args, offset, PAGE_SIZE + 1);
+    }
+
+    private List<JournalEntry> list(String table, String where, String[] args, int offset, int limit) throws JSONException {
         if (offset < 0 || offset > MAX_ENTRIES) throw new IllegalArgumentException("Invalid journal page");
         List<JournalEntry> result = new ArrayList<>();
         try (Cursor c = getReadableDatabase().query(table, new String[]{"body"}, where, args, null, null,
-                "created DESC,id DESC", (PAGE_SIZE + 1) + " OFFSET " + offset)) {
+                "created DESC,id DESC", limit + " OFFSET " + offset)) {
             while (c.moveToNext()) result.add(JournalEntry.parse(new JSONObject(c.getString(0))));
         }
         return result;
@@ -240,9 +256,7 @@ public final class JournalStore extends SQLiteOpenHelper {
         }
     }
     private static String hash(String text) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-        StringBuilder result = new StringBuilder();
-        for (byte b : digest) result.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
-        return result.toString();
+        return LowercaseHex.encode(
+                MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
     }
 }

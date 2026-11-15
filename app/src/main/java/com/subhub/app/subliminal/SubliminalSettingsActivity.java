@@ -13,9 +13,9 @@ import android.view.View;
 import android.widget.CheckBox;
 import android.widget.SeekBar;
 
-import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
+import com.subhub.app.configuration.FeatureEditorActivity;
 import com.subhub.app.databinding.ActivitySubliminalSettingsBinding;
 import com.subhub.app.security.ControllerPinManager;
 
@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Set;
 
 /** Dom-only configuration for the local subliminal module. */
-public final class SubliminalSettingsActivity extends AppCompatActivity {
+public final class SubliminalSettingsActivity extends FeatureEditorActivity {
     private ActivitySubliminalSettingsBinding binding;
     private SubliminalSettingsRepository repository;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -235,15 +235,4 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding = null;
         super.onDestroy();
     }
-    @Override protected void onSaveInstanceState(Bundle state) {
-        FeatureEditorSession.saveState(this, state);
-        super.onSaveInstanceState(state);
-    }
-
-    @Override protected void onRestoreInstanceState(Bundle state) {
-        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
-    }
-
 }

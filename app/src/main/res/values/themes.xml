@@ -154,6 +154,14 @@
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="Widget.SubHub.Card" parent="">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:paddingStart">@dimen/ui_card_padding</item>
+        <item name="android:paddingEnd">@dimen/ui_card_padding</item>
+        <item name="android:paddingTop">@dimen/ui_card_padding_vertical</item>
+        <item name="android:paddingBottom">@dimen/ui_card_padding_vertical</item>
+    </style>
+
     <style name="Widget.SubHub.SectionHeader" parent="">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -285,19 +293,6 @@
         <item name="android:elevation">2dp</item>
     </style>
 
-    <style name="Widget.SubHub.BalanceTile" parent="">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">58dp</item>
-        <item name="android:layout_columnWeight">1</item>
-        <item name="android:layout_margin">3dp</item>
-        <item name="android:background">@drawable/bg_stat_card</item>
-        <item name="android:gravity">center</item>
-        <item name="android:orientation">vertical</item>
-        <item name="android:padding">6dp</item>
-        <item name="android:elevation">2dp</item>
-    </style>
-
     <style name="Widget.SubHub.BalanceValue" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
@@ -317,19 +312,6 @@
         <item name="android:textStyle">bold</item>
         <item name="android:gravity">center</item>
         <item name="android:includeFontPadding">false</item>
-    </style>
-
-    <style name="Widget.SubHub.RuleTile" parent="">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">154dp</item>
-        <item name="android:layout_gravity">fill</item>
-        <item name="android:layout_columnWeight">1</item>
-        <item name="android:layout_margin">3dp</item>
-        <item name="android:background">@drawable/bg_stat_card</item>
-        <item name="android:orientation">vertical</item>
-        <item name="android:padding">7dp</item>
-        <item name="android:elevation">2dp</item>
     </style>
 
     <style name="Widget.SubHub.RuleToggle" parent="Widget.SubHub.Switch">
@@ -356,36 +338,11 @@
         <item name="android:hint">@null</item>
     </style>
 
-    <style name="Widget.SubHub.FieldTile" parent="">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">124dp</item>
-        <item name="android:layout_gravity">fill</item>
-        <item name="android:layout_columnWeight">1</item>
-        <item name="android:layout_margin">3dp</item>
-        <item name="android:background">@drawable/bg_stat_card</item>
-        <item name="android:orientation">vertical</item>
-        <item name="android:padding">7dp</item>
-        <item name="android:elevation">2dp</item>
-    </style>
-
     <style name="Widget.SubHub.WalletFieldLabel" parent="Widget.SubHub.FieldLabel">
         <item name="android:layout_marginTop">0dp</item>
     </style>
 
     <style name="Widget.SubHub.WalletFieldHelp" parent="Widget.SubHub.FieldHelp">
-    </style>
-
-    <style name="Widget.SubHub.HomeStatCard" parent="">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">64dp</item>
-        <item name="android:layout_weight">1</item>
-        <item name="android:background">@drawable/bg_stat_card</item>
-        <item name="android:gravity">center</item>
-        <item name="android:orientation">vertical</item>
-        <item name="android:padding">8dp</item>
-        <item name="android:elevation">2dp</item>
     </style>
 
     <style name="Widget.SubHub.HomeStatValue" parent="">

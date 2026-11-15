@@ -54,8 +54,16 @@ public class OnboardingAndroidTest {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         assertTrue(device.wait(Until.hasObject(By.res("com.subhub.app", "onboarding_role_choice")), 8000));
         onView(withId(R.id.tour_next)).check(matches(org.hamcrest.Matchers.not(isEnabled())));
+        onView(withId(R.id.tour_next)).check((view, failure) -> {
+            if (failure != null) throw failure;
+            assertEquals(context.getColor(R.color.text_muted), ((TextView) view).getCurrentTextColor());
+        });
         onView(withTagValue(org.hamcrest.Matchers.is("device_role:SUB_ONLY"))).perform(scrollTo(), click());
-        onView(withId(R.id.tour_next)).perform(click());
+        onView(withId(R.id.tour_next)).check((view, failure) -> {
+            if (failure != null) throw failure;
+            assertTrue(view.isEnabled());
+            assertEquals(context.getColor(R.color.text_primary), ((TextView) view).getCurrentTextColor());
+        }).perform(click());
         onView(withId(R.id.tour_skip)).perform(click());
         assertTrue(device.wait(Until.hasObject(By.res("com.subhub.app", "nav_home")), 8000));
         assertTrue(OnboardingState.completed(context)); assertFalse(OnboardingState.shouldStart(context));
@@ -70,6 +78,11 @@ public class OnboardingAndroidTest {
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(OnboardingActivity.class)) {
             OnboardingTestSupport.goTo(tour, "sub_apps", DeviceRolePreferences.Mode.SUB_ONLY);
             tour.recreate(); assertEquals("sub_apps", OnboardingTestSupport.pageId(tour));
+            tour.onActivity(activity -> {
+                TextView next = activity.findViewById(R.id.tour_next);
+                assertTrue(next.isEnabled());
+                assertEquals(activity.getColor(R.color.text_primary), next.getCurrentTextColor());
+            });
             capture(tour, "tour-apps");
             OnboardingTestSupport.goTo(tour, "device_permissions", DeviceRolePreferences.Mode.SUB_ONLY);
             onView(withId(R.id.tour_next)).check(matches(withText(R.string.tour_finish)));

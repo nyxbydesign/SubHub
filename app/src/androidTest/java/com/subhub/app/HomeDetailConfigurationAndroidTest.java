@@ -1,5 +1,6 @@
 package com.subhub.app;
 
+import static com.subhub.app.NativeUiActions.assertNoViewWithResourceId;
 import static org.junit.Assert.*;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
@@ -154,7 +155,7 @@ public final class HomeDetailConfigurationAndroidTest {
         String copy = text(content);
         assertTrue(copy.contains(context.getString(R.string.keyholder_home_title)));
         assertTrue(copy.contains(context.getString(R.string.keyholder_status_pin)));
-        assertNull(activity.findViewById(R.id.authenticator_pairing_qr));
+        assertNoViewWithResourceId(activity, "authenticator_pairing_qr");
         assertFalse(copy.contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
         assertTrue(activity.findViewById(R.id.keyholder_pair_device).isShown());
         assertTrue(activity.findViewById(R.id.keyholder_pin_change_button).isShown());

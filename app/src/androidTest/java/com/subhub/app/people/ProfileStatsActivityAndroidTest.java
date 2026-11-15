@@ -46,6 +46,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -135,8 +136,17 @@ public final class ProfileStatsActivityAndroidTest {
             await(() -> tag(profile, "person_tab:stats") != null);
             onView(withTagValue(is("person_tab:stats"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             StatsActivity stats = resumed(StatsActivity.class);
-            await(() -> stats.findViewById(R.id.profile_stats_allowances) != null
-                    && text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+            String streakLabel = context.getString(R.string.statistics_current_streak);
+            AtomicBoolean populated = new AtomicBoolean();
+            await(() -> {
+                onMain(() -> {
+                    if (!text(stats.findViewById(R.id.stats_totals_details)).contains(streakLabel)) return;
+                    assertTrue("App allowances are visible with the first populated totals",
+                            text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+                    populated.set(true);
+                });
+                return populated.get();
+            });
             onMain(() -> {
                 assertEquals(PersonId.LOCAL, PersonRoutes.requireId(stats.getIntent()));
                 assertNotNull(stats.findViewById(R.id.stats_lifetime_summary));
@@ -429,7 +439,9 @@ public final class ProfileStatsActivityAndroidTest {
     public void localProfileInlineDurationAndFlatStatsFitActualRequestedFontAndViewport() throws Exception {
         long start = System.currentTimeMillis() - 600000;
         assertTrue(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit()
-                .putString("session_history", "2," + start + ",90,4,120000,1,2,123,4,5,0").commit());
+                .putString("session_history", "2," + start + ",90,4,120000,1,2,123,4,5,0")
+                .putInt("current_streak", 1).putString("last_session_date", java.time.LocalDate.now().toString())
+                .commit());
         source.entries = List.of(event(PersonId.LOCAL, "visual-local", 1));
         try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(profile(PersonId.LOCAL))) {
             PersonActivity profile = resumed(PersonActivity.class);
@@ -464,7 +476,10 @@ public final class ProfileStatsActivityAndroidTest {
             onView(withTagValue(is("person_tab:stats")))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             StatsActivity stats = resumed(StatsActivity.class);
-            await(() -> text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome"));
+            String streakLabel = context.getString(R.string.statistics_current_streak);
+            await(() -> text(stats.findViewById(R.id.stats_totals_details)).contains(streakLabel));
+            onMain(() -> assertTrue("App allowances are visible with the first populated totals",
+                    text(stats.findViewById(R.id.profile_stats_allowances)).contains("Chrome")));
             try {
                 captureLocal(stats, "stats-top", null, () -> {
                     assertEquals(PersonId.LOCAL, PersonRoutes.requireId(stats.getIntent()));
@@ -478,7 +493,7 @@ public final class ProfileStatsActivityAndroidTest {
                     assertTrue(stats.findViewById(R.id.button_back).isShown());
                     TextView subtitle = stats.findViewById(R.id.primary_header_subtitle);
                     assertTrue(subtitle.isShown());
-                    assertEquals(context.getString(R.string.role_this_device), subtitle.getText().toString());
+                    assertEquals(ProfileNames.get(context, false), subtitle.getText().toString());
                     TextView title = stats.findViewById(R.id.primary_header_title);
                     assertEquals(context.getString(R.string.role_stats), title.getText().toString());
                     assertEquals("Stats remains on one line", 1, title.getLineCount());
@@ -502,8 +517,21 @@ public final class ProfileStatsActivityAndroidTest {
                     assertTrue(text(history).contains(context.getString(R.string.stats_assessed)));
                     assertTrue(text(history).contains(com.subhub.app.penance.WalletCurrency.format("EUR", 123)));
                 });
-                captureLocal(stats, "stats-feature-totals", stats.findViewById(R.id.stats_totals_details),
-                        () -> assertLocalTextFits(stats.findViewById(R.id.stats_totals_details)));
+                captureLocal(stats, "stats-feature-totals", stats.findViewById(R.id.stats_totals_details), () -> {
+                    View totals = stats.findViewById(R.id.stats_totals_details);
+                    assertLocalTextFits(totals);
+                    String label = stats.getString(R.string.statistics_current_streak);
+                    String day = stats.getResources().getQuantityString(R.plurals.stats_days_value, 1, 1);
+                    assertTrue("A one-day streak must use the singular quantity",
+                            text(totals).contains("\n" + label + "\n" + day + "\n"));
+                    android.content.res.Configuration english =
+                            new android.content.res.Configuration(stats.getResources().getConfiguration());
+                    english.setLocale(java.util.Locale.ENGLISH);
+                    android.content.res.Resources en = stats.createConfigurationContext(english).getResources();
+                    assertEquals("0 days", en.getQuantityString(R.plurals.stats_days_value, 0, 0));
+                    assertEquals("1 day", en.getQuantityString(R.plurals.stats_days_value, 1, 1));
+                    assertEquals("2 days", en.getQuantityString(R.plurals.stats_days_value, 2, 2));
+                });
             } finally { onMain(stats::finish); }
         }
     }

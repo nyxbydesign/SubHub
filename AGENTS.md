@@ -25,7 +25,7 @@ These repository rules apply to every automated or human-assisted change.
   and other private candidates retain the unexpanded source code. Keep the same `release.yml`
   workflow sequence; fail closed before run 100000 or Android code overflow.
 - Any stable release-bound change must update both source values in the same commit. Automatic dev
-  builds keep the source version and derive a unique name/code from the shared CI sequence.
+  builds keep the source version and shared CI install-code sequence.
   The helper performs the safe increment:
 
   `python scripts/release_version.py --set-version 0.2.0`
@@ -330,7 +330,11 @@ Release signing is supplied only through the repository Actions secrets named in
 ## Development releases
 
 Only pushes to `dev` build the exact pushed commit and publish a signed GitHub
-prerelease named `v<VERSION_NAME>-dev.<release workflow run_number>`. Do not cancel an older push's
+prerelease named `v<VERSION_NAME>-dev.<cycle number>`. The cycle starts at 1 after the
+latest immutable stable publication and counts dev push runs only, including failed slots
+so retries reuse the same label. Keep dev's version.properties aligned with the published
+stable version. Existing global-suffix prereleases retain their tags and Android codes.
+Do not cancel an older push's
 build just because a new commit arrives. Each tag is unique and immutable; verify all APKs,
 checksums and updater metadata in the draft before publishing. Dev builds must not become the
 latest stable release or accidentally enable private experimental flags. Stable release tags

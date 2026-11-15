@@ -1,5 +1,6 @@
 package com.subhub.app;
 
+import static com.subhub.app.NativeUiActions.assertNoViewWithResourceId;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -112,7 +113,7 @@ public final class VisualIdentityAndroidTest {
                 "capture.CustomImagesActivity", "capture.ExportActivity",
                 "capture.export.ExportAppearanceActivity",
                 "diagnostics.DiagnosticsActivity",
-                "update.UpdatesActivity", "commitment.CommitmentActivity"}) review(page);
+                "update.UpdatesActivity", "people.ServiceDurationActivity"}) review(page);
         finishReview("secondary");
     }
 
@@ -198,7 +199,7 @@ public final class VisualIdentityAndroidTest {
                 ActivityScenario.launch(com.subhub.app.security.AuthenticatorActivity.class)) {
             settle();
             page.onActivity(a -> {
-                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertNoViewWithResourceId(a, "authenticator_pairing_qr");
                 assertNull(a.findViewById(R.id.keyholder_pair_button));
                 inspect(a, "keyholder-unified");
             });

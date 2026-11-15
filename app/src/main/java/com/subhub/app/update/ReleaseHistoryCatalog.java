@@ -7,6 +7,11 @@ import com.subhub.app.R;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -44,23 +49,61 @@ public final class ReleaseHistoryCatalog {
         }
     }
 
+    /** Retain stable and development rows until the chosen channel is projected for display. */
     static List<ReleaseHistoryItem> merge(List<ReleaseHistoryItem> live,
             List<ReleaseHistoryItem> bundled) {
         Map<String, ReleaseHistoryItem> byTag = new LinkedHashMap<>();
         if (bundled != null) for (ReleaseHistoryItem item : bundled) put(byTag, item, false);
         if (live != null) for (ReleaseHistoryItem item : live) put(byTag, item, true);
         List<ReleaseHistoryItem> merged = new ArrayList<>(byTag.values());
-        merged.sort(Comparator.comparing(ReleaseHistoryCatalog::version).reversed());
-        if (merged.size() > MAX_ITEMS) return new ArrayList<>(merged.subList(0, MAX_ITEMS));
+        merged.sort(Comparator.comparing(ReleaseHistoryCatalog::publication)
+                .thenComparing(ReleaseHistoryCatalog::version).reversed());
         return merged;
+    }
+
+    static boolean isInstalled(ReleaseHistoryItem item, String installedVersion) {
+        return item.tag.equals("v" + installedVersion);
+    }
+
+    static List<ReleaseHistoryItem> visible(List<ReleaseHistoryItem> sortedHistory, boolean devUpdates,
+            String installedVersion) {
+        if (devUpdates) return sortedHistory.subList(0, Math.min(sortedHistory.size(), MAX_ITEMS));
+        List<ReleaseHistoryItem> result = new ArrayList<>(MAX_ITEMS);
+        ReleaseHistoryItem installed = null;
+        for (ReleaseHistoryItem item : sortedHistory) {
+            if (isInstalled(item, installedVersion)) {
+                installed = item;
+                if (result.size() < MAX_ITEMS) result.add(item);
+            } else if (!item.prerelease && result.size() < MAX_ITEMS) {
+                result.add(item);
+            }
+        }
+        if (installed == null && isPrerelease(installedVersion)) {
+            // The installed development build may predate the feed or have no cached notes.
+            installed = new ReleaseHistoryItem(installedVersion, "v" + installedVersion,
+                    "", "", "", true);
+        }
+        if (installed != null && !result.contains(installed)) {
+            if (result.size() == MAX_ITEMS) result.remove(MAX_ITEMS - 1);
+            result.add(installed);
+        }
+        return result;
+    }
+
+    private static boolean isPrerelease(String versionName) {
+        try {
+            return SemanticVersion.parse(versionName).isPrerelease();
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     static List<ReleaseHistoryItem> withCandidate(List<ReleaseHistoryItem> history,
             UpdateCandidate candidate) {
-        if (candidate == null) return history == null ? new ArrayList<>() : history;
+        if (candidate == null) return merge(null, history);
         ReleaseHistoryItem available = new ReleaseHistoryItem(
                 candidate.manifest.versionName, candidate.manifest.tag, candidate.notes,
-                candidate.releaseUrl, "", candidate.prerelease);
+                candidate.releaseUrl, candidate.publishedAt, candidate.prerelease);
         List<ReleaseHistoryItem> live = new ArrayList<>();
         live.add(available);
         return merge(live, history);
@@ -88,6 +131,19 @@ public final class ReleaseHistoryCatalog {
             return SemanticVersion.parse(item.tag);
         } catch (IllegalArgumentException ignored) {
             return SemanticVersion.parse("0.0.0");
+        }
+    }
+
+    private static Instant publication(ReleaseHistoryItem item) {
+        String published = item.publishedAt;
+        try {
+            // A bundled historical date has day-level precision only. It sorts
+            // before known releases later that day without inventing display text.
+            return published.length() == 10
+                    ? LocalDate.parse(published).atStartOfDay().toInstant(ZoneOffset.UTC)
+                    : OffsetDateTime.parse(published).toInstant();
+        } catch (DateTimeException ignored) {
+            return Instant.MIN;
         }
     }
 }

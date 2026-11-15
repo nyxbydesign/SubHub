@@ -3,7 +3,11 @@
 <string name="stats_no_activity_period">No activity recorded for this measure.</string>
 <string name="stats_history_from">Dated history from %1$s.</string>
 <string name="stats_previous_month">Previous month</string><string name="stats_next_month">Next month</string><string name="stats_no_daily_month">No daily records for this month.</string>
-<string name="stats_assessed">Assessed</string><string name="stats_days_value">%1$d days</string>
+<string name="stats_assessed">Assessed</string>
+<plurals name="stats_days_value">
+    <item quantity="one">%1$d day</item>
+    <item quantity="other">%1$d days</item>
+</plurals>
 <item type="id" name="stats_empty_activity"/>
 <string name="stats_seconds_value">%1$d s</string>
 <string name="stats_all_time">All time</string>

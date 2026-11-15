@@ -16,8 +16,12 @@ MAX_ANDROID_CODE = 2_100_000_000
 
 
 def read_version() -> tuple[int, str]:
+    return parse_version(VERSION_FILE.read_text(encoding="utf-8"))
+
+
+def parse_version(contents: str) -> tuple[int, str]:
     values: dict[str, str] = {}
-    for line in VERSION_FILE.read_text(encoding="utf-8").splitlines():
+    for line in contents.splitlines():
         if line and not line.lstrip().startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip()
@@ -42,8 +46,10 @@ def write_version(code: int, name: str) -> None:
 
 
 def build_version(code: int, name: str, run_number: int | None = None,
-                  dev: bool = False) -> tuple[int, str]:
+                  dev: bool = False, dev_sequence: int | None = None) -> tuple[int, str]:
     """Reserve a source-version bucket, then order all CI channels within it."""
+    if not dev and dev_sequence is not None:
+        raise ValueError("Only development builds can have a dev cycle sequence")
     if run_number is None:
         if dev:
             raise ValueError("Development builds require a CI run number")
@@ -55,7 +61,9 @@ def build_version(code: int, name: str, run_number: int | None = None,
         raise ValueError("CI version code exceeds Android's supported limit")
     if not SEMVER.fullmatch(name) or "-" in name:
         raise ValueError("CI builds require a stable semantic base version")
-    return effective, f"{name}-dev.{run_number}" if dev else name
+    if dev and (dev_sequence is None or not 1 <= dev_sequence <= run_number):
+        raise ValueError("Development builds require a valid dev cycle sequence")
+    return effective, f"{name}-dev.{dev_sequence}" if dev else name
 
 
 def main() -> None:
@@ -66,6 +74,7 @@ def main() -> None:
     parser.add_argument("--github-output", type=Path, help="Append name/code values for Actions")
     parser.add_argument("--ci-run-number", type=int, help="Release workflow sequence shared by both channels")
     parser.add_argument("--dev-build", action="store_true", help="Append the unique development suffix")
+    parser.add_argument("--dev-sequence", type=int, help="Display number within the published stable cycle")
     args = parser.parse_args()
 
     old_code, old_name = read_version()
@@ -81,7 +90,7 @@ def main() -> None:
     if args.tag and args.tag != f"v{name}":
         raise SystemExit(f"Tag {args.tag!r} does not match VERSION_NAME {name!r}; expected v{name}")
     try:
-        code, name = build_version(code, name, args.ci_run_number, args.dev_build)
+        code, name = build_version(code, name, args.ci_run_number, args.dev_build, args.dev_sequence)
     except ValueError as exception:
         parser.error(str(exception))
 

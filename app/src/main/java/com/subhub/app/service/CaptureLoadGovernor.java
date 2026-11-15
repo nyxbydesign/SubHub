@@ -60,10 +60,11 @@ final class CaptureLoadGovernor implements AutoCloseable {
         return owned && closeStarted && (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || ownedThermal == null || ownedThermal.drained());
     }
 
+    boolean powerSaveEnabled() { return powerManager != null && powerManager.isPowerSaveMode(); }
+
     synchronized boolean shouldCapture(long nowUptimeMillis, long requestedIntervalMillis) {
         if (owned && sealed) return false;
-        boolean powerSave = powerManager != null && powerManager.isPowerSaveMode();
-        long interval = intervalFor(requestedIntervalMillis, thermalStatus, powerSave);
+        long interval = intervalFor(requestedIntervalMillis, thermalStatus, powerSaveEnabled());
         if (lastCaptureUptimeMillis != Long.MIN_VALUE
                 && nowUptimeMillis - lastCaptureUptimeMillis < interval) return false;
         lastCaptureUptimeMillis = nowUptimeMillis;

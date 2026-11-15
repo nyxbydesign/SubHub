@@ -7,6 +7,10 @@ import android.widget.*;
 
 import com.subhub.app.R;
 import com.subhub.app.penance.*;
+import com.subhub.app.people.LocalPersonRepository;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonSnapshot;
+import com.subhub.app.people.PersonUi;
 import com.subhub.app.util.PreferencePage;
 
 import java.text.DateFormat;
@@ -439,7 +443,10 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             HomeAchievementPreview preview = null;
             if (workspace == AchievementRole.SUB) preview = HomeAchievementPreview.loadLocal(app, facts);
             else HistoricalAchievementBackfill.local(app, new AchievementManager(app), facts);
-            return new LocalOverview(facts, preview);
+            List<PersonSnapshot.Allowance> appTime = null;
+            try { appTime = new LocalPersonRepository(app).loadAllowances(); }
+            catch (RuntimeException unavailable) { /* Keep totals available if allowance data cannot be read. */ }
+            return new LocalOverview(facts, preview, appTime);
         }, loaded -> {
             if (!workspace.accessible(this)) { finish(); return; }
             if (!identity.current()) { clearLocalStatistics(); return; }
@@ -448,6 +455,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             if (loaded.achievements != null) achievements.render(loaded.achievements);
             else achievements.setVisibility(android.view.View.GONE);
             bindLocalTotals(loaded.facts);
+            bindLocalAllowances(loaded.appTime);
             bindSessions();
         }, failure -> {
             if (localFacts != null && localFactsIdentity != null && localFactsIdentity.current()) return;
@@ -459,6 +467,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         localFacts = null; localFactsIdentity = null;
         lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
         currentSessionDetails.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
+        allowances.removeAllViews();
         text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
         bindSessions(); updateCurrentSessionVisibility();
     }
@@ -466,8 +475,10 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private static final class LocalOverview {
         final LocalRetainedStatistics facts;
         final HomeAchievementPreview achievements;
-        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements) {
-            this.facts = facts; this.achievements = achievements;
+        final List<PersonSnapshot.Allowance> appTime;
+        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements,
+                List<PersonSnapshot.Allowance> appTime) {
+            this.facts = facts; this.achievements = achievements; this.appTime = appTime;
         }
     }
 
@@ -481,10 +492,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         totalsDetails.removeAllViews();
         heading(totalsDetails, R.string.profile_stats_feature_totals);
         row(totalsDetails, R.string.statistics_longest, duration(stats.getLongestSessionSeconds()));
-        row(
-                totalsDetails,
-                R.string.statistics_current_streak,
-                getString(R.string.stats_days_value, stats.getCurrentStreak()));
+        row(totalsDetails, R.string.statistics_current_streak, days(stats.getCurrentStreak()));
         row(
                 totalsDetails,
                 R.string.stats_limited_app_time,
@@ -652,17 +660,13 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             });
             return;
         }
-        android.content.Context app = getApplicationContext();
-        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(app);
-        data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
-            allowances.removeAllViews();
-            com.subhub.app.people.PersonUi.allowances(allowances, person);
-            updateCurrentSessionVisibility();
-        }, failure -> {
-            allowances.removeAllViews();
-            text(allowances, getString(R.string.role_unknown_data), 13, true);
-            updateCurrentSessionVisibility();
-        });
+    }
+
+    private void bindLocalAllowances(List<PersonSnapshot.Allowance> appTime) {
+        allowances.removeAllViews();
+        if (appTime != null) PersonUi.allowances(allowances, PersonId.LOCAL, appTime);
+        else text(allowances, getString(R.string.role_unknown_data), 13, true);
+        updateCurrentSessionVisibility();
     }
 
     /** Neither an idle session nor a metric refresh may hide or discard daily allowances. */
@@ -699,22 +703,17 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         for (int i = 0; i < Math.min(sessionLimit, entries.size()); i++)
             session(sessionList, entries.get(i));
         if (entries.size() > 3) {
-            Button more =
-                    button(
-                            sessionList,
-                            getString(
-                                    sessionLimit >= entries.size()
-                                            ? R.string.stats_fewer_sessions
-                                            : R.string.stats_more_sessions),
-                            () -> {
-                                sessionLimit =
-                                        sessionLimit >= entries.size()
-                                                ? 3
-                                                : Math.min(entries.size(), sessionLimit + 3);
-                                bindSessions();
-                            });
-            more.setId(R.id.stats_sessions_more);
+            boolean expanded = sessionLimit >= entries.size();
+            addSessionHistoryAction(sessionList, expanded, () -> {
+                sessionLimit = expanded ? 3 : Math.min(entries.size(), sessionLimit + 3);
+                bindSessions();
+            });
         }
+    }
+
+    void addSessionHistoryAction(LinearLayout parent, boolean expanded, Runnable action) {
+        int label = expanded ? R.string.stats_fewer_sessions : R.string.stats_more_sessions;
+        button(parent, getString(label), action).setId(R.id.stats_sessions_more);
     }
 
     private void session(LinearLayout parent, StatsRepository.SessionEntry entry) {
@@ -769,7 +768,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         }
     }
 
-    private void heading(LinearLayout parent, int title) {
+    void heading(LinearLayout parent, int title) {
         TextView label = text(parent, getString(title), 16, false);
         int icon = title == R.string.stats_recent_sessions || title == R.string.profile_stats_current_session
                 || title == R.string.dom_stats_current ? R.drawable.ic_overview_clock
@@ -779,7 +778,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
     }
 
-    private LinearLayout row(LinearLayout parent, int label, String value) {
+    LinearLayout row(LinearLayout parent, int label, String value) {
         LinearLayout line = new LinearLayout(this);
         line.setGravity(Gravity.CENTER_VERTICAL);
         parent.addView(line, new LinearLayout.LayoutParams(-1, -2));
@@ -791,13 +790,17 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         return line;
     }
 
-    private String duration(long seconds) {
+    String duration(long seconds) {
         return seconds > 0 && seconds < 60
                 ? getString(R.string.stats_seconds_value, seconds)
                 : StatsSnapshot.formatDuration(seconds);
     }
 
-    private String number(long value) {
+    String days(int days) {
+        return getResources().getQuantityString(R.plurals.stats_days_value, days, days);
+    }
+
+    String number(long value) {
         return java.text.NumberFormat.getIntegerInstance().format(value);
     }
 }

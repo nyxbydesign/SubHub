@@ -83,11 +83,6 @@ public final class PermissionSetupActivity extends AppCompatActivity {
         binding.permissionStepOneOpen.setEnabled(true);
         binding.permissionStepTwoOpen.setEnabled(availableStep >= 2);
         binding.permissionStepThreeOpen.setEnabled(availableStep >= 3);
-        binding.permissionStepOneOpen.setAlpha(1f);
-        binding.permissionStepTwoOpen.setAlpha(1f);
-        binding.permissionStepThreeOpen.setAlpha(1f);
-        binding.permissionStepTwo.setAlpha(availableStep >= 2 ? 1f : .5f);
-        binding.permissionStepThree.setAlpha(availableStep >= 3 ? 1f : .5f);
         binding.permissionSetupStatus.setText(
                 new AppModeManager(this).isAccessibilityEnabled()
                         ? R.string.permission_setup_allowed

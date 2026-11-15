@@ -61,8 +61,11 @@ public class DailyStatisticsUiAndroidTest {
             counts.put("assessed_USD", counts.get("assessed_USD") + 50);
             counts.put("paid_EUR", counts.get("paid_EUR") + 75);
             store.checkpoint(source, counts, wall, zone);
-            store.heartbeat(source + i, 1, wall, 0, zone);
-            store.heartbeat(source + i, 0, wall + (i + 1) * 60000, (i + 1) * 60000, zone);
+            String day = today.minusDays(i).toString();
+            store.getWritableDatabase().execSQL("INSERT OR IGNORE INTO daily VALUES(?, 'service_ms', 0)",
+                    new Object[]{day});
+            store.getWritableDatabase().execSQL("UPDATE daily SET value=value+? WHERE day=? AND metric='service_ms'",
+                    new Object[]{(i + 1) * 60000L, day});
             store.exported(source + ":" + i, "photos", wall, zone);
         }
         final String[] homeText = {null};

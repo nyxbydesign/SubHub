@@ -90,6 +90,7 @@ public final class HardcoreModeManager {
     }
 
     public void disable() {
+        com.subhub.app.fullaccess.FullAccessGrant.disable(context);
         SubFeaturePolicy.consentHardcore(context, false);
         HardcoreAutoPayManager.cancel(context);
         preferences.edit().putBoolean(KEY_REQUESTED, false).commit();
@@ -107,6 +108,7 @@ public final class HardcoreModeManager {
     }
 
     public void onAdminDisabled() {
+        com.subhub.app.fullaccess.FullAccessGrant.disable(context);
         SubFeaturePolicy.consentHardcore(context, false);
         // disable() clears KEY_REQUESTED before removing admin, so only an out-of-band
         // deactivation reaches this reporter as a tamper signal.

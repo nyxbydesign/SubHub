@@ -27,6 +27,7 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.AsyncUiScope;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
+import com.subhub.app.util.UiIdentity;
 
 import java.text.Collator;
 import java.util.ArrayList;
@@ -94,7 +95,7 @@ public final class AppModeActivity extends AppCompatActivity {
                         com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE))
                 : new AppTimerManager(FeatureEditorSession.context(this));
         appData = AsyncUiScope.forPage(this);
-        if (savedInstanceState != null && !FeatureEditorSession.preview(this)
+        if (savedInstanceState != null
                 && (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, savedInstanceState))) {
             restoredDrafts = savedInstanceState.getBundle("allowance_drafts");
             dirtyTimers = savedInstanceState.getBoolean("timer_drafts_dirty", false);
@@ -172,7 +173,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
+        if (FeatureEditorSession.remote(this)) return;
         if (ControllerPinManager.isSessionUnlocked()) {
             FeatureEditorSession.leaveEditor(this);
         } else ControllerPinGate.unlock(this, this::applyEditState, false);
@@ -444,10 +445,12 @@ public final class AppModeActivity extends AppCompatActivity {
 
     private void renderRemoteUsage() {
         com.subhub.app.people.PersonSnapshot person = FeatureEditorSession.scope(this).person();
-        binding.limitsTodayAmount.setText(R.string.role_unknown_data);
-        binding.timerUsageStatus.setText(person == null ? getString(R.string.role_unknown_data) : person.serviceLabel);
-        binding.limitsTodayScope.setText(getString(R.string.limits_today_scope, manager.getIncludedPackages().size()));
-        binding.limitsCombinedUsage.setText(R.string.role_unknown_data);
+        String unknown = getString(R.string.role_unknown_data);
+        UiIdentity.setTextIfChanged(binding.limitsTodayAmount, unknown);
+        UiIdentity.setTextIfChanged(binding.timerUsageStatus, person == null ? unknown : person.serviceLabel);
+        UiIdentity.setTextIfChanged(binding.limitsTodayScope,
+                getString(R.string.limits_today_scope, manager.getIncludedPackages().size()));
+        UiIdentity.setTextIfChanged(binding.limitsCombinedUsage, unknown);
         binding.limitsCombinedProgress.setVisibility(View.GONE);
         java.util.Map<String,com.subhub.app.people.PersonSnapshot.Allowance> values = new java.util.HashMap<>();
         if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);
@@ -477,9 +480,10 @@ public final class AppModeActivity extends AppCompatActivity {
                 individual = binding.perAppLimitEnabled.isChecked();
         long totalBudget = AppTimerManager.minutesToMillis(totalMinutes);
         long sharedRemaining = Math.max(0L, totalBudget - totalUsed);
-        binding.limitsTodayAmount.setText(formatUsage(totalUsed));
-        binding.limitsTodayScope.setText(getString(R.string.limits_today_scope, included.size()));
-        binding.timerUsageStatus.setText(
+        String used = formatUsage(totalUsed);
+        UiIdentity.setTextIfChanged(binding.limitsTodayAmount, used);
+        UiIdentity.setTextIfChanged(binding.limitsTodayScope, getString(R.string.limits_today_scope, included.size()));
+        UiIdentity.setTextIfChanged(binding.timerUsageStatus, getText(
                 !combined && !individual
                         ? R.string.limits_off
                         : included.isEmpty()
@@ -492,18 +496,20 @@ public final class AppModeActivity extends AppCompatActivity {
                                                                 .ScreenshotAccessibilityService
                                                                 .isRunning()
                                                         ? R.string.limits_waiting_service
-                                                        : R.string.limits_tracking);
-        binding.limitsCombinedUsage.setText(
+                                                        : R.string.limits_tracking));
+        UiIdentity.setTextIfChanged(binding.limitsCombinedUsage,
                 combined
                         ? sharedRemaining == 0L
                                 ? getString(R.string.limits_shared_reached)
                                 : getString(
                                         R.string.limits_usage_remaining,
-                                        formatUsage(totalUsed),
+                                        used,
                                         formatUsage(sharedRemaining))
-                        : getString(R.string.limits_usage_only, formatUsage(totalUsed)));
+                        : getString(R.string.limits_usage_only, used));
         binding.limitsCombinedProgress.setVisibility(combined ? View.VISIBLE : View.GONE);
         binding.limitsCombinedProgress.setProgress(LimitsUsage.percent(totalUsed, totalBudget));
+        Map<String, ExtraTimeAllowance> credits = com.subhub.app.remote.ExtraTimeRequests.allowances(
+                FeatureEditorSession.context(this), appRows.keySet(), now);
         Map<String, Double> order = new LinkedHashMap<>();
         for (Map.Entry<String, AppLimitRow> entry : appRows.entrySet()) {
             AppTimerManager.UsageSnapshot current = usage.get(entry.getKey());
@@ -511,8 +517,7 @@ public final class AppModeActivity extends AppCompatActivity {
             Integer draft = readMinutes(entry.getValue().allowance, true);
             int minutes = draft == null ? timers.allowanceMinutes(entry.getKey()) : draft;
             long budget = AppTimerManager.minutesToMillis(minutes);
-            ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(
-                    FeatureEditorSession.context(this), entry.getKey(), now);
+            ExtraTimeAllowance extra = credits.getOrDefault(entry.getKey(), ExtraTimeAllowance.NONE);
             long effectiveBudget = extra.individualBudget(budget);
             LimitsUsage state =
                     LimitsUsage.forApp(
@@ -618,8 +623,9 @@ public final class AppModeActivity extends AppCompatActivity {
     }
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state)) {
+            super.onRestoreInstanceState(state);
+        }
     }
 
 }

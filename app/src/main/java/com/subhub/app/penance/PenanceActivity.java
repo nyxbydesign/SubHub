@@ -13,17 +13,20 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.CompoundButton;
 import android.widget.EditText;
-import android.widget.Toast;
+import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityPenanceBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.util.ForegroundSnackbar;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
+import com.subhub.app.util.UiIdentity;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -37,6 +40,7 @@ public final class PenanceActivity extends AppCompatActivity {
     public static final String EXTRA_BEGIN_PAID_PAUSE =
             "com.subhub.app.extra.BEGIN_PAID_PAUSE";
     private ActivityPenanceBinding binding;
+    private Snackbar walletMessage;
     private PenanceManager manager;
     private PenanceRuleSettings ruleSettings;
     private PayPalCredentialStore paypalCredentials;
@@ -147,7 +151,7 @@ public final class PenanceActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (com.subhub.app.people.DummySubPreview.isRequested(intent)
-                && !FeatureEditorSession.preview(this) && !FeatureEditorSession.internal(this)) { finish(); return; }
+                && !FeatureEditorSession.internal(this)) { finish(); return; }
         if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canView(this, "wallet")) finish(); return; }
         if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
@@ -218,7 +222,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 R.drawable.ic_settings_wallet,
                 panel.getRoot());
         connection =
-                new WalletConnectionController(this, panel, walletActions.get("paypal").summary());
+                new WalletConnectionController(this, panel, walletActions.get("paypal").summary(),
+                        this::showMessage);
         walletDestination(
                 "corrections",
                 R.string.tribute_adjustments_title,
@@ -311,8 +316,8 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override
     protected void onRestoreInstanceState(Bundle state) {
         // Raw input survives only while the same retained draft and authority are still current.
-        if (FeatureEditorSession.preview(this) || (FeatureEditorSession.internal(this)
-                && !FeatureEditorSession.restoreInternalWidgets(this, state))) return;
+        if (FeatureEditorSession.internal(this)
+                && !FeatureEditorSession.restoreInternalWidgets(this, state)) return;
         // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
         populatingRules = true;
         try {
@@ -331,7 +336,6 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);
@@ -373,6 +377,12 @@ public final class PenanceActivity extends AppCompatActivity {
         if (FeatureEditorSession.canEdit(this, "wallet")) saveRules(false);
         timer.removeCallbacks(tick);
         super.onPause();
+    }
+
+    @Override protected void onStop() {
+        ForegroundSnackbar.dismiss(walletMessage);
+        walletMessage = null;
+        super.onStop();
     }
 
     private void populateRules() {
@@ -574,7 +584,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount)
                 || !readRule(rules, PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount)) {
-            if (showInvalid) toast(R.string.penance_rules_invalid);
+            if (showInvalid) showMessage(R.string.penance_rules_invalid);
             return false;
         }
         boolean enabled = !rules.isEmpty();
@@ -607,7 +617,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 || pausePrice > PaidPauseManager.MAX_PRICE_CENTS
                 || pauseMinutes < PaidPauseManager.MIN_DURATION_MINUTES
                 || pauseMinutes > PaidPauseManager.MAX_DURATION_MINUTES) {
-            if (showInvalid) toast(R.string.penance_rules_invalid);
+            if (showInvalid) showMessage(R.string.penance_rules_invalid);
             return false;
         }
         ruleSettings.configure(enabled, rules, daily, weekly, mercy, dwell, detectionBatch,
@@ -637,7 +647,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void beginCheckout(boolean paidPauseOnly) {
         if (paidPauseOnly && !new PaidPauseManager(FeatureEditorSession.context(this)).canPurchase()) {
-            toast(R.string.paid_pause_unavailable);
+            showMessage(R.string.paid_pause_unavailable);
             return;
         }
         HardcoreAutoPayManager autoPay = new HardcoreAutoPayManager(this);
@@ -647,7 +657,7 @@ public final class PenanceActivity extends AppCompatActivity {
         PayPalRequestPolicy.CheckoutRoute checkoutRoute = PayPalRequestPolicy.checkoutRoute(
                 paidPauseOnly, automaticContext, autoPayConfigured, autoPayEligible);
         if (checkoutRoute == PayPalRequestPolicy.CheckoutRoute.BLOCKED) {
-            toast(R.string.paypal_auto_pay_unavailable);
+            showMessage(R.string.paypal_auto_pay_unavailable);
             render();
             return;
         }
@@ -663,14 +673,14 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean paypalReady = paypalCredentials.hasCredentials();
         boolean linkReady = validExternalUrl(manager.getPayPalLink());
         if (!paypalReady && !linkReady) {
-            toast(R.string.penance_backend_required);
+            showMessage(R.string.penance_backend_required);
             return;
         }
         PenanceManager.Settlement settlement = paidPauseOnly
                 ? manager.beginPaidPauseSettlement(System.currentTimeMillis())
                 : manager.beginSettlement(System.currentTimeMillis());
         if (settlement == null) {
-            toast(R.string.penance_no_due);
+            showMessage(R.string.penance_no_due);
             return;
         }
         if (paypalReady) createPayPalOrder(settlement);
@@ -692,7 +702,7 @@ public final class PenanceActivity extends AppCompatActivity {
         } catch (RuntimeException invalidBill) {
             checkoutBusy = false;
             manager.cancelSettlement(settlement.getId());
-            toast(getString(R.string.penance_checkout_failed, "The local settlement bill was invalid"));
+            showMessage(getString(R.string.penance_checkout_failed, "The local settlement bill was invalid"));
             render();
             return;
         }
@@ -704,13 +714,13 @@ public final class PenanceActivity extends AppCompatActivity {
                     if (binding == null) return;
                     if (!result.isSuccess()) {
                         manager.cancelSettlement(settlement.getId());
-                        toast(getString(R.string.penance_checkout_failed, result.error()));
+                        showMessage(getString(R.string.penance_checkout_failed, result.error()));
                         render();
                         return;
                     }
                     if (!canProcessSettlement(settlement.getId())) {
                         manager.cancelSettlement(settlement.getId());
-                        toast(R.string.paid_pause_unavailable);
+                        showMessage(R.string.paid_pause_unavailable);
                         render();
                         return;
                     }
@@ -726,7 +736,7 @@ public final class PenanceActivity extends AppCompatActivity {
     private void openApprovalUrl() {
         String approvalUrl = manager.getActiveApprovalUrl();
         if (!validExternalUrl(approvalUrl)) {
-            toast(R.string.penance_payment_pending);
+            showMessage(R.string.penance_payment_pending);
             return;
         }
         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(approvalUrl)));
@@ -734,14 +744,14 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void confirmPayment() {
         if (manager.getActiveCheckoutMode() == PenanceManager.CheckoutMode.HARDCORE_AUTO) {
-            toast(R.string.paypal_auto_payment_processing);
+            showMessage(R.string.paypal_auto_payment_processing);
             return;
         }
         String settlementId = manager.getActiveSettlementId();
         String orderId = manager.getActiveOrderId();
         PenanceSnapshot snapshot = manager.snapshot(System.currentTimeMillis());
         if (settlementId.isEmpty() || snapshot.getCheckoutCents() <= 0) {
-            toast(R.string.penance_payment_mismatch);
+            showMessage(R.string.penance_payment_mismatch);
             return;
         }
         if (paypalCredentials.hasCredentials() && !orderId.isEmpty()
@@ -750,10 +760,10 @@ public final class PenanceActivity extends AppCompatActivity {
             return;
         }
         if (!manager.completeSettlement(settlementId, snapshot.getCheckoutCents())) {
-            toast(R.string.penance_payment_mismatch);
+            showMessage(R.string.penance_payment_mismatch);
             return;
         }
-        toast(R.string.penance_payment_complete);
+        showMessage(R.string.penance_payment_complete);
         render();
     }
 
@@ -764,18 +774,18 @@ public final class PenanceActivity extends AppCompatActivity {
         PenanceSnapshot snapshot = manager.snapshot(System.currentTimeMillis());
         if (settlementId.isEmpty() || orderId.isEmpty() || snapshot.getCheckoutCents() <= 0
                 || !paypalCredentials.hasCredentials()) {
-            toast(R.string.penance_payment_mismatch);
+            showMessage(R.string.penance_payment_mismatch);
             return;
         }
         if (!canProcessSettlement(settlementId)) {
             manager.cancelSettlement(settlementId);
-            toast(R.string.paid_pause_unavailable);
+            showMessage(R.string.paid_pause_unavailable);
             render();
             return;
         }
         PayPalCredentialStore.Credentials credentials = paypalCredentials.load();
         if (!credentials.boundaryId().equals(manager.getActivePayPalBoundary())) {
-            toast(R.string.penance_payment_boundary_changed);
+            showMessage(R.string.penance_payment_boundary_changed);
             manager.cancelSettlement(settlementId);
             render();
             return;
@@ -787,7 +797,7 @@ public final class PenanceActivity extends AppCompatActivity {
                     checkoutBusy = false;
                     if (binding == null) return;
                     if (!result.isSuccess()) {
-                        toast(getString(R.string.penance_checkout_failed, result.error()));
+                        showMessage(getString(R.string.penance_checkout_failed, result.error()));
                         render();
                         return;
                     }
@@ -798,8 +808,8 @@ public final class PenanceActivity extends AppCompatActivity {
                                 capture.payerEmail(), capture.payerAccountId());
                     }
                     if (!manager.completeVerifiedSettlement(settlementId, snapshot.getCheckoutCents(), capture)) {
-                        toast(R.string.penance_payment_mismatch);
-                    } else toast(R.string.penance_payment_complete);
+                        showMessage(R.string.penance_payment_mismatch);
+                    } else showMessage(R.string.penance_payment_complete);
                     render();
                 });
     }
@@ -823,15 +833,15 @@ public final class PenanceActivity extends AppCompatActivity {
     private void cancelCheckout() {
         String settlementId = manager.getActiveSettlementId();
         manager.cancelSettlement(settlementId);
-        toast(R.string.penance_cancelled);
+        showMessage(R.string.penance_cancelled);
         render();
     }
 
     private void forgiveLatest() {
         if (manager.forgiveLatestInMercy(System.currentTimeMillis())) {
-            toast(R.string.penance_forgiven);
+            showMessage(R.string.penance_forgiven);
         } else {
-            toast(R.string.penance_none_in_mercy);
+            showMessage(R.string.penance_none_in_mercy);
         }
         render();
     }
@@ -843,7 +853,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.penance_clear_now, (dialog, which) -> {
                     manager.forgiveAllUnpaid();
-                    toast(R.string.penance_cleared);
+                    showMessage(R.string.penance_cleared);
                     render();
                 }).show();
     }
@@ -857,10 +867,11 @@ public final class PenanceActivity extends AppCompatActivity {
         }
         long now = System.currentTimeMillis();
         PenanceSnapshot snapshot = manager.snapshot(now);
-        binding.dueAmount.setText(ruleSettings.money(snapshot.getDueCents()));
-        binding.mercyAmount.setText(ruleSettings.money(snapshot.getMercyCents()));
-        binding.checkoutAmount.setText(ruleSettings.money(snapshot.getCheckoutCents()));
-        binding.paidAmount.setText(ruleSettings.money(snapshot.getPaidCents()));
+        String due = ruleSettings.money(snapshot.getDueCents());
+        UiIdentity.setTextIfChanged(binding.dueAmount, due);
+        UiIdentity.setTextIfChanged(binding.mercyAmount, ruleSettings.money(snapshot.getMercyCents()));
+        UiIdentity.setTextIfChanged(binding.checkoutAmount, ruleSettings.money(snapshot.getCheckoutCents()));
+        UiIdentity.setTextIfChanged(binding.paidAmount, ruleSettings.money(snapshot.getPaidCents()));
         boolean checkout = snapshot.getCheckoutCents() > 0;
         boolean automaticCheckout = checkout && manager.getActiveCheckoutMode()
                 == PenanceManager.CheckoutMode.HARDCORE_AUTO;
@@ -868,19 +879,14 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean linkReady = validExternalUrl(manager.getPayPalLink());
         boolean paymentAvailable = paypalReady || linkReady;
         PayPalCredentialStore.VaultState vaultState = paypalCredentials.vaultState();
-        if (vaultState.isReady() && !vaultState.maskedPayer().isEmpty()) {
-            binding.paymentAvailability.setText(getString(
-                    R.string.paypal_vault_status_linked, vaultState.maskedPayer()));
-        } else binding.paymentAvailability.setText(paypalReady
-                    ? R.string.penance_payment_ready
-                    : linkReady ? R.string.penance_payment_link_ready
-                    : R.string.penance_payment_unavailable);
+        CharSequence availability = vaultState.isReady() && !vaultState.maskedPayer().isEmpty()
+                ? getString(R.string.paypal_vault_status_linked, vaultState.maskedPayer())
+                : getText(paypalReady ? R.string.penance_payment_ready
+                        : linkReady ? R.string.penance_payment_link_ready : R.string.penance_payment_unavailable);
+        UiIdentity.setTextIfChanged(binding.paymentAvailability, availability);
         boolean setupNeeded = !paymentAvailable && FeatureEditorSession.canEdit(this, "wallet");
-        binding.buttonSettle.setText(
-                setupNeeded
-                        ? getString(R.string.wallet_setup_paypal)
-                        : getString(
-                                R.string.wallet_pay_amount, ruleSettings.money(snapshot.getDueCents())));
+        UiIdentity.setTextIfChanged(binding.buttonSettle,
+                setupNeeded ? getText(R.string.wallet_setup_paypal) : getString(R.string.wallet_pay_amount, due));
         binding.buttonSettle.setVisibility(checkout ? View.GONE : View.VISIBLE);
         binding.buttonSettle.setEnabled(
                 !checkoutBusy
@@ -898,14 +904,13 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean sandboxOrder = checkout && paypalReady
                 && !manager.getActiveOrderId().isEmpty()
                 && !manager.getActiveOrderId().equals(manager.getActiveSettlementId());
-        binding.buttonConfirmPayment.setText(sandboxOrder
-                ? R.string.penance_confirm_paid : R.string.penance_confirm_link_paid);
+        UiIdentity.setTextIfChanged(binding.buttonConfirmPayment, getText(sandboxOrder
+                ? R.string.penance_confirm_paid : R.string.penance_confirm_link_paid));
         binding.buttonConfirmPayment.setEnabled(!checkoutBusy);
-        if (checkoutBusy) binding.paymentStatus.setText(R.string.penance_checking);
-        else if (automaticCheckout) {
-            binding.paymentStatus.setText(R.string.paypal_auto_payment_processing);
-        } else if (checkout) binding.paymentStatus.setText(R.string.penance_payment_pending);
-        else binding.paymentStatus.setText("");
+        CharSequence status = checkoutBusy ? getText(R.string.penance_checking)
+                : automaticCheckout ? getText(R.string.paypal_auto_payment_processing)
+                : checkout ? getText(R.string.penance_payment_pending) : "";
+        UiIdentity.setTextIfChanged(binding.paymentStatus, status);
         binding.paymentStatus.setVisibility(
                 binding.paymentStatus.length() == 0 ? View.GONE : View.VISIBLE);
         updateWalletSummaries(snapshot);
@@ -918,60 +923,27 @@ public final class PenanceActivity extends AppCompatActivity {
         for (PenanceInfraction infraction : PenanceInfraction.values())
             if (infraction != PenanceInfraction.PAID_PAUSE
                     && ruleSettings.isInfractionEnabled(infraction)) enabled++;
-        walletActions
-                .get("rules")
-                .summary()
-                .setText(
-                        getResources().getQuantityString(
-                                R.plurals.tribute_rules_enabled_summary, enabled, enabled));
-        walletActions
-                .get("limits")
-                .summary()
-                .setText(getString(
-                        R.string.tribute_spending_limits_summary,
-                        ruleSettings.money(ruleSettings.getDailyCapCents()),
-                        ruleSettings.money(ruleSettings.getWeeklyCapCents())));
+        UiIdentity.setTextIfChanged(walletActions.get("rules").summary(),
+                getResources().getQuantityString(R.plurals.tribute_rules_enabled_summary, enabled, enabled));
+        UiIdentity.setTextIfChanged(walletActions.get("limits").summary(), getString(
+                R.string.tribute_spending_limits_summary,
+                ruleSettings.money(ruleSettings.getDailyCapCents()),
+                ruleSettings.money(ruleSettings.getWeeklyCapCents())));
         PaidPauseRuleSettings pause = PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this));
-        walletActions
-                .get("pause")
-                .summary()
-                .setText(
-                        pause.isEnabled()
-                                ? getString(
-                                        R.string.wallet_pause_summary,
-                                        pause.getDurationMinutes(),
-                                        ruleSettings.money(pause.getPriceCents()))
-                                : getString(R.string.control_state_off));
+        UiIdentity.setTextIfChanged(walletActions.get("pause").summary(),
+                pause.isEnabled() ? getString(R.string.wallet_pause_summary, pause.getDurationMinutes(),
+                        ruleSettings.money(pause.getPriceCents())) : getText(R.string.control_state_off));
     }
 
     private void renderHistory(PenanceSnapshot snapshot, long nowMillis) {
-        binding.history.setText(snapshot.getEvents().isEmpty() ? getString(R.string.penance_history_empty) : "");
+        UiIdentity.setTextIfChanged(binding.history,
+                snapshot.getEvents().isEmpty() ? getText(R.string.penance_history_empty) : "");
         binding.history.setVisibility(snapshot.getEvents().isEmpty() ? View.VISIBLE : View.GONE);
         int groupCount = binding.walletHistoryList.bind(snapshot.getEvents(), nowMillis, historyExpanded ? 12 : 2);
         binding.walletHistoryMore.setVisibility(
                 groupCount > 2 ? View.VISIBLE : View.GONE);
-        binding.walletHistoryMore.setText(
-                historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more);
-    }
-
-    private String infractionLabel(PenanceInfraction infraction) {
-        if (infraction == PenanceInfraction.TASK_FAILURE) return getString(R.string.tasks_tribute_rule);
-        if (infraction == PenanceInfraction.PAID_PAUSE) {
-            return getString(R.string.paid_pause_history_label);
-        }
-        if (infraction == PenanceInfraction.CENSORED_DWELL) {
-            return getString(R.string.penance_history_dwell);
-        }
-        if (infraction == PenanceInfraction.CENSORED_TAP) {
-            return getString(R.string.penance_history_tap);
-        }
-        if (infraction == PenanceInfraction.WATCHED_APP_OPEN) {
-            return getString(R.string.penance_history_app_open);
-        }
-        if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
-            return getString(R.string.penance_history_tamper);
-        }
-        return getString(R.string.penance_history_detection);
+        UiIdentity.setTextIfChanged(binding.walletHistoryMore,
+                getText(historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more));
     }
 
     private static boolean validExternalUrl(String value) {
@@ -1014,12 +986,17 @@ public final class PenanceActivity extends AppCompatActivity {
         return String.format(Locale.ROOT, "%.2f", cents / 100.0);
     }
 
-    private void toast(int resource) {
-        Toast.makeText(this, resource, Toast.LENGTH_SHORT).show();
+    private void showMessage(@StringRes int resource) {
+        showMessage(getText(resource), Snackbar.LENGTH_SHORT);
     }
 
-    private void toast(String text) {
-        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+    private void showMessage(String text) {
+        showMessage(text, Snackbar.LENGTH_LONG);
+    }
+
+    private void showMessage(CharSequence text, int duration) {
+        walletMessage = ForegroundSnackbar.show(this, binding == null ? null : binding.getRoot(),
+                walletMessage, text, duration);
     }
 
     @Override protected void onDestroy() {

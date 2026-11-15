@@ -2,8 +2,10 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" path="." />
+        <exclude domain="sharedpref" path="gag_personal_dictionary_v1.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="root" path="." />
+        <exclude domain="sharedpref" path="gag_personal_dictionary_v1.xml" />
     </device-transfer>
 </data-extraction-rules>

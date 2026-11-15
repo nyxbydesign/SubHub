@@ -81,8 +81,8 @@ public class LegacyStatisticsBackfillAndroidTest {
                     .execSQL("UPDATE metadata SET value='2026-10-09' WHERE name='since'");
             store.checkpoint("stats", Map.of("censors", 100L), wall("2026-10-09T12:00:00Z"), "UTC");
             store.checkpoint("stats", Map.of("censors", 105L), wall("2026-10-09T12:01:00Z"), "UTC");
-            store.heartbeat("live", 1, wall("2026-10-09T12:00:00Z"), 0, "UTC");
-            store.heartbeat("live", 0, wall("2026-10-09T12:01:00Z"), 60000, "UTC");
+            store.getWritableDatabase()
+                    .execSQL("INSERT INTO daily VALUES('2026-10-09','service_ms',60000)");
             String old = wall("2026-10-08T12:00:00Z") + ",60,48";
             store.backfillSessions(old + ";" + wall("2026-10-09T12:00:00Z") + ",60,5", "UTC");
             assertEquals(

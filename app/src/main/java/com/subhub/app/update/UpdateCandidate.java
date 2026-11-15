@@ -8,6 +8,7 @@ public final class UpdateCandidate {
     public final UpdateManifest manifest;
     public final String notes;
     public final String releaseUrl;
+    public final String publishedAt;
     public final boolean prerelease;
 
     public UpdateCandidate(UpdateManifest manifest, String notes, String releaseUrl) {
@@ -15,22 +16,28 @@ public final class UpdateCandidate {
     }
 
     public UpdateCandidate(UpdateManifest manifest, String notes, String releaseUrl, boolean prerelease) {
+        this(manifest, notes, releaseUrl, prerelease, "");
+    }
+
+    UpdateCandidate(UpdateManifest manifest, String notes, String releaseUrl, boolean prerelease,
+            String publishedAt) {
         this.manifest = manifest;
         this.notes = notes == null ? "" : notes;
         this.releaseUrl = releaseUrl == null ? "" : releaseUrl;
+        this.publishedAt = publishedAt == null ? "" : publishedAt;
         this.prerelease = prerelease || SemanticVersion.parse(manifest.versionName).isPrerelease();
     }
 
     public String json() throws JSONException {
         return new JSONObject().put("manifest", new JSONObject(manifest.json()))
                 .put("notes", notes).put("releaseUrl", releaseUrl)
-                .put("prerelease", prerelease).toString();
+                .put("prerelease", prerelease).put("publishedAt", publishedAt).toString();
     }
 
     public static UpdateCandidate parse(String value) throws JSONException {
         JSONObject json = new JSONObject(value);
         return new UpdateCandidate(UpdateManifest.parse(json.getJSONObject("manifest").toString()),
                 json.optString("notes", ""), json.optString("releaseUrl", ""),
-                json.optBoolean("prerelease", false));
+                json.optBoolean("prerelease", false), json.optString("publishedAt", ""));
     }
 }

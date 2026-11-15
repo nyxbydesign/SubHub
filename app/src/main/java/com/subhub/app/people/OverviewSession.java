@@ -86,7 +86,7 @@ final class OverviewSession {
             active.removeView(time); ((LinearLayout) time.getChildAt(1)).removeAllViews();
             originalClockSize.height = dp(Math.round(180 * Math.max(1f, activity.getResources().getConfiguration().fontScale)));
             active.addView(clock, originalClockSize); originalCaption.setVisibility(View.VISIBLE);
-            service.setBackgroundResource(R.drawable.bg_home_composition_stat);
+            service.setBackgroundResource(R.drawable.bg_card);
             service.setPaddingRelative(originalPadding[0], originalPadding[1], originalPadding[2], originalPadding[3]);
             commitment.setPaddingRelative(commitmentPadding[0], commitmentPadding[1], commitmentPadding[2], commitmentPadding[3]);
         }

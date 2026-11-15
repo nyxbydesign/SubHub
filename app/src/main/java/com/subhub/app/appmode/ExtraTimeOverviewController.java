@@ -56,13 +56,18 @@ public final class ExtraTimeOverviewController extends ViewModel {
             operations.entrySet().removeIf(entry -> entry.getValue().stage != Stage.BUSY);
         }
         for (ExtraTimeRequests.App app : value.apps) {
-            Operation operation = operation(app.packageName);
+            String key = key(scope, app.packageName);
+            Operation operation = operations.get(key);
             if (operation == null || operation.stage == Stage.BUSY) continue;
+            if (operation.request != null && !value.isOnSubDay(operation.request)) {
+                operations.remove(key);
+                continue;
+            }
             ExtraTimeRequests.Request latest = app.latest;
             if (latest != null && (operation.stage == Stage.ERROR && !latest.id.equals(operation.previousRequestId)
                     || operation.request != null && (!latest.id.equals(operation.request.id)
                     || latest.status != ExtraTimeRequests.Status.PENDING)))
-                operations.remove(key(scope, app.packageName));
+                operations.remove(key);
         }
     }
 
@@ -72,7 +77,11 @@ public final class ExtraTimeOverviewController extends ViewModel {
         return null;
     }
 
-    public Operation operation(String packageName) { return operations.get(key(scope, packageName)); }
+    public Operation operation(String packageName) {
+        Operation operation = operations.get(key(scope, packageName));
+        return operation != null && operation.request != null && snapshot != null
+                && !snapshot.isOnSubDay(operation.request) ? null : operation;
+    }
 
     public void submit(Context context, AsyncUiScope data, String packageName,
             String displayedScope, int displayedCents, String displayedCurrency) {
@@ -126,7 +135,8 @@ public final class ExtraTimeOverviewController extends ViewModel {
     public String signature() {
         StringBuilder out = new StringBuilder().append(revision).append('|').append(scope).append('|').append(readFailed);
         if (snapshot == null) return out.toString();
-        out.append('|').append(snapshot.supported).append('|').append(snapshot.canRequest)
+        out.append('|').append(snapshot.subDay).append('|').append(snapshot.subZone)
+                .append('|').append(snapshot.supported).append('|').append(snapshot.canRequest)
                 .append('|').append(snapshot.tributeCents).append('|').append(snapshot.currency)
                 .append('|').append(snapshot.unavailableReason);
         for (ExtraTimeRequests.App app : snapshot.apps) {
@@ -136,8 +146,9 @@ public final class ExtraTimeOverviewController extends ViewModel {
             if (app.pending != null) out.append('|').append(app.pending.id);
         }
         for (ExtraTimeRequests.Request request : snapshot.requests)
-            out.append('|').append(request.id).append('|').append(request.status).append('|')
-                    .append(request.approvedMinutes).append('|').append(request.tributeCents);
+            if (snapshot.isOnSubDay(request))
+                out.append('|').append(request.id).append('|').append(request.status).append('|')
+                        .append(request.approvedMinutes).append('|').append(request.tributeCents);
         return out.toString();
     }
 

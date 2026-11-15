@@ -61,7 +61,7 @@ final class JournalUi {
         button.setText(label); button.setTextSize(14); button.setAllCaps(false); button.setMinHeight(PersonUi.dp(context, 48));
         button.setBackgroundResource(primary ? R.drawable.bg_role_primary : R.drawable.bg_outline_button);
         button.setBackgroundTintList(null);
-        int color = context.getColor(primary ? R.color.primary_action_text : R.color.accent_text);
+        int color = context.getColor(primary ? R.color.text_primary : R.color.accent_text);
         button.setTextColor(color);
         if (icon != 0) {
             button.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);

@@ -39,6 +39,7 @@ public final class UpdatesActivity extends AppCompatActivity {
     private ActivityUpdatesBinding binding;
     private UpdateStateStore state;
     private UpdateDownloadCoordinator downloads;
+    private List<ReleaseHistoryItem> bundledHistory;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean checking;
@@ -70,6 +71,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.update_title, false);
         state = new UpdateStateStore(this);
         downloads = new UpdateDownloadCoordinator(this);
+        bundledHistory = ReleaseHistoryCatalog.bundled(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonCheck.setOnClickListener(view -> checkNow());
         binding.buttonCancel.setOnClickListener(view -> {
@@ -160,20 +162,22 @@ public final class UpdatesActivity extends AppCompatActivity {
                 : getString(R.string.update_last_checked,
                         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(new Date(last))));
-        binding.automaticChecks.setText(state.devUpdates()
+        boolean devUpdates = state.devUpdates();
+        binding.automaticChecks.setText(devUpdates
                 ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle);
         binding.automaticChecks.setEnabled(true);
         binding.devUpdates.setEnabled(!checking);
         binding.automaticHelp.setText(R.string.update_automatic_help);
         changingAutomatic = true;
         binding.automaticChecks.setChecked(state.automaticChecks());
-        binding.devUpdates.setChecked(state.devUpdates());
+        binding.devUpdates.setChecked(devUpdates);
         changingAutomatic = false;
         binding.devUpdatesHelp.setText(R.string.update_dev_help);
         List<ReleaseHistoryItem> history = state.releaseHistory();
-        if (history.isEmpty()) history = ReleaseHistoryCatalog.bundled(this);
+        if (history.isEmpty()) history = bundledHistory;
+        else if (!devUpdates) history = ReleaseHistoryCatalog.merge(history, bundledHistory);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);
-        renderReleaseHistory(history, candidate);
+        renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME), candidate);
         binding.downloadGuideCard.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
         if (candidate != null) {
             UpdateManifest.Asset asset = candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
@@ -227,10 +231,15 @@ public final class UpdatesActivity extends AppCompatActivity {
 
     private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate) {
         binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
-        if (history.isEmpty()) return;
+        if (history.isEmpty()) {
+            if (!historyFingerprint.isEmpty()) binding.releaseHistoryList.removeAllViews();
+            historyFingerprint = "";
+            return;
+        }
         StringBuilder fingerprint = new StringBuilder();
         fingerprint.append(getResources().getConfiguration().getLocales().toLanguageTags())
-                .append(':').append(ZoneId.systemDefault().getId()).append(';');
+                .append(':').append(ZoneId.systemDefault().getId()).append(';')
+                .append(candidate == null ? "" : candidate.manifest.tag).append(';');
         for (ReleaseHistoryItem item : history) {
             fingerprint.append(item.tag).append(':').append(item.notes.hashCode())
                     .append(':').append(item.publishedAt).append(':').append(item.prerelease).append(';');
@@ -245,6 +254,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         for (ReleaseHistoryItem item : history) {
             View row = inflater.inflate(R.layout.item_release_history,
                     binding.releaseHistoryList, false);
+            View heading = row.findViewById(R.id.release_item_heading);
             TextView version = row.findViewById(R.id.release_version);
             TextView meta = row.findViewById(R.id.release_meta);
             TextView details = row.findViewById(R.id.release_details);
@@ -253,18 +263,20 @@ public final class UpdatesActivity extends AppCompatActivity {
             meta.setText(historyMeta(item, candidate));
             details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
-            boolean expanded = expandedHistory.contains(item.tag);
-            details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            chevron.setRotation(expanded ? 90f : 0f);
-            androidx.core.view.ViewCompat.setStateDescription(row,
-                    getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
-            row.setContentDescription(getString(R.string.update_history_open, item.versionName));
-            row.setOnClickListener(view -> {
+            heading.setContentDescription(getString(R.string.update_history_heading, version.getText(), meta.getText()));
+            androidx.core.view.ViewCompat.setScreenReaderFocusable(heading, true);
+            androidx.core.view.ViewCompat.setAccessibilityDelegate(heading,
+                    new androidx.core.view.AccessibilityDelegateCompat() {
+                        @Override public void onInitializeAccessibilityNodeInfo(View host,
+                                androidx.core.view.accessibility.AccessibilityNodeInfoCompat info) {
+                            super.onInitializeAccessibilityNodeInfo(host, info);
+                            info.setClassName(android.widget.Button.class.getName());
+                        }
+                    });
+            renderHistoryDisclosure(heading, details, chevron, expandedHistory.contains(item.tag));
+            heading.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
-                details.setVisibility(show ? View.VISIBLE : View.GONE);
-                chevron.setRotation(show ? 90f : 0f);
-                androidx.core.view.ViewCompat.setStateDescription(row,
-                        getString(show ? R.string.section_expanded : R.string.section_collapsed));
+                renderHistoryDisclosure(heading, details, chevron, show);
                 if (show) expandedHistory.add(item.tag);
                 else expandedHistory.remove(item.tag);
             });
@@ -272,11 +284,18 @@ public final class UpdatesActivity extends AppCompatActivity {
         }
     }
 
+    private void renderHistoryDisclosure(View heading, TextView details, View chevron, boolean expanded) {
+        details.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        chevron.setRotation(expanded ? 90f : 0f);
+        androidx.core.view.ViewCompat.setStateDescription(heading,
+                getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
+    }
+
     private String historyMeta(ReleaseHistoryItem item, UpdateCandidate candidate) {
         if (candidate != null && item.tag.equals(candidate.manifest.tag)) {
             return getString(R.string.update_history_available);
         }
-        if (item.versionName.equals(BuildConfig.VERSION_NAME)) {
+        if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
             return getString(R.string.update_history_installed);
         }
         if (item.prerelease) {
@@ -361,7 +380,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         File apk = path.isEmpty() ? null : new File(path);
         if (apk == null || !apk.isFile()) {
             binding.updateStatus.setText(R.string.update_verification_failed);
-            state.clearDownload(true);
+            state.clearDownload();
             render();
             return;
         }

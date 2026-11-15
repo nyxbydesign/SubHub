@@ -103,9 +103,7 @@ public final class RemoteProfiles {
         com.subhub.app.people.PersonSnapshot.Connection state = peer.state == RemoteStore.State.REVOKED
                 ? com.subhub.app.people.PersonSnapshot.Connection.REVOKED : peer.state == RemoteStore.State.PENDING
                 ? com.subhub.app.people.PersonSnapshot.Connection.PENDING
-                : presence.online
-                ? com.subhub.app.people.PersonSnapshot.Connection.CONNECTED
-                : com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
+                : RemotePersonRepository.activePresence(presence);
         return new ContractOwner(read(store, peer), id,
                 new com.subhub.app.people.PersonSnapshot.PeerContact(id, state, presence.lastOnlineAt));
     }

@@ -1,11 +1,7 @@
 package com.subhub.app.internal;
 
 import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
 /** Canonical, bounded, typed record for one internal owner's atomic runtime-data lanes. */
@@ -66,7 +62,8 @@ public final class InternalRuntimeRecord {
 
     static byte[] encode(InternalRuntimeRecord record) {
         try {
-            BoundedBytes bytes = new BoundedBytes(); DataOutputStream out = new DataOutputStream(bytes);
+            ByteArrayOutputStream bytes = new RecordEncoding.BoundedBytes(MAX_BYTES, "Oversized runtime data");
+            DataOutputStream out = new DataOutputStream(bytes);
             out.writeInt(MAGIC); out.writeInt(1); text(out, InternalStorageScope.TARGET_ID);
             text(out, record.identity); out.writeLong(record.revision); out.writeInt(record.namespaces.size());
             for (Map.Entry<String, Map<String, Object>> section : record.namespaces.entrySet()) {
@@ -76,14 +73,14 @@ public final class InternalRuntimeRecord {
                 }
             }
             out.flush(); byte[] body = bytes.toByteArray();
-            out.write(digest(body)); out.flush(); return bytes.toByteArray();
+            out.write(RecordEncoding.digest(body)); out.flush(); return bytes.toByteArray();
         } catch (IOException invalid) { throw new IllegalArgumentException("Invalid runtime-data encoding", invalid); }
     }
     static InternalRuntimeRecord decode(byte[] bytes) {
         if (bytes == null || bytes.length < 40 || bytes.length > MAX_BYTES)
             throw new IllegalArgumentException("Invalid runtime-data record size");
         byte[] body = Arrays.copyOf(bytes, bytes.length - 32);
-        if (!MessageDigest.isEqual(digest(body), Arrays.copyOfRange(bytes, body.length, bytes.length)))
+        if (!MessageDigest.isEqual(RecordEncoding.digest(body), Arrays.copyOfRange(bytes, body.length, bytes.length)))
             throw new IllegalArgumentException("Corrupt runtime-data checksum");
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(body));
@@ -136,28 +133,10 @@ public final class InternalRuntimeRecord {
     }
     private static void text(DataOutputStream out, String value) throws IOException {
         if (value.length() > MAX_BYTES - 64) throw new IOException("Oversized runtime-data text");
-        ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT).encode(java.nio.CharBuffer.wrap(value));
-        out.writeInt(encoded.remaining()); byte[] bytes = new byte[encoded.remaining()]; encoded.get(bytes); out.write(bytes);
+        RecordEncoding.writeText(out, value, Integer.MAX_VALUE);
     }
+
     private static String text(DataInputStream in) throws IOException {
-        int length = count(in, MAX_BYTES - 64);
-        if (length > in.available()) throw new IOException("Truncated runtime-data text");
-        byte[] bytes = new byte[length]; in.readFully(bytes);
-        return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-    }
-    private static byte[] digest(byte[] bytes) {
-        try { return MessageDigest.getInstance("SHA-256").digest(bytes); }
-        catch (NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
-    }
-    private static final class BoundedBytes extends ByteArrayOutputStream {
-        @Override public synchronized void write(int value) {
-            if (count >= MAX_BYTES) throw new IllegalArgumentException("Oversized runtime data"); super.write(value);
-        }
-        @Override public synchronized void write(byte[] bytes, int offset, int length) {
-            if (length > MAX_BYTES - count) throw new IllegalArgumentException("Oversized runtime data");
-            super.write(bytes, offset, length);
-        }
+        return RecordEncoding.readText(in, count(in, MAX_BYTES - 64));
     }
 }

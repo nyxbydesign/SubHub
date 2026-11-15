@@ -8,6 +8,7 @@ rootProject.file('version.properties').withInputStream { releaseVersion.load(it)
 // Stable and dev CI releases share a monotonic bucket derived from version.properties.
 def ciRunNumber = project.findProperty('ciRunNumber')
 def devBuild = project.findProperty('devBuild') == 'true'
+def devSequence = project.findProperty('devSequence')
 def appVersionCode = releaseVersion.getProperty('VERSION_CODE').toInteger()
 def appVersionName = releaseVersion.getProperty('VERSION_NAME')
 if (ciRunNumber != null) {
@@ -18,7 +19,13 @@ if (ciRunNumber != null) {
         throw new GradleException('Invalid CI release version bucket')
     }
     appVersionCode = expanded.toInteger()
-    if (devBuild) appVersionName += '-dev.' + sequence
+    if (devBuild) {
+        def cycle = devSequence?.toString()?.toLong()
+        if (cycle == null || cycle < 1L || cycle > sequence) {
+            throw new GradleException('Development release identity requires a valid devSequence')
+        }
+        appVersionName += '-dev.' + cycle
+    }
 } else if (devBuild) {
     throw new GradleException('Development release identity requires ciRunNumber')
 }

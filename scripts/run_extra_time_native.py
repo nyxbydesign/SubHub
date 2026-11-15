@@ -82,6 +82,7 @@ NATIVE = {
     ],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest": [
         "requestApproveAndDeclineRetainAllowanceAndInputDrafts",
+        "decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh",
         "remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt",
         "unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission",
         "unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation",
@@ -133,7 +134,8 @@ SUBHUB_PASS_NATIVE = {
     "com.subhub.app.remote.RemoteSessionControlsAndroidTest": [
         "oneActionTracksActiveAndStaleStateWithoutGrantingAuthority",
         "repeatedActionClickWhileReviewIsPendingQueuesOnlyOnce",
-        "actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls"
+        "actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls",
+        "legacyEndPollRetainsUnchangedRowsAndUpdatesReceipts"
     ],
     "com.subhub.app.stats.LazySessionDurationAndroidTest": [
         "backgroundSyncOffUnchangedSessionSurvivesReopenAndStopsExactlyOnce",
@@ -183,6 +185,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "remoteSnapshotsCannotContainLocalConsentOrHardcoreAuthority",
         "optingOutOfOneFeatureStillAllowsAnUnrelatedDurationChange",
         "disabledLimitsAlsoRefuseChangesToIndividualAllowances",
+        "gagRulesRequireNegotiationAndAnAppliedCommandFromTheCurrentPairing",
         "contractDomProfileFollowsAppliedOwnerDespiteOtherRelationshipsAndUpdates",
         "rePairingCannotAttributeRetainedContractToTheNextDomOrGeneration",
         "optionalNotificationChoicesDoNotChangeAppliedWriterReceiptsOrReplay",
@@ -195,6 +198,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
@@ -347,8 +351,15 @@ DEVICE_PASS_NATIVE = {
 }
 DEVICE_PASS_SOURCE_ONLY = {
     **BATTERY_SOURCE_ONLY,
+    # This regression needs an explicitly owned paired fixture, with its opt-in runner argument.
+    "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
+        "subContractOmitsDisabledDetailsAndKeepsEnabledSiblings",
+        "subWalletKeepsPaidPauseOnlyAndHidesDetailsAfterLegacyDisable",
+        "firstPopulatedSubContractFrameIncludesAllSavedSectionsAndPortrait",
+    ],
     "com.subhub.app.appmode.LimitsUiAndroidTest": [
         "recordedUsageAndDistinctAllowancesHaveReadableGeometry",
+        "unchangedUsageRefreshesLeaveLabelsAloneAndNewUsageStillAppears",
         "invalidDraftSurvivesTicksAndRecreationThenPersistsWhenValid",
         "scopeRefreshRetainsFocusedDraftAndInactiveAllowance",
         "delayedSaveRechecksDomAccess",
@@ -380,6 +391,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "mediaViewerRejectsAnAttachmentOutsideTheRelationshipProjection",
         "skippedOccurrencesAppearOnlyInHistoryWithoutUserActions",
         "historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation",
+        "taskTimestampsUseResourceLocaleForListSubmissionAndOvernightWindow",
         "visibleImageClosesOnRoleOrOptOutChangeWithoutPausing",
         "taskListRefreshRetainsUnchangedCardsAndPositionWhenAnotherTaskArrives",
         "subHomeTaskCountUpdatesWithoutReplacingOtherControlsOrPosition",
@@ -415,6 +427,8 @@ DEVICE_PASS_SOURCE_ONLY = {
         "editsSaveAtomicallyAndCancelledDraftsLeaveBothRoleProfilesUnchanged",
         "subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation",
         "subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal",
+        "gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace",
+        "gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup",
         "nativeRoleSwitchesKeepDomAndSubIdentitySeparate",
         "returningToProfileAfterAnotherWorkspaceChangeUsesTheCurrentRoleOnFirstResume",
         "domOnlyOwnProfileStaysEditableWhileStatisticsRequireTheExistingPin",
@@ -527,6 +541,7 @@ DUMMY_PREVIEW_NATIVE = {
         "failedFirstRegistryRestoreStillRestoresOtherRegistriesAndOwnedHandles",
         "ownerDataAckRefreshesInternalPresentationWithoutProfileMutation",
         "signedInternalStatisticsRouteUsesOnlyInternalSourceAcrossRecreation",
+        "internalPopupEditorDoesNotQueuePhysicalPreviewStatus",
         "internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration"
     ],
     "com.subhub.app.people.InternalSubRegistryAndroidTest": [
@@ -723,6 +738,7 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "automaticSaveRetainsTheFocusedEditorAndCursor",
         "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
@@ -778,7 +794,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 226}
+SUITE_COUNTS = {"extra-time": 22, "subhub-pass": 54, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 227}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -809,6 +825,8 @@ UI_WITNESSES = {
         "extra-time-overview-collapsed", "extra-time-overview-update-needed", "extra-time-overview-pending",
         "extra-time-dom-review", "extra-time-overview-approved", "extra-time-overview-declined",
         "extra-time-overview-repeated-request"],
+    "com.subhub.app.appmode.ExtraTimeUiAndroidTest#decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh": [
+        "extra-time-dom-action-failed"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt": [
         "extra-time-dom-remote-icon"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission": [

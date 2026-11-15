@@ -107,10 +107,10 @@ public final class PermissionSetupAndroidTest {
                 ActivityScenario.launch(PermissionSetupActivity.class)) {
             scenario.onActivity(
                     a -> {
-                        assertFalse(a.findViewById(R.id.permission_step_two_open).isEnabled());
-                        assertFalse(a.findViewById(R.id.permission_step_three_open).isEnabled());
-                        assertEquals(
-                                .5f, a.findViewById(R.id.permission_step_two).getAlpha(), .01f);
+                        assertStepPresentation(a, R.id.permission_step_two,
+                                R.id.permission_step_two_open, false);
+                        assertStepPresentation(a, R.id.permission_step_three,
+                                R.id.permission_step_three_open, false);
                     });
             onView(withId(R.id.permission_step_one_open)).perform(scrollTo(), click());
             assertTrue(device.wait(Until.hasObject(By.pkg("com.android.settings")), 5000));
@@ -123,9 +123,10 @@ public final class PermissionSetupAndroidTest {
             scenario.recreate();
             scenario.onActivity(
                     a -> {
-                        assertTrue(a.findViewById(R.id.permission_step_two_open).isEnabled());
-                        assertFalse(a.findViewById(R.id.permission_step_three_open).isEnabled());
-                        assertEquals(1f, a.findViewById(R.id.permission_step_two).getAlpha(), .01f);
+                        assertStepPresentation(a, R.id.permission_step_two,
+                                R.id.permission_step_two_open, true);
+                        assertStepPresentation(a, R.id.permission_step_three,
+                                R.id.permission_step_three_open, false);
                     });
             onView(withId(R.id.permission_step_two_open)).perform(scrollTo(), click());
             assertTrue(device.wait(Until.hasObject(By.pkg("com.android.settings")), 5000));
@@ -138,9 +139,10 @@ public final class PermissionSetupAndroidTest {
             scenario.recreate();
             scenario.onActivity(
                     a -> {
-                        assertTrue(a.findViewById(R.id.permission_step_three_open).isEnabled());
-                        assertEquals(
-                                1f, a.findViewById(R.id.permission_step_three).getAlpha(), .01f);
+                        assertStepPresentation(a, R.id.permission_step_two,
+                                R.id.permission_step_two_open, true);
+                        assertStepPresentation(a, R.id.permission_step_three,
+                                R.id.permission_step_three_open, true);
                     });
         }
     }
@@ -190,6 +192,17 @@ public final class PermissionSetupAndroidTest {
                                                 .iterator()
                                                 .next());
         return active[0];
+    }
+
+    private static void assertStepPresentation(android.app.Activity activity, int cardId,
+            int buttonId, boolean enabled) {
+        View card = activity.findViewById(cardId);
+        TextView button = card.findViewById(buttonId);
+        assertEquals(1f, card.getAlpha(), .01f);
+        assertEquals(1f, button.getAlpha(), .01f);
+        assertEquals(enabled, button.isEnabled());
+        if (!enabled) assertEquals(activity.getColor(R.color.text_muted), button.getCurrentTextColor());
+        readable(card);
     }
 
     private static void readable(View view) {

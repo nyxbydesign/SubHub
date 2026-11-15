@@ -21,6 +21,7 @@ public final class UpdateStateStore {
     private static final String RELEASE_HISTORY = "release_history";
     private static final String LAST_NOTIFIED = "last_notified";
     private static final String DOWNLOAD_ID = "download_id";
+    private static final String AUTOMATIC_DOWNLOAD_ATTEMPTS = "automatic_download_attempts";
     private static final String VERIFIED_PATH = "verified_path";
     private static final String VERIFIED_AT = "verified_at";
     private static final String INSTALL_REQUESTED = "install_requested";
@@ -78,6 +79,19 @@ public final class UpdateStateStore {
     public void setEtag(String value) { preferences.edit().putString(ETAG, value == null ? "" : value).apply(); }
     public long downloadId() { return preferences.getLong(DOWNLOAD_ID, -1L); }
     public void setDownloadId(long id) { preferences.edit().putLong(DOWNLOAD_ID, id).apply(); }
+
+    /** The attempt survives process recreation and download-row cleanup. */
+    boolean reserveAutomaticDownload(UpdateManifest.Asset asset, long now) {
+        synchronized (UpdateStateStore.class) {
+            try {
+                String next = UpdateDownloadAttempts.reserve(
+                        preferences.getString(AUTOMATIC_DOWNLOAD_ATTEMPTS, "[]"), asset.sha256, now);
+                return next != null && preferences.edit().putString(AUTOMATIC_DOWNLOAD_ATTEMPTS, next).commit();
+            } catch (JSONException malformed) {
+                return false;
+            }
+        }
+    }
     public String verifiedPath() {
         synchronized (UpdateStateStore.class) {
             return preferences.getString(VERIFIED_PATH, "");
@@ -163,14 +177,12 @@ public final class UpdateStateStore {
         return true;
     }
 
-    public void clearDownload(boolean deleteFile) {
+    void clearDownload() {
         synchronized (UpdateStateStore.class) {
             UpdateNotifications.cancelDownload(context, downloadId());
             UpdateNotifications.cancelReady(context);
-            if (deleteFile) {
-                String path = verifiedPath();
-                if (!path.isEmpty()) new File(path).delete();
-            }
+            String path = verifiedPath();
+            if (!path.isEmpty()) new File(path).delete();
             preferences.edit().remove(DOWNLOAD_ID).remove(VERIFIED_PATH).remove(VERIFIED_AT)
                     .remove(INSTALL_REQUESTED).apply();
         }
@@ -179,12 +191,12 @@ public final class UpdateStateStore {
     public void cleanupInstalled(long installedVersionCode) {
         UpdateCandidate current = candidate();
         if (current != null && installedVersionCode >= current.manifest.versionCode) {
-            clearDownload(true);
+            clearDownload();
             preferences.edit().remove(CANDIDATE).remove(LAST_NOTIFIED).apply();
         }
         long verifiedAt = preferences.getLong(VERIFIED_AT, 0L);
         if (verifiedAt > 0 && System.currentTimeMillis() - verifiedAt > 7L * 24L * 60L * 60L * 1000L) {
-            clearDownload(true);
+            clearDownload();
         }
     }
 

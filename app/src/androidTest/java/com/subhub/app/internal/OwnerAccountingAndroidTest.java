@@ -512,7 +512,7 @@ public final class OwnerAccountingAndroidTest {
         AchievementManager.OwnerFacts failing = new AchievementManager.OwnerFacts() {
             @Override public boolean isAccessible() { return true; }
             @Override public long current(String id) {
-                if ("app_mode_guardian".equals(id) && queries.incrementAndGet() == 2) {
+                if ("pact_sealed".equals(id) && queries.incrementAndGet() == 2) {
                     sawStagedReceipts.set(a.data.preferences("achievements").getStringSet("unlocked", Set.of()).contains("first_session"));
                     throw unavailable;
                 }

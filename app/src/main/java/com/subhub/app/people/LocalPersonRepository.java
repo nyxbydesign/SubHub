@@ -6,14 +6,15 @@ import android.os.Build;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.appmode.ExtraTimeAllowance;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.penance.PaidPauseManager;
-import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
+import com.subhub.app.remote.ExtraTimeRequests;
+import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
-import com.subhub.app.settings.CensorAppearance;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.StatsRepository;
@@ -22,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -54,104 +54,172 @@ public final class LocalPersonRepository implements PersonRepository {
     }
 
     @Override public PersonSnapshot load(PersonId id) {
+        return load(id, true, true);
+    }
+
+    @Override public PersonSnapshot loadForPage(PersonId id, boolean includeContract) {
+        return load(id, includeContract, false);
+    }
+
+    private PersonSnapshot load(PersonId id, boolean includeContract, boolean includeAllowances) {
         if (!PersonId.LOCAL.equals(id)) throw new IllegalArgumentException("Not this device");
         SettingsRepository settings = new SettingsRepository(context);
         FeatureModuleManager modules = new FeatureModuleManager(context);
         AppModeManager apps = new AppModeManager(context);
-        AppTimerManager timers = new AppTimerManager(context);
-        AppTimerManager.Settings limits = timers.loadSettings();
-        Set<String> packages = apps.getIncludedPackages();
-        long usageAt = System.currentTimeMillis();
-        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
-        List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
-        for (String packageName : packages) {
-            String label = appLabel(packageName);
-            if (limits.perAppEnabled) {
-                AppTimerManager.UsageSnapshot used = usage.get(packageName);
-                allowances.add(new PersonSnapshot.Allowance(packageName, label,
-                        used == null ? 0 : used.appUsedMillis, timers.allowanceMinutes(packageName), null,
-                        com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, usageAt)
-                                .individualBudget(timers.allowanceMinutes(packageName) * 60_000L)));
-            }
-        }
-
-        if (limits.totalEnabled && !packages.isEmpty()) {
-            long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
-            allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
-                    total, limits.totalMinutes));
-        }
-
-        allowances = PersonSnapshot.Allowance.ordered(allowances);
-        List<PersonSnapshot.Section> sections = new ArrayList<>();
-        Set<String> imageCategories = settings.loadDetectorConfig().getEnabledCategories();
-        com.subhub.app.detection.text.TextSmutConfig text = settings.loadTextSmutConfig();
-        int filterCount = imageCategories.size() + (text.isEnabled() ? text.getEnabledCategories().size() : 0);
-        CensorAppearance appearance = settings.loadAppearance();
-        sections.add(new PersonSnapshot.Section("censor", context.getString(R.string.sub_censor_title),
-                modules.isCensorEnabled() ? context.getString(R.string.role_filter_count, filterCount)
-                        : context.getString(R.string.role_disabled),
-                context.getString(R.string.role_filter_details, names(imageCategories),
-                        text.isEnabled() ? names(text.getEnabledCategories()) : context.getString(R.string.role_disabled),
-                        friendly(appearance.getType().name()))));
-        sections.add(new PersonSnapshot.Section("limits", context.getString(R.string.sub_limits_title),
-                allowances.isEmpty() ? context.getString(R.string.role_no_app_limits)
-                        : context.getResources().getQuantityString(R.plurals.sub_limits_selected, allowances.size(), allowances.size()),
-                ""));
-
+        Set<String> packages = includeContract ? apps.getIncludedPackages() : Set.of();
+        List<PersonSnapshot.Allowance> allowances = includeAllowances ? loadAllowances(packages) : List.of();
         PenanceManager wallet = new PenanceManager(context);
-        int rules = 0;
-        for (PenanceInfraction rule : PenanceInfraction.values()) {
-            if (rule != PenanceInfraction.PAID_PAUSE && wallet.isInfractionEnabled(rule)) rules++;
+        List<PersonSnapshot.Section> sections = List.of();
+        if (includeContract) {
+            int allowanceCount = includeAllowances ? allowances.size()
+                    : configuredAllowanceCount(packages, settings);
+            sections = contractSections(settings, modules, apps.isAllApps(), packages, allowanceCount, wallet, null);
         }
-        sections.add(new PersonSnapshot.Section("wallet", context.getString(R.string.sub_wallet_title),
-                wallet.isEnabled() ? context.getString(R.string.role_wallet_rule_count, rules)
-                        : context.getString(R.string.role_disabled),
-                context.getString(R.string.role_wallet_details,
-                        wallet.money(wallet.snapshot(System.currentTimeMillis()).getDueCents()),
-                        wallet.money(wallet.getDailyCapCents()), wallet.money(wallet.getWeeklyCapCents()))));
-        boolean whispers = modules.isSubliminalEnabled(), popup = PopupStormSettings.load(context).isEnabled();
-        int effects = (whispers ? 1 : 0) + (popup ? 1 : 0);
-        sections.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
-                context.getResources().getQuantityString(R.plurals.atmosphere_effects_active, effects, effects),
-                context.getString(R.string.role_atmosphere_details,
-                        context.getString(whispers ? R.string.role_enabled : R.string.role_disabled),
-                        context.getString(popup ? R.string.role_enabled : R.string.role_disabled))));
-
         StatsSnapshot stats = new StatsRepository(context).load();
-        LocalContractDetails descriptions = new LocalContractDetails(context);
-        List<String> includedNames = new ArrayList<>();
-        List<PersonSnapshot.App> includedApps = new ArrayList<>();
-        if (!apps.isAllApps()) for (String packageName : apps.getIncludedPackages())
-            includedApps.add(new PersonSnapshot.App(packageName, appLabel(packageName)));
-        includedApps.sort(java.util.Comparator.comparing(value -> value.label, String.CASE_INSENSITIVE_ORDER));
-        for (PersonSnapshot.App app : includedApps) includedNames.add(app.label);
-        sections.add(0, new PersonSnapshot.Section("apps", context.getString(R.string.person_apps_title),
-                apps.isAllApps() ? context.getString(R.string.app_mode_always)
-                        : context.getResources().getQuantityString(R.plurals.apps_included_count,
-                                includedNames.size(), includedNames.size()),
-                String.join("\n", includedNames), includedApps));
-        List<PersonSnapshot.Section> canonical = new ArrayList<>();
-        for (PersonSnapshot.Section section : sections) {
-            String detail = "apps".equals(section.key) ? section.details : descriptions.forSection(section.key);
-            canonical.add(new PersonSnapshot.Section(section.key, section.title, section.summary, detail, section.apps));
-        }
         boolean paused = new PaidPauseManager(context).isActive();
         boolean active = paused || CommitmentManager.isActive(context) || apps.isArmed()
                 || ScreenCaptureService.isRunning() || ScreenshotAccessibilityService.isRecognitionActive();
         String service = context.getString(paused ? R.string.role_service_paused
                 : active ? R.string.role_service_active : R.string.role_service_inactive);
-        EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
-        if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
-        boolean localDomOwner = capabilities.contains(PersonSnapshot.Capability.EDIT_CONTRACT)
-                && !settings.preferences().contains("remote_active_configuration");
-        return new PersonSnapshot(id, ProfileNames.get(context, false), Build.MODEL,
+        EnumSet<PersonSnapshot.Capability> capabilities = localCapabilities();
+        return withContractOwner(new PersonSnapshot(id, ProfileNames.get(context, false), Build.MODEL,
                 context.getString(R.string.role_local_configuration),
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
-                capabilities, canonical, allowances, wallet.getCurrency(),
+                capabilities, sections, allowances, wallet.getCurrency(),
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
                 stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
-                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context))
-                .withContractDom(localDomOwner ? ProfileStore.load(context, true)
+                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context)), settings);
+    }
+
+    public List<PersonSnapshot.Allowance> loadAllowances() {
+        return loadAllowances(new AppModeManager(context).getIncludedPackages());
+    }
+
+    /** Sub Overview uses the contract owner and app-time rows. Session has its own live controls. */
+    PersonSnapshot loadOverview() {
+        SettingsRepository settings = new SettingsRepository(context);
+        ProfileData profile = ProfileStore.load(context, false);
+        PersonSnapshot local = new PersonSnapshot(PersonId.LOCAL, profile.name, Build.MODEL,
+                context.getString(R.string.role_local_configuration), "",
+                PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
+                localCapabilities(), List.of(), loadAllowances(), "", 0, 0, 0, 0, false,
+                new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
+                        PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "", ""))
+                .withProfile(profile, localConsent(), SubFeaturePolicy.hardcoreOverride(context));
+        return withContractOwner(local, settings);
+    }
+
+    private int configuredAllowanceCount(Set<String> packages, SettingsRepository settings) {
+        if (packages.isEmpty() || !SubFeaturePolicy.allowed(context, "limits")) return 0;
+        AppTimerManager.Settings limits = AppTimerManager.forConfiguration(settings.preferences()).loadSettings();
+        return (limits.perAppEnabled ? packages.size() : 0) + (limits.totalEnabled ? 1 : 0);
+    }
+
+    private List<PersonSnapshot.Allowance> loadAllowances(Set<String> packages) {
+        AppTimerManager timers = new AppTimerManager(context);
+        AppTimerManager.Settings limits = timers.loadSettings();
+        if (packages.isEmpty() || (!limits.perAppEnabled && !limits.totalEnabled)) return List.of();
+        long usageAt = System.currentTimeMillis();
+        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
+        List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
+        if (limits.perAppEnabled) {
+            Map<String, ExtraTimeAllowance> credits = ExtraTimeRequests.allowances(context, packages, usageAt);
+            for (String packageName : packages) {
+                AppTimerManager.UsageSnapshot used = usage.get(packageName);
+                int minutes = timers.allowanceMinutes(packageName, limits);
+                allowances.add(new PersonSnapshot.Allowance(packageName, appLabel(packageName),
+                        used == null ? 0 : used.appUsedMillis, minutes, null,
+                        credits.getOrDefault(packageName, ExtraTimeAllowance.NONE)
+                                .individualBudget(minutes * 60_000L)));
+            }
+        }
+
+        if (limits.totalEnabled) {
+            long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
+            allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
+                    total, limits.totalMinutes));
+        }
+
+        return PersonSnapshot.Allowance.ordered(allowances);
+    }
+
+    /** The Sub Contract reads configured values without opening usage/history or session stores. */
+    PersonSnapshot loadContract() {
+        SettingsRepository settings = new SettingsRepository(context);
+        AppTimerManager timers = AppTimerManager.forConfiguration(settings.preferences());
+        AppTimerManager.Settings limits = timers.loadSettings();
+        AppModeManager apps = new AppModeManager(context);
+        Set<String> packages = apps.getIncludedPackages();
+        int allowances = (limits.perAppEnabled ? packages.size() : 0)
+                + (limits.totalEnabled && !packages.isEmpty() ? 1 : 0);
+        List<PersonSnapshot.Section> sections = contractSections(settings, new FeatureModuleManager(context),
+                apps.isAllApps(), packages, allowances, new PenanceManager(context), new SubLimits(timers, limits));
+        return withContractOwner(new PersonSnapshot(PersonId.LOCAL, context.getString(R.string.header_subtitle_sub),
+                Build.MODEL, context.getString(R.string.role_local_configuration), "",
+                PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0, localCapabilities(), sections,
+                List.of(), "", 0, 0, 0, 0, false), settings);
+    }
+
+    private List<PersonSnapshot.Section> contractSections(SettingsRepository settings, FeatureModuleManager modules,
+            boolean allApps, Set<String> packages, int allowanceCount, PenanceManager wallet,
+            SubLimits subLimits) {
+        LocalContractDetails descriptions = new LocalContractDetails(context);
+        List<PersonSnapshot.App> apps = new ArrayList<>();
+        if (!allApps) for (String name : packages) apps.add(new PersonSnapshot.App(name, appLabel(name)));
+        apps.sort(java.util.Comparator.comparing(value -> value.label, String.CASE_INSENSITIVE_ORDER));
+        List<String> names = new ArrayList<>();
+        for (PersonSnapshot.App app : apps) names.add(app.label);
+        List<PersonSnapshot.Section> sections = new ArrayList<>();
+        sections.add(new PersonSnapshot.Section("apps", context.getString(R.string.person_apps_title),
+                allApps ? context.getString(R.string.app_mode_always)
+                        : context.getResources().getQuantityString(R.plurals.apps_included_count, apps.size(), apps.size()),
+                String.join("\n", names), apps));
+
+        Set<String> imageCategories = settings.loadDetectorConfig().getEnabledCategories();
+        com.subhub.app.detection.text.TextSmutConfig text = settings.loadTextSmutConfig();
+        int filterCount = imageCategories.size() + (text.isEnabled() ? text.getEnabledCategories().size() : 0);
+        sections.add(new PersonSnapshot.Section("censor", context.getString(R.string.sub_censor_title),
+                modules.isCensorEnabled() ? context.getString(R.string.role_filter_count, filterCount)
+                        : context.getString(R.string.role_disabled),
+                descriptions.forSection("censor")));
+        boolean limitsEnabled = subLimits == null || (SubFeaturePolicy.allowed(context, "limits")
+                && settings.preferences().getBoolean(FeatureModuleManager.KEY_LIMITS_ENABLED, true)
+                && (subLimits.settings.perAppEnabled || subLimits.settings.totalEnabled));
+        String limitsSummary = !limitsEnabled ? context.getString(R.string.role_disabled)
+                : allowanceCount == 0 ? context.getString(R.string.role_no_app_limits)
+                : context.getResources().getQuantityString(R.plurals.sub_limits_selected, allowanceCount, allowanceCount);
+        sections.add(new PersonSnapshot.Section("limits", context.getString(R.string.sub_limits_title), limitsSummary,
+                subLimits == null ? descriptions.forSection("limits")
+                        : limitsEnabled ? descriptions.subLimitsDetails(subLimits.timers, subLimits.settings) : ""));
+
+        sections.add(descriptions.walletSection(wallet, subLimits != null));
+        String atmosphereSummary, atmosphereDetails;
+        if (subLimits == null) {
+            int effects = (modules.isSubliminalEnabled() ? 1 : 0) + (PopupStormSettings.load(context).isEnabled() ? 1 : 0);
+            atmosphereSummary = context.getResources().getQuantityString(R.plurals.atmosphere_effects_active, effects, effects);
+            atmosphereDetails = descriptions.forSection("atmosphere");
+        } else {
+            AtmosphereContractDetails atmosphere = AtmosphereContractDetails.subContract(context);
+            atmosphereSummary = atmosphere.summary;
+            atmosphereDetails = atmosphere.details;
+        }
+        sections.add(new PersonSnapshot.Section("atmosphere", context.getString(R.string.atmosphere_title),
+                atmosphereSummary, atmosphereDetails));
+        return sections;
+    }
+
+    private record SubLimits(AppTimerManager timers, AppTimerManager.Settings settings) {}
+
+    private static EnumSet<PersonSnapshot.Capability> localCapabilities() {
+        EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
+        if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
+        return capabilities;
+    }
+
+    private PersonSnapshot withContractOwner(PersonSnapshot person, SettingsRepository settings) {
+        boolean localDomOwner = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
+                && !settings.preferences().contains("remote_active_configuration");
+        return person.withContractDom(localDomOwner ? ProfileStore.load(context, true)
                         : ProfileData.empty(context.getString(R.string.header_subtitle_dom)),
                         localDomOwner && com.subhub.app.security.ControllerPinManager.isConfigured(context)
                                 ? new PersonId("journal_local_dom") : null);
@@ -171,15 +239,4 @@ public final class LocalPersonRepository implements PersonRepository {
         } catch (PackageManager.NameNotFoundException ignored) { return packageName; }
     }
 
-    private String names(Set<String> values) {
-        List<String> names = new ArrayList<>();
-        for (String value : values) names.add(friendly(value));
-        Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
-        return names.isEmpty() ? context.getString(R.string.arrangement_none_selected) : String.join(", ", names);
-    }
-
-    private static String friendly(String raw) {
-        String value = raw.toLowerCase(Locale.ROOT).replace('_', ' ');
-        return value.isEmpty() ? value : Character.toUpperCase(value.charAt(0)) + value.substring(1);
-    }
 }

@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -27,6 +29,7 @@ import java.io.FileOutputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class LimitsUiAndroidTest {
     private static final String FIRST = "com.android.chrome", SECOND = "com.android.settings";
@@ -95,6 +98,41 @@ public final class LimitsUiAndroidTest {
                         readable(a.findViewById(android.R.id.content));
                         capture(a, "limits-validation.png");
                     });
+        }
+    }
+
+    @Test
+    public void unchangedUsageRefreshesLeaveLabelsAloneAndNewUsageStillAppears() throws Exception {
+        try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
+            awaitMetadata(scenario);
+            scenario.onActivity(activity -> {
+                TextView today = activity.findViewById(R.id.limits_today_amount);
+                TextView combined = activity.findViewById(R.id.limits_combined_usage);
+                AtomicInteger updates = new AtomicInteger();
+                TextWatcher watcher = new TextWatcher() {
+                    @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                    @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                        updates.incrementAndGet();
+                    }
+                    @Override public void afterTextChanged(Editable text) {}
+                };
+                for (TextView label : new TextView[]{today, combined,
+                        activity.findViewById(R.id.limits_today_scope),
+                        activity.findViewById(R.id.timer_usage_status)}) {
+                    label.addTextChangedListener(watcher);
+                }
+                for (int i = 0; i < 10; i++) invoke(activity, "renderTimerUsage", new Class<?>[0]);
+                assertEquals(0, updates.get());
+                android.widget.ProgressBar progress = activity.findViewById(R.id.limits_combined_progress);
+                int previousProgress = progress.getProgress();
+                timers.recordUsage(FIRST, 60_000L, Set.of(FIRST, SECOND), System.currentTimeMillis());
+                invoke(activity, "renderTimerUsage", new Class<?>[0]);
+                assertEquals("20m", today.getText().toString());
+                assertEquals(activity.getString(R.string.limits_usage_remaining, "20m", "25m"),
+                        combined.getText().toString());
+                assertTrue(progress.getProgress() > previousProgress);
+                assertEquals(2, updates.get());
+            });
         }
     }
 

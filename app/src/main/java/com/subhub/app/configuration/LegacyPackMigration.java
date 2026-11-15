@@ -9,6 +9,8 @@ import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.util.LowercaseHex;
+import com.subhub.app.util.Sha256;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -37,13 +39,9 @@ public final class LegacyPackMigration {
     static final int VERSION = 1;
     private static final String JOURNAL = "activation_journal";
     private static final String ENCRYPTED_PAYPAL = "_local_encrypted_paypal";
+    private static final int ARTWORK_BUFFER_BYTES = 8192;
     private static final Set<String> LEGACY_KEYS = Set.of(
             JOURNAL, "active_pack_id", "active_pack_backup", "active_sections", "creator_device_id");
-    private static final Set<String> ENCRYPTED_KEYS = Set.of(
-            "environment", "client_id", "client_secret", "verified_boundary", "primary_currency",
-            "primary_currency_boundary", "vault_status", "vault_id", "customer_id", "payer_email",
-            "payer_account_id", "vault_boundary", "vault_setup_token_id", "vault_setup_customer_id",
-            "vault_setup_metadata_id", "vault_setup_approval_url", "vault_setup_boundary");
     private static final Set<File> READY = new HashSet<>();
 
     interface Committer {
@@ -164,11 +162,6 @@ public final class LegacyPackMigration {
             String name = names.next();
             JSONObject values = backup.getJSONObject(name);
             if (ENCRYPTED_PAYPAL.equals(name)) {
-                Iterator<String> keys = values.keys();
-                while (keys.hasNext()) {
-                    String key = keys.next();
-                    if (!ENCRYPTED_KEYS.contains(key) || !(values.get(key) instanceof String)) return false;
-                }
                 encrypted = values;
                 continue;
             }
@@ -264,12 +257,12 @@ public final class LegacyPackMigration {
         for (File image : candidates) {
             if (!isImageName(image.getName())) continue;
             if (!image.isFile() || !inside(image.getCanonicalFile(), source)) throw new IOException("Invalid applied artwork");
-            String digest = digest(image);
+            String digest = Sha256.file(image, ARTWORK_BUFFER_BYTES);
             selected.put(image, digest);
             selection.update((image.getName() + '\u0000' + digest + '\n').getBytes(StandardCharsets.UTF_8));
         }
         // A changed source selection gets a different directory, including after a failed attempt.
-        File target = new File(parent, hex(selection.digest()));
+        File target = new File(parent, LowercaseHex.encode(selection.digest()));
         if (!inside(target, files) || !target.getCanonicalFile().equals(target)) throw new IOException("Invalid artwork destination");
         if (!target.mkdirs() && !target.isDirectory()) throw new IOException("Artwork storage is unavailable");
         File[] existing = target.listFiles();
@@ -289,13 +282,14 @@ public final class LegacyPackMigration {
                 if (!path.getCanonicalFile().equals(path)) throw new IOException("Invalid artwork output");
                 if (path.exists() && !path.isFile()) throw new IOException("Artwork output is not a file");
             }
-            if (!output.isFile() || output.length() != image.length() || !digest.equals(digest(output))) {
+            if (!output.isFile() || output.length() != image.length()
+                    || !digest.equals(Sha256.file(output, ARTWORK_BUFFER_BYTES))) {
                 AtomicFile atomic = new AtomicFile(output);
                 FileOutputStream stream = null;
                 try {
                     stream = atomic.startWrite();
                     try (FileInputStream input = new FileInputStream(image)) {
-                        byte[] buffer = new byte[8192];
+                        byte[] buffer = new byte[ARTWORK_BUFFER_BYTES];
                         int count;
                         while ((count = input.read(buffer)) != -1) stream.write(buffer, 0, count);
                     }
@@ -305,7 +299,8 @@ public final class LegacyPackMigration {
                     if (stream != null) atomic.failWrite(stream);
                 }
             }
-            if (output.length() != image.length() || !digest.equals(digest(output)) || !digest.equals(digest(image))) {
+            if (output.length() != image.length() || !digest.equals(Sha256.file(output, ARTWORK_BUFFER_BYTES))
+                    || !digest.equals(Sha256.file(image, ARTWORK_BUFFER_BYTES))) {
                 throw new IOException("Artwork verification failed");
             }
         }
@@ -315,7 +310,7 @@ public final class LegacyPackMigration {
         for (File file : current) {
             if (!isImageName(file.getName())) continue;
             currentImages.add(file);
-            if (!selected.containsKey(file) || !selected.get(file).equals(digest(file))) {
+            if (!selected.containsKey(file) || !selected.get(file).equals(Sha256.file(file, ARTWORK_BUFFER_BYTES))) {
                 throw new IOException("Applied artwork changed during migration");
             }
         }
@@ -330,21 +325,5 @@ public final class LegacyPackMigration {
 
     private static boolean inside(File child, File parent) {
         return child.getPath().startsWith(parent.getPath() + File.separator);
-    }
-
-    private static String digest(File file) throws Exception {
-        MessageDigest hash = MessageDigest.getInstance("SHA-256");
-        try (FileInputStream input = new FileInputStream(file)) {
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count);
-        }
-        return hex(hash.digest());
-    }
-
-    private static String hex(byte[] bytes) {
-        StringBuilder encoded = new StringBuilder(64);
-        for (byte value : bytes) encoded.append(String.format(Locale.ROOT, "%02x", value & 255));
-        return encoded.toString();
     }
 }

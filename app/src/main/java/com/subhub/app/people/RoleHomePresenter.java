@@ -12,10 +12,12 @@ import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
 import com.subhub.app.help.HelpActivity;
+import com.subhub.app.journal.JournalPreview;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderProvider;
 import com.subhub.app.stats.StatsActivity;
+import com.subhub.app.stats.HomeAchievementPreview;
 import com.subhub.app.stats.StatsSnapshot;
 import com.subhub.app.util.AsyncUiScope;
 import java.util.ArrayList;
@@ -69,6 +71,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         domBody = activity.findViewById(R.id.home_dom_overview);
         subBody = activity.findViewById(R.id.home_sub_summary);
         service = activity.findViewById(R.id.home_service_widget);
+        service.setVisibility(View.GONE);
         oldDashboard = activity.findViewById(R.id.sub_dashboard);
         relationship = PersonUi.column(activity);
         relationship.setId(R.id.home_assigned_dom);
@@ -152,7 +155,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
         subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
-        service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
+        updateSessionVisibility(dom);
         if (dom || sessionPage) relationship.setVisibility(View.GONE);
         oldDashboard.setVisibility(View.GONE);
         if (dom && !ControllerPinManager.isDomWorkspaceUnlocked()) {
@@ -189,12 +192,13 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         displayedDom = dom;
         lastRefresh = now;
         android.content.Context application = activity.getApplicationContext();
-        PersonRepository repository = People.repository(application);
+        PersonRepository repository = dom ? People.repository(application) : null;
         com.subhub.app.relationships.RelationshipUi.Provider iconSource = com.subhub.app.relationships.RelationshipUi.provider();
         KeyholderProvider authoritySource = People.keyholder();
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         long controllerRevision = ControllerPinManager.domWorkspaceRevision();
         long requestRevision = extraTime.revision();
+        boolean firstSubComposition = !dom && (subAchievements == null || subAchievements.getParent() != subBody);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
             com.subhub.app.relationships.RelationshipPresentation.Access access = null;
@@ -209,7 +213,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                         com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale), false);
                 values.addAll(rows); generation = rows.generation;
             } else {
-                values.add(repository.load(PersonId.LOCAL));
+                values.add(People.localOverview(application));
                 try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
                 catch (Exception unavailable) { relationshipUnavailable = true; }
             }
@@ -220,8 +224,13 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 requests = new com.subhub.app.remote.ExtraTimeRequests(application, PersonId.LOCAL)
                         .snapshot(System.currentTimeMillis());
             } catch (Exception unavailable) { /* The Overview remains readable when request availability cannot be read. */ }
+            JournalPreview.Initial journal = firstSubComposition
+                    ? JournalPreview.loadInitial(application, false, PersonId.LOCAL) : null;
+            HomeAchievementPreview achievements = null;
+            if (firstSubComposition) try { achievements = HomeAchievementPreview.load(application, null); }
+            catch (RuntimeException unavailable) { /* The rest of Overview does not depend on achievement history. */ }
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
-                    access, relationshipUnavailable, generation, requests, requestRevision);
+                    access, relationshipUnavailable, generation, requests, requestRevision, journal, achievements);
         }, loaded -> {
             try {
                 if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
@@ -246,7 +255,11 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                     taskSummary = loaded.tasks;
                     subFormal = !current || !loaded.access.legacy;
                     subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
-                    renderSub(loaded.people.get(0), current ? loaded.dom : null);
+                    renderSub(loaded.people.get(0), current ? loaded.dom : null, loaded.journal);
+                    if (loaded.achievements != null) subAchievements.render(loaded.achievements);
+                    else if (firstSubComposition) subAchievements.unavailable();
+                    else subAchievements.load(data, "home-achievement-preview");
+                    updateSessionVisibility(false);
                 }
             } finally { finishRefresh(); }
         }, failure -> {
@@ -266,8 +279,14 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
                         ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
                 PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
+                updateSessionVisibility(false);
             } finally { finishRefresh(); }
         });
+    }
+
+    private void updateSessionVisibility(boolean dom) {
+        // The dedicated Session route is independent; Overview reveals it with its other cards.
+        service.setVisibility(sessionPage || (!dom && subBody.getChildCount() != 0) ? View.VISIBLE : View.GONE);
     }
 
     private void finishRefresh() {
@@ -351,7 +370,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private void homeSummary(List<PersonSnapshot> people) {
-        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, idle = 0, offline = 0, unknownDevices = 0;
         java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
             if (DummySubPreview.ID.equals(person.id)) continue;
@@ -366,6 +385,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (person.id.isLocal()) { local++; continue; }
             paired++;
             if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            else if (person.connection == PersonSnapshot.Connection.IDLE) idle++;
             else if (person.connection == PersonSnapshot.Connection.OFFLINE) offline++;
             else unknownDevices++;
         }
@@ -385,7 +405,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
         List<String> status = new ArrayList<>();
         if (local > 0) status.add(activity.getString(R.string.home_local_sub_count, local));
-        if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
+        if (idle > 0) status.add(activity.getString(R.string.home_devices_counts_with_idle, online, idle, offline));
+        else if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
         if (unknownDevices > 0) status.add(activity.getString(R.string.home_status_unknown, unknownDevices));
         LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
                 R.string.home_subs_total, Integer.toString(subs), String.join(" · ", status));
@@ -538,8 +559,12 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
+        renderSub(person, dom, null);
+    }
+
+    private void renderSub(PersonSnapshot person, AssignedDom dom, JournalPreview.Initial journal) {
         subPerson = person; subDom = dom;
-        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
+        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections(journal);
         List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId,
                 person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
                 dom == null ? null : dom.name, dom == null ? null : dom.profile,
@@ -587,15 +612,14 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         if (!usageSignature.equals(renderedUsage)) {
             renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person);
         }
-        subAchievements.load(data, "home-achievement-preview");
         observeRemoteChanges();
     }
 
-    private void ensureSubSections() {
+    private void ensureSubSections(JournalPreview.Initial journal) {
         subBody.removeAllViews();
         renderedUsage = null; renderedRelationship = null;
         com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(subBody), false,
-                () -> com.subhub.app.journal.JournalRoutes.own(activity, false));
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, false), journal);
         LinearLayout tasks = OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_nav_tasks,
                 activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
                     if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
@@ -617,7 +641,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
         size.bottomMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         parent.addView(preview, size);
-        preview.load(data, "home-achievement-preview");
+        if (parent == domBody) preview.load(data, "home-achievement-preview");
         return preview;
     }
 
@@ -772,13 +796,17 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         final String internalGeneration;
         final com.subhub.app.remote.ExtraTimeRequests.Snapshot requests;
         final long requestRevision;
+        final JournalPreview.Initial journal;
+        final HomeAchievementPreview achievements;
         HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks,
                 com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable,
-                String internalGeneration, com.subhub.app.remote.ExtraTimeRequests.Snapshot requests, long requestRevision) {
+                String internalGeneration, com.subhub.app.remote.ExtraTimeRequests.Snapshot requests, long requestRevision,
+                JournalPreview.Initial journal, HomeAchievementPreview achievements) {
             this.people = people; this.dom = dom; this.tasks = tasks;
             this.access = access; this.relationshipUnavailable = relationshipUnavailable;
             this.internalGeneration = internalGeneration;
             this.requests = requests; this.requestRevision = requestRevision;
+            this.journal = journal; this.achievements = achievements;
         }
     }
 }

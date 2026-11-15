@@ -69,7 +69,8 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
     private ObjectTracker tracker;
     private LegacyTrackIds.Epoch trackIds;
     private long trackerSource = -1, lastTapEvent, lastTapUptime;
-    private boolean attached, activated, tickQueued, initializing, sourcePaused = true, pausePending;
+    private boolean attached, activated, tickQueued, detectorTransitionPending, powerSave;
+    private boolean sourcePaused = true, pausePending;
     private Runnable afterCoreDrain;
 
     /**
@@ -142,6 +143,7 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
     }
     @Override public void activationAcknowledged() {
         requireMain(); if (sealed.get()) return;
+        powerSave = governor.powerSaveEnabled();
         activated = true; requestTick();
     }
     private boolean renderSourceCurrent() {
@@ -163,7 +165,12 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
     }
     @Override public void sourceChanged() { requireMain(); if (!sealed.get()) { revokeSource(); requestTick(); } }
     @Override public void screenChanged(String action) { sourceChanged(); }
-    @Override public void powerChanged() { sourceChanged(); }
+    @Override public void powerChanged() {
+        requireMain();
+        if (sealed.get() || !activated) return;
+        powerSave = governor.powerSaveEnabled();
+        sourceChanged();
+    }
     @Override public void accessibilityEvent(AccessibilityEvent event) {
         requireMain(); Objects.requireNonNull(event);
         if (sealed.get()) return;
@@ -222,13 +229,16 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
         if (!allowed) {
             if (sourceEligible) revokeSource();
             pauseSource(true);
+            if (powerSave && !detectorTransitionPending && detector != null) retireIdleDetector();
         } else {
             sourceEligible = true;
             overlay.show();
             overlay.reconcileArtwork(); overlay.reconcileRendering();
-            if (modelConfiguration != selected && !initializing) initialize(selected);
+            DetectionEngine model = detector;
+            if (!detectorTransitionPending && (modelConfiguration != selected || model == null
+                    || !model.powerPolicyMatches(powerSave))) initialize(selected);
             pauseSource(false);
-            if (!sourcePaused && !pausePending && modelConfiguration == selected && detector != null
+            if (!detectorTransitionPending && !sourcePaused && !pausePending && modelConfiguration == selected && detector != null
                     && governor.shouldCapture(SystemClock.uptimeMillis(), selected.detector.getDetectionIntervalMs())) {
                 long epoch = sourceEpoch; InternalLimitsBinding.Evidence captured = evidence;
                 source.requestFrame(frame -> {
@@ -251,24 +261,53 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
         }, 0))) { pausePending = false; fail(); }
     }
     private void initialize(Snapshot selected) {
-        initializing = true;
+        detectorTransitionPending = true;
+        modelConfiguration = null;
         dispatch(inference, () -> {
             DetectionEngine model = detector;
             try {
                 if (sealed.get()) return;
+                if (adopted != selected || !renderSourceCurrent()) {
+                    normal(this::detectorTransitionFinished, () -> detectorTransitionPending = false, 0);
+                    return;
+                }
                 if (model == null) {
                     model = new DetectionEngine(request.connection.projection().service(), selected.detector, true,
                             request.resources.providers.forOwner(request.owner()));
                     detector = model; // Retain before any partial native initialization.
                     model.requireStrictResourceCleanup(); model.initialize();
-                } else model.setConfig(selected.detector);
+                } else {
+                    model.setConfig(selected.detector);
+                    model.refreshPowerPolicy();
+                }
                 DetectionEngine ready = model;
                 normal(() -> {
                     if (adopted == selected && acknowledged == selected && detector == ready) modelConfiguration = selected;
-                    initializing = false; requestTick();
-                }, () -> initializing = false, 0);
-            } catch (Exception | LinkageError error) { fail(); }
+                    detectorTransitionFinished();
+                }, () -> detectorTransitionPending = false, 0);
+            } catch (Exception | LinkageError error) {
+                if (DetectionEngine.resourceCleanupFailed(error)) cleanupFailed();
+                fail();
+            }
         });
+    }
+
+    private void retireIdleDetector() {
+        detectorTransitionPending = true;
+        modelConfiguration = null;
+        dispatch(inference, () -> {
+            if (sealed.get()) return;
+            DetectionEngine retired = detector;
+            detector = null;
+            try { if (retired != null) retired.close(); }
+            catch (RuntimeException | Error failure) { cleanupFailed(); fail(); return; }
+            normal(this::detectorTransitionFinished, () -> detectorTransitionPending = false, 0);
+        });
+    }
+
+    private void detectorTransitionFinished() {
+        detectorTransitionPending = false;
+        requestTick();
     }
     private boolean current(Snapshot selected, long epoch, InternalLimitsBinding.Evidence foreground) {
         requireMain();

@@ -160,15 +160,50 @@ public final class LegacyPackMigrationAndroidTest {
         assertTrue(interruptedImage.isFile());
     }
 
+    @Test public void restoredPendingPopupJournalBlocksReadinessEvenWithMigrationMarker() throws Exception {
+        File popup = image("subhub_studio/active-assets/popup", "image-0.png", Color.MAGENTA);
+        assertTrue(main().edit().putString(PopupStormSettings.K_PACK_DIR, popup.getParent())
+                .putFloat(PopupStormSettings.K_DISPLAY_DURATION, 1f).commit());
+        assertTrue(LegacyPackMigration.recoverAndMigrate(context));
+        assertTrue(LegacyPackMigration.isReady(context));
+        assertEquals(LegacyPackMigration.VERSION, main().getInt(LegacyPackMigration.MIGRATION_KEY, 0));
+        File migrated = assertMigrated(popup, PopupStormSettings.K_PACK_DIR);
+        long revision = main().getLong(CustomImageManager.REVISION_KEY, 0);
+
+        JSONObject values = new JSONObject().put(PopupStormSettings.K_DISPLAY_DURATION, typed("float", 3.5f));
+        JSONObject backup = new JSONObject().put(SettingsRepository.PREFERENCES_NAME, values);
+        JSONObject journal = new JSONObject().put("pending", true)
+                .put("sections", new JSONArray().put("popup")).put("backup", backup);
+        assertTrue(legacy().edit().putString("activation_journal", journal.toString()).commit());
+        assertFalse(LegacyPackMigration.isReady(context));
+
+        assertTrue(LegacyPackMigration.recoverAndMigrate(context));
+        assertTrue(LegacyPackMigration.isReady(context));
+        assertEquals(LegacyPackMigration.VERSION, main().getInt(LegacyPackMigration.MIGRATION_KEY, 0));
+        assertEquals(3.5f, main().getFloat(PopupStormSettings.K_DISPLAY_DURATION, 0), 0);
+        assertEquals(migrated, assertMigrated(popup, PopupStormSettings.K_PACK_DIR));
+        assertEquals(revision, main().getLong(CustomImageManager.REVISION_KEY, 0));
+        assertFalse(legacy().contains("activation_journal"));
+    }
+
     @Test public void malformedPendingJournalBlocksReadinessWithoutPartialRestore() throws Exception {
         assertTrue(main().edit().putBoolean("show_border", true).commit());
         assertTrue(wallet().edit().putInt("rule_new_detection_cents", 999).commit());
+        PayPalCredentialStore credentials = new PayPalCredentialStore(context);
+        assertTrue(credentials.save(PayPalEnvironment.SANDBOX, "fixture-id", "fixture-secret"));
+        SharedPreferences paypal = prefs(PayPalCredentialStore.PREFS_NAME);
+        Map<String, ?> savedCredentials = new HashMap<>(paypal.getAll());
         JSONObject valid = new JSONObject().put("show_border", typed("boolean", false));
         List<JSONObject> malformed = new ArrayList<>();
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
                 .put(PenanceManager.PREFS_NAME, new JSONObject().put("rule_new_detection_cents", typed("int", "123"))));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
                 .put("_local_encrypted_paypal", new JSONObject().put("unknown-key", "synthetic")));
+        malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME, valid)
+                .put("_local_encrypted_paypal", new JSONObject().put("environment", false)));
+        malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
+                        new JSONObject().put("show_border", typed("boolean", "false")))
+                .put("_local_encrypted_paypal", new JSONObject()));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
                 new JSONObject().put("show_border", typed("boolean", "false"))));
         malformed.add(new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
@@ -182,6 +217,7 @@ public final class LegacyPackMigrationAndroidTest {
             assertFalse(LegacyPackMigration.isReady(context));
             assertEquals(before, main().getAll());
             assertEquals(999, wallet().getInt("rule_new_detection_cents", 0));
+            assertEquals(savedCredentials, paypal.getAll());
             assertEquals(journal, legacy().getString("activation_journal", ""));
         }
     }

@@ -9,6 +9,7 @@ import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.overlay.CensorPhrases;
+import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceSnapshot;
@@ -28,11 +29,33 @@ public final class LocalContractDetails extends ContextWrapper {
         List<ArrangementDetail> rows;
         switch (section) {
             case "censor": rows = censorArrangementRows(); break;
-            case "limits": rows = limitsArrangementDetails(); break;
-            case "wallet": rows = walletArrangementDetails(); break;
+            case "limits":
+                AppTimerManager timers = new AppTimerManager(this);
+                rows = limitsArrangementDetails(timers, timers.loadSettings(), false);
+                break;
+            case "wallet":
+                PenanceManager wallet = new PenanceManager(this);
+                rows = walletArrangementDetails(wallet, walletRuleLabels(wallet));
+                break;
             case "atmosphere": return AtmosphereContractDetails.local(this).details;
             default: throw new IllegalArgumentException("Unknown contract section");
         }
+        return format(rows);
+    }
+
+    String subLimitsDetails(AppTimerManager timers, AppTimerManager.Settings settings) {
+        return format(limitsArrangementDetails(timers, settings, true));
+    }
+
+    PersonSnapshot.Section walletSection(PenanceManager wallet, boolean hideDisabled) {
+        List<String> rules = walletRuleLabels(wallet);
+        boolean enabled = !rules.isEmpty() || new PaidPauseManager(this).isEnabled();
+        return new PersonSnapshot.Section("wallet", getString(R.string.sub_wallet_title),
+                enabled ? getString(R.string.role_wallet_rule_count, rules.size()) : getString(R.string.role_disabled),
+                hideDisabled && !enabled ? "" : format(walletArrangementDetails(wallet, rules)));
+    }
+
+    private String format(List<ArrangementDetail> rows) {
         List<String> values = new ArrayList<>();
         for (ArrangementDetail row : rows) values.add(getString(
                 R.string.arrangement_detail_line, getString(row.label), row.value));
@@ -90,9 +113,8 @@ public final class LocalContractDetails extends ContextWrapper {
         return lines;
     }
 
-    private List<ArrangementDetail> limitsArrangementDetails() {
-        AppTimerManager timers = new AppTimerManager(this);
-        AppTimerManager.Settings settings = timers.loadSettings();
+    private List<ArrangementDetail> limitsArrangementDetails(AppTimerManager timers,
+            AppTimerManager.Settings settings, boolean hideInactiveAllowances) {
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
@@ -102,14 +124,17 @@ public final class LocalContractDetails extends ContextWrapper {
                                 : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_limits_individual,
                 getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
-                        + "\n" + appAllowances(timers)));
+                        + (settings.perAppEnabled || !hideInactiveAllowances
+                        ? "\n" + appAllowances(timers, hideInactiveAllowances) : "")));
         return lines;
     }
 
-    private String appAllowances(AppTimerManager timers) {
+    private String appAllowances(AppTimerManager timers, boolean observeOnly) {
         List<String> apps = new ArrayList<>();
         android.content.pm.PackageManager packages = getPackageManager();
-        for (String name : new AppModeManager(this).getIncludedPackages()) {
+        Set<String> included = observeOnly ? AppModeManager.observedIncludedPackages(this)
+                : new AppModeManager(this).getIncludedPackages();
+        for (String name : included) {
             String label = name;
             try { label = packages.getApplicationLabel(packages.getApplicationInfo(name, 0)).toString(); }
             catch (android.content.pm.PackageManager.NameNotFoundException absent) { /* Keep saved assignments. */ }
@@ -119,9 +144,7 @@ public final class LocalContractDetails extends ContextWrapper {
         return apps.isEmpty() ? getString(R.string.arrangement_no_apps) : String.join("\n", apps);
     }
 
-    private List<ArrangementDetail> walletArrangementDetails() {
-        PenanceManager wallet = new PenanceManager(this);
-        PenanceSnapshot snapshot = wallet.snapshot(System.currentTimeMillis());
+    private List<String> walletRuleLabels(PenanceManager wallet) {
         List<String> rules = new ArrayList<>();
         for (PenanceInfraction infraction : PenanceInfraction.values()) {
             if (infraction == PenanceInfraction.PAID_PAUSE
@@ -146,6 +169,11 @@ public final class LocalContractDetails extends ContextWrapper {
                             trigger,
                             wallet.money(wallet.getInfractionCents(infraction))));
         }
+        return rules;
+    }
+
+    private List<ArrangementDetail> walletArrangementDetails(PenanceManager wallet, List<String> rules) {
+        PenanceSnapshot snapshot = wallet.snapshot(System.currentTimeMillis());
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(

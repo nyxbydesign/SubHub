@@ -12,6 +12,7 @@ public final class MediaProjectionLeaseRegistryTest {
     @After public void releaseLease() {
         MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.PROTECTION);
         MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.CENSOR_LAB);
+        MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.FULL_ACCESS);
     }
 
     @Test public void ownersAreMutuallyExclusiveAndReleaseIsOwnerChecked() {
@@ -23,6 +24,19 @@ public final class MediaProjectionLeaseRegistryTest {
         assertEquals(MediaProjectionLeaseRegistry.Owner.CENSOR_LAB,
                 MediaProjectionLeaseRegistry.owner());
         MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.CENSOR_LAB);
+        assertNull(MediaProjectionLeaseRegistry.owner());
+    }
+
+    @Test public void fullAccessDoesNotPreemptProtectionAndReleasesOnlyItsOwnLease() {
+        assertTrue(MediaProjectionLeaseRegistry.acquire(MediaProjectionLeaseRegistry.Owner.PROTECTION));
+        assertFalse(MediaProjectionLeaseRegistry.acquire(MediaProjectionLeaseRegistry.Owner.FULL_ACCESS));
+        MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.FULL_ACCESS);
+        assertEquals(MediaProjectionLeaseRegistry.Owner.PROTECTION, MediaProjectionLeaseRegistry.owner());
+
+        MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.PROTECTION);
+        assertTrue(MediaProjectionLeaseRegistry.acquire(MediaProjectionLeaseRegistry.Owner.FULL_ACCESS));
+        assertFalse(MediaProjectionLeaseRegistry.acquire(MediaProjectionLeaseRegistry.Owner.CENSOR_LAB));
+        MediaProjectionLeaseRegistry.release(MediaProjectionLeaseRegistry.Owner.FULL_ACCESS);
         assertNull(MediaProjectionLeaseRegistry.owner());
     }
 }

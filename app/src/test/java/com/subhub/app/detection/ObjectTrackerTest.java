@@ -73,6 +73,49 @@ public final class ObjectTrackerTest {
     }
 
     @Test
+    public void imageReplacingTextPublishesOnTheFirstVisualObservation() {
+        ObjectTracker tracker = new ObjectTracker(DetectorConfig.builder().build());
+        BBox box = new BBox(90, 175, 100, 45);
+        tracker.update(List.of(textDetection(box)), 1_000_000_000L);
+        int textId = tracker.update(List.of(textDetection(box)), 1_100_000_000L)
+                .get(0).getId();
+
+        Detection face = new Detection("FACE_FEMALE", "face", 0.95f, box, false, true);
+        List<TrackedObject> tracks = tracker.update(List.of(face), 1_200_000_000L);
+        List<TrackedObject> visual = VisualTrackArbitrator.arbitrate(tracks).tracks();
+
+        assertEquals(1, visual.size());
+        assertEquals("face", visual.get(0).getCategory());
+        assertEquals(face.getTrackId(), visual.get(0).getId());
+        assertTrue(face.getTrackId() != textId);
+    }
+
+    @Test
+    public void qualityCoverageCanCreateAVisualTrackOverPriorText() {
+        ObjectTracker tracker = new ObjectTracker(DetectorConfig.builder().build());
+        BBox box = new BBox(90, 175, 100, 45);
+        tracker.update(List.of(textDetection(box)), 1_000_000_000L);
+        int textId = tracker.update(List.of(textDetection(box)), 1_100_000_000L)
+                .get(0).getId();
+
+        Detection face = qualityDetection(box);
+        assertEquals(1, tracker.supplementConfirmedQualityCoverage(
+                List.of(face), 1_200_000_000L));
+        assertTrue(face.getTrackId() != textId);
+
+        Detection sameFace = qualityDetection(box);
+        sameFace.setTrackId(face.getTrackId());
+        assertEquals(0, tracker.supplementConfirmedQualityCoverage(
+                List.of(sameFace), 1_300_000_000L));
+
+        Detection hintedToText = qualityDetection(box);
+        hintedToText.setTrackId(textId);
+        assertEquals(0, tracker.supplementConfirmedQualityCoverage(
+                List.of(hintedToText), 1_400_000_000L));
+        assertEquals(face.getTrackId(), hintedToText.getTrackId());
+    }
+
+    @Test
     public void nestedOverlayDetectionDoesNotCreateRecursiveTrack() {
         ObjectTracker tracker = new ObjectTracker(DetectorConfig.builder().build());
         Detection original = detection(new BBox(20, 20, 100, 100));

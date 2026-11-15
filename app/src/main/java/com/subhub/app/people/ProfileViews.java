@@ -6,8 +6,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
+import com.subhub.app.util.UiIdentity;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -44,6 +44,11 @@ public final class ProfileViews {
 
     /** Presentation-only callers can omit the independently persisted journal. */
     static void identity(LinearLayout parent, PersonSnapshot person, boolean includeJournal) {
+        identity(parent, person, includeJournal, null);
+    }
+
+    static void identity(LinearLayout parent, PersonSnapshot person, boolean includeJournal,
+            com.subhub.app.journal.JournalPreview.Initial journal) {
         Context context = parent.getContext();
         LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
@@ -53,11 +58,14 @@ public final class ProfileViews {
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(hero, person, "person_connection:" + person.id.value(), true);
         if (includeJournal && context instanceof android.app.Activity) {
-            PersonId target = person.id.isLocal() ? new PersonId("journal_local_sub") : person.id;
             com.subhub.app.journal.JournalPreview.add(hero,
-                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), target,
-                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id));
+                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), journalTarget(person.id),
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id), journal);
         }
+    }
+
+    static PersonId journalTarget(PersonId id) {
+        return id.isLocal() ? new PersonId("journal_local_sub") : id;
     }
 
     public static LinearLayout person(LinearLayout parent, PersonSnapshot person, Runnable open) {
@@ -69,14 +77,8 @@ public final class ProfileViews {
         presence(preview, prefix, person.id, person.connection);
         card.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(card, person, prefix + "_connection", false);
-        card.setOnClickListener(view -> open.run());
-        card.setFocusable(true);
-        card.setClickable(true);
-        android.util.TypedValue ripple = new android.util.TypedValue();
-        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-        card.setForeground(context.getDrawable(ripple.resourceId));
+        UiIdentity.bindClick(card, open);
         card.setTag("person:" + person.id.value());
-        ViewCompat.setScreenReaderFocusable(card, true);
         return card;
     }
 
@@ -122,14 +124,14 @@ public final class ProfileViews {
         details.setVisibility(View.VISIBLE);
     }
 
-    /** Only the repository's foreground-presence projection may supply CONNECTED here. */
+    /** Presence comes from the repository's authenticated peer projection. */
     static void presence(View identity, String prefix, PersonId target, PersonSnapshot.Connection state) {
         View candidate = identity.findViewWithTag(prefix + "_avatar");
         if (!(candidate instanceof ProfileAvatarView)) return;
         ProfileAvatarView avatar = (ProfileAvatarView) candidate;
         avatar.clearPresence();
         if (remoteContactTarget(target) && state != null && state != PersonSnapshot.Connection.LOCAL)
-            avatar.setPresence(state == PersonSnapshot.Connection.CONNECTED);
+            avatar.setPresence(state);
     }
 
     /** Journal targets route local profiles; only a transport peer generation can carry contact time. */

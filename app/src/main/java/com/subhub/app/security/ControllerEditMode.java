@@ -7,8 +7,6 @@ import android.widget.TextView;
 
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
-import com.subhub.app.commitment.CommitmentActivity;
-import com.subhub.app.commitment.CommitmentManager;
 
 /** Shared Dom/Sub role toggle for settings-changing surfaces. */
 public final class ControllerEditMode {
@@ -92,8 +90,7 @@ public final class ControllerEditMode {
 
     private boolean supportsSubSurface() {
         // The popup editor retains its read-only safety stop in Sub space.
-        return activity instanceof com.subhub.app.popup.PopupStormActivity
-                || activity instanceof CommitmentActivity && CommitmentManager.isActive(activity);
+        return activity instanceof com.subhub.app.popup.PopupStormActivity;
     }
 
     /** Locks controller access and returns to the configured device workspace. */

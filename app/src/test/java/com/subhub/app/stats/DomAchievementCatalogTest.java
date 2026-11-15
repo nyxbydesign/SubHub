@@ -9,7 +9,7 @@ import org.junit.Test;
 public final class DomAchievementCatalogTest {
     @Test public void domCatalogHasDistinctPositiveMilestonesAndDedicatedArtwork() {
         Set<String> ids = new HashSet<>(); Set<Integer> art = new HashSet<>();
-        assertEquals(25, DomAchievementCatalog.all().size());
+        assertEquals(31, DomAchievementCatalog.all().size());
         for (AchievementManager.Achievement value : DomAchievementCatalog.all()) {
             assertTrue(ids.add(value.getId())); assertTrue(art.add(value.getBadgeArtRes()));
             assertEquals(AchievementRole.DOM, value.getRole());
@@ -20,6 +20,9 @@ public final class DomAchievementCatalogTest {
         }
         assertFalse(AchievementRole.DOM.owns("first_session"));
         assertTrue(AchievementRole.SUB.owns("first_session"));
+        assertTrue(AchievementRole.SUB.owns("paypal_vault"));
+        assertFalse(AchievementRole.DOM.owns("paypal_vault"));
+        assertEquals(1, AchievementManager.target("paypal_vault"));
     }
 
     @Test public void currenciesCannotBeAddedTogetherToReachATributeMilestone() {
@@ -61,8 +64,10 @@ public final class DomAchievementCatalogTest {
     }
 
     @Test public void movedConfigurationBadgesKeepTheirPersistedIdsAndBelongOnlyToDom() {
-        for (String id : Arrays.asList("first_custom_phrase", "phrase_library", "paypal_vault",
-                "text_filter_enabled", "text_filter_catalog", "color_picker", "border_artist", "style_explorer")) {
+        for (String id : Arrays.asList("first_custom_phrase", "phrase_library",
+                "text_filter_enabled", "text_filter_catalog", "color_picker", "border_artist", "style_explorer",
+                "app_mode_guardian", "app_assignment_curator", "limits_setter", "limits_dual_guard",
+                "wallet_keeper", "tribute_rulesmith", "paid_pause")) {
             assertTrue(AchievementRole.DOM.owns(id)); assertFalse(AchievementRole.SUB.owns(id));
             assertTrue(DomAchievementCatalog.all().stream().anyMatch(value -> id.equals(value.getId())));
         }
@@ -76,16 +81,20 @@ public final class DomAchievementCatalogTest {
         assertEquals(8, AchievementManager.target("style_explorer"));
         var groups = AchievementsPane.orderedGroups(DomAchievementCatalog.all());
         assertEquals(Arrays.asList("dom_subs", "dom_sessions", "dom_time", "dom_phrases",
-                "dom_censor", "dom_appearance", "dom_wallet", "dom_hardcore"),
+                "dom_censor", "dom_appearance", "app_mode", "limits", "wallet_setup", "dom_wallet", "dom_hardcore"),
                 new java.util.ArrayList<>(groups.keySet()));
         assertEquals(Arrays.asList("color_picker", "border_artist", "style_explorer"),
                 groups.get("dom_appearance").stream().map(AchievementManager.Achievement::getId)
                         .collect(java.util.stream.Collectors.toList()));
-        assertEquals(Arrays.asList("paypal_vault", "dom_tribute_10", "dom_tribute_250",
+        assertEquals(Arrays.asList("dom_tribute_10", "dom_tribute_250",
                 "dom_tribute_1000", "dom_tribute_10000"),
                 groups.get("dom_wallet").stream().map(AchievementManager.Achievement::getId)
                         .collect(java.util.stream.Collectors.toList()));
         assertFalse(groups.containsKey("dom_tribute"));
+        assertEquals(1, AchievementManager.target("app_mode_guardian"));
+        assertEquals(3, AchievementManager.target("app_assignment_curator"));
+        assertEquals(1, AchievementManager.target("limits_setter"));
+        assertEquals(1, AchievementManager.target("limits_dual_guard"));
     }
 
     @Test public void appearanceProgressRequiresEveryOriginalChoice() {

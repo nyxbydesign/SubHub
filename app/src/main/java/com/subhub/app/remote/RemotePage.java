@@ -68,7 +68,10 @@ public abstract class RemotePage extends AppCompatActivity {
         return input(target,label,value,com.subhub.app.util.InputBounds.DEFAULT_TEXT);
     }
     protected EditText input(LinearLayout target,int label,String value,int maximum) {
-        text(target,getString(label),false);EditText editor=new EditText(this);
+        TextView caption = text(target, getString(label), false);
+        EditText editor = new EditText(this);
+        editor.setId(android.view.View.generateViewId());
+        caption.setLabelFor(editor.getId());
         com.subhub.app.util.InputBounds.limit(editor,maximum);editor.setText(value);
         editor.setSaveEnabled(false);editor.setSingleLine(false);target.addView(editor,new LinearLayout.LayoutParams(-1,-2));return editor;
     }

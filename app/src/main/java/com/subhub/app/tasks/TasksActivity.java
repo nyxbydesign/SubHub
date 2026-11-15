@@ -33,7 +33,6 @@ import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
 import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -331,10 +330,26 @@ public final class TasksActivity extends RolePage {
             else { model.proofAttachments = false; detail(state, selected); }
             return;
         }
+        List<TaskEngine.Occurrence> active = new ArrayList<>(), pending = new ArrayList<>(),
+                scheduled = new ArrayList<>(), historyRows = new ArrayList<>();
+        Set<String> completed = new HashSet<>();
+        for (TaskEngine.Occurrence occurrence : state.rows) {
+            TaskEngine.Status status = occurrence.status;
+            if ((status == TaskEngine.Status.ACTIVE || status == TaskEngine.Status.SCHEDULED)
+                    && state.refused.contains(occurrence.task.id)) continue;
+            if (status == TaskEngine.Status.ACCEPTED) completed.add(occurrence.id);
+            switch (status) {
+                case ACTIVE -> active.add(occurrence);
+                case PENDING -> pending.add(occurrence);
+                case SCHEDULED -> scheduled.add(occurrence);
+                case ACCEPTED, DENIED, TIMED_OUT, REFUSED, SKIPPED, CANCELLED -> {
+                    if (model.history) historyRows.add(occurrence);
+                }
+            }
+        }
         LinearLayout summary = PersonUi.card(body);
         summary.setTag("tasks_summary");
-        TasksUi.counts(summary, TaskEngine.completedCount(state.rows), count(state, TaskEngine.Status.ACTIVE),
-                count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
+        TasksUi.counts(summary, completed.size(), active.size(), pending.size(), scheduled.size());
         if (state.canCreate && state.allowed && state.zone == null) {
             PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);
         }
@@ -348,52 +363,30 @@ public final class TasksActivity extends RolePage {
         }, true);
         CheckBox history = check(body, R.string.tasks_show_history, "tasks_history", model.history);
         history.setOnCheckedChangeListener((button, checked) -> { model.history = checked; render(); });
-        int shown = count(state, TaskEngine.Status.ACTIVE) + count(state, TaskEngine.Status.PENDING)
-                + count(state, TaskEngine.Status.SCHEDULED);
-        if (model.history) shown += count(state, TaskEngine.Status.ACCEPTED) + count(state, TaskEngine.Status.DENIED)
-                + count(state, TaskEngine.Status.TIMED_OUT) + count(state, TaskEngine.Status.REFUSED)
-                + count(state, TaskEngine.Status.SKIPPED) + count(state, TaskEngine.Status.CANCELLED);
-        if (shown == 0) TasksUi.empty(body, R.string.tasks_no_open);
+        if (active.isEmpty() && pending.isEmpty() && scheduled.isEmpty() && historyRows.isEmpty())
+            TasksUi.empty(body, R.string.tasks_no_open);
         else {
-            section(state, R.string.tasks_active, TaskEngine.Status.ACTIVE);
-            section(state, R.string.tasks_pending, TaskEngine.Status.PENDING);
-            section(state, R.string.tasks_scheduled, TaskEngine.Status.SCHEDULED);
-            if (model.history) section(state, R.string.tasks_history, TaskEngine.Status.ACCEPTED,
-                    TaskEngine.Status.DENIED, TaskEngine.Status.TIMED_OUT, TaskEngine.Status.REFUSED,
-                    TaskEngine.Status.SKIPPED, TaskEngine.Status.CANCELLED);
+            section(state, R.string.tasks_active, active);
+            section(state, R.string.tasks_pending, pending);
+            section(state, R.string.tasks_scheduled, scheduled);
+            section(state, R.string.tasks_history, historyRows);
         }
     }
 
-    private static int count(Snapshot state, TaskEngine.Status status) {
-        int count = 0;
-        for (TaskEngine.Occurrence task : state.rows) if (task.status == status
-                && !(state.refused.contains(task.task.id) && (status == TaskEngine.Status.ACTIVE
-                || status == TaskEngine.Status.SCHEDULED))) count++;
-        return count;
-    }
-
-    private void section(Snapshot state, int heading, TaskEngine.Status... statuses) {
-        Set<TaskEngine.Status> selected = EnumSet.noneOf(TaskEngine.Status.class);
-        java.util.Collections.addAll(selected, statuses);
-        List<TaskEngine.Occurrence> visible = new ArrayList<>();
-        for (TaskEngine.Occurrence occurrence : state.rows) {
-            if (!selected.contains(occurrence.status)) continue;
-            if (state.refused.contains(occurrence.task.id) && (occurrence.status == TaskEngine.Status.ACTIVE
-                    || occurrence.status == TaskEngine.Status.SCHEDULED)) continue;
-            visible.add(occurrence);
-        }
+    private void section(Snapshot state, int heading, List<TaskEngine.Occurrence> visible) {
         if (visible.isEmpty()) return;
         PersonUi.text(body, getString(R.string.tasks_section_count, getString(heading), visible.size()), true);
+        DateTimeFormatter dateTime = TasksUi.shortDateTime(this);
         for (TaskEngine.Occurrence occurrence : visible) {
-            DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
-                    .withZone(occurrence.task.zone);
-            String timing = getString(occurrence.status == TaskEngine.Status.SCHEDULED
-                    ? R.string.tasks_starts : R.string.tasks_due,
-                    display.format(occurrence.status == TaskEngine.Status.SCHEDULED
-                            ? occurrence.task.start(occurrence.date) : occurrence.task.end(occurrence.date)));
+            DateTimeFormatter display = dateTime.withZone(occurrence.task.zone);
+            String timing = switch (occurrence.status) {
+                case SCHEDULED -> getString(R.string.tasks_starts, display.format(occurrence.task.start(occurrence.date)));
+                case ACTIVE -> getString(R.string.tasks_due, display.format(occurrence.task.end(occurrence.date)));
+                case PENDING -> display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at));
+                default -> display.format(java.time.Instant.ofEpochMilli(occurrence.outcomeAt));
+            };
             List<Object> signature = java.util.Arrays.asList(state.scope, state.dom,
-                    occurrence.task.title, timing, occurrence.status,
-                    occurrence.submission == null ? null : occurrence.submission.at);
+                    occurrence.task.title, timing, occurrence.status);
             shownCards.add(occurrence.id);
             TaskCard previous = taskCards.get(occurrence.id);
             if (previous != null && signature.equals(previous.signature)) {
@@ -403,16 +396,14 @@ public final class TasksActivity extends RolePage {
             LinearLayout card = PersonUi.card(body);
             card.setTag("task:" + occurrence.id);
             taskCards.put(occurrence.id, new TaskCard(card, signature));
-            PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, timing, () -> {
+            String status = getString(statusLabel(occurrence.status));
+            PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, "", () -> {
                 if (model.busy || model.loading) return;
                 model.selected = occurrence.id;
                 model.proofAttachments = false;
                 render(); scrollTop();
-            }).setTag("task_open:" + occurrence.id);
-            int previewStatus = occurrence.status == TaskEngine.Status.ACCEPTED ? R.string.tasks_approved
-                    : occurrence.status == TaskEngine.Status.DENIED ? R.string.tasks_declined : statusLabel(occurrence.status);
-            TasksUi.badge(card, getString(previewStatus)).setTag("task_preview_status:" + occurrence.id);
-            if (occurrence.inHistory()) completionTime(card, occurrence);
+            }, copy -> TasksUi.previewTiming(copy, occurrence.id, status, timing))
+                    .setTag("task_open:" + occurrence.id);
         }
     }
 
@@ -437,12 +428,17 @@ public final class TasksActivity extends RolePage {
         if (occurrence.submission != null) {
             LinearLayout submission = PersonUi.card(body);
             submission.setTag("task_submission:" + occurrence.id);
-            PersonUi.text(submission, getString(R.string.tasks_submission_heading), true);
+            LinearLayout heading = TasksUi.requestHeading(submission);
             if (occurrence.review != null && occurrence.submission.id.equals(occurrence.review.submissionId)
                     && (occurrence.review.kind == TaskAction.Kind.ACCEPT || occurrence.review.kind == TaskAction.Kind.DENY))
-                TasksUi.badge(submission, getString(statusLabel(occurrence.review.kind == TaskAction.Kind.ACCEPT
+                TasksUi.inlineBadge(heading, getString(statusLabel(occurrence.review.kind == TaskAction.Kind.ACCEPT
                         ? TaskEngine.Status.ACCEPTED : TaskEngine.Status.DENIED)))
                         .setTag("task_submission_verdict:" + occurrence.submission.id);
+            else if (occurrence.status == TaskEngine.Status.PENDING)
+                TasksUi.inlineBadge(heading, getString(R.string.tasks_pending));
+            completionTime(submission, occurrence);
+            int headerChildren = submission.getChildCount();
+            TasksUi.divider(submission);
             if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
                 PersonUi.text(submission, getString(R.string.tasks_outside_pending), false);
             else {
@@ -458,14 +454,18 @@ public final class TasksActivity extends RolePage {
                                 model.proofAttachments = true; render(); scrollTop(); })
                             .setTag("task_proof_attachments:" + occurrence.id);
             }
+            boolean hasProof = submission.getChildCount() > headerChildren + 1;
+            if (!hasProof) submission.removeViewAt(headerChildren);
+            if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING) {
+                TasksUi.divider(submission);
+                action(submission, R.string.tasks_accept, "accept:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
+                action(submission, R.string.tasks_deny, "deny:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.DENY), false);
+            }
         }
         LinearLayout actions = PersonUi.card(body);
-        if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING && occurrence.submission != null) {
-            action(actions, R.string.tasks_accept, "accept:" + occurrence.id,
-                    () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
-            action(actions, R.string.tasks_deny, "deny:" + occurrence.id,
-                    () -> act(occurrence, TaskAction.Kind.DENY), false);
-        } else if (!state.dom && !state.refused.contains(occurrence.task.id)) {
+        if (!state.dom && !state.refused.contains(occurrence.task.id)) {
             if (occurrence.status == TaskEngine.Status.ACTIVE) {
                 action(actions, R.string.tasks_request, "request:" + occurrence.id, () -> {
                     model.openForm(occurrence.id); render(); scrollTop(); InputFocusPolicy.openActivityForReading(this);
@@ -537,31 +537,16 @@ public final class TasksActivity extends RolePage {
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
-        PersonUi.text(card, occurrence.task.title, true).setTextSize(24);
-        taskStatus(card, occurrence.status);
-        DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
-        PersonUi.text(card, getString(R.string.tasks_window, display.format(occurrence.task.start(occurrence.date)),
-                display.format(occurrence.task.end(occurrence.date)), occurrence.task.zone.getId()), false);
-        completionTime(card, occurrence);
-        if (occurrence.task.recurring()) {
-            String[] labels = getResources().getStringArray(R.array.tasks_weekdays);
-            ArrayList<String> days = new ArrayList<>();
-            for (DayOfWeek day : DayOfWeek.values()) if (occurrence.task.weekdays.contains(day)) days.add(labels[day.getValue() - 1]);
-            PersonUi.text(card, String.join(" · ", days), false);
-        }
-        if (!occurrence.task.text.isEmpty()) PersonUi.text(card, occurrence.task.text, false);
-    }
-
-    private void taskStatus(LinearLayout card, TaskEngine.Status status) {
-        if (status != TaskEngine.Status.ACCEPTED && status != TaskEngine.Status.DENIED)
-            TasksUi.badge(card, getString(statusLabel(status)));
+        int status = (occurrence.status == TaskEngine.Status.ACCEPTED
+                || occurrence.status == TaskEngine.Status.DENIED) ? 0 : statusLabel(occurrence.status);
+        TasksUi.occurrenceHeader(card, occurrence, status);
     }
 
     private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence) {
         if (occurrence.submission == null) return;
-        DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
-        PersonUi.text(card, getString(R.string.tasks_completion_requested_at,
-                display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at)), occurrence.task.zone.getId()), false)
+        DateTimeFormatter display = TasksUi.shortDateTime(this).withZone(occurrence.task.zone);
+        PersonUi.text(card, getString(R.string.tasks_submission_timestamp,
+                display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at))), false)
                 .setTag("task_completion_time:" + occurrence.id);
     }
 
@@ -784,7 +769,7 @@ public final class TasksActivity extends RolePage {
             case ACTIVE: return R.string.tasks_active;
             case SCHEDULED: return R.string.tasks_scheduled;
             case PENDING: return R.string.tasks_pending;
-            case ACCEPTED: return R.string.tasks_accepted;
+            case ACCEPTED: return R.string.tasks_approved;
             case DENIED: return R.string.tasks_denied;
             case TIMED_OUT: return R.string.tasks_timed_out;
             case SKIPPED: return R.string.tasks_skipped;

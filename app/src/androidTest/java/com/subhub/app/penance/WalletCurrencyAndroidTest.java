@@ -1,11 +1,26 @@
 package com.subhub.app.penance;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.hamcrest.Matchers.allOf;
 import static org.junit.Assert.*;
 
 import android.content.Context;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.LayoutInflater;
+import android.widget.TextView;
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.databinding.ViewWalletConnectionBinding;
+import com.subhub.app.help.HelpActivity;
+import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import org.json.JSONObject;
 import org.junit.After;
@@ -91,6 +106,82 @@ public final class WalletCurrencyAndroidTest {
         assertEquals(0, manager.getTotalPaidCents());
         for (PenanceEvent event : manager.snapshot(3).getEvents()) {
             assertEquals("EUR", event.getCurrency());
+        }
+    }
+
+    @Test public void snapshotReusesUnchangedRowsAndReadsCurrentClockAndLedger() {
+        long deadline = System.currentTimeMillis();
+        var values = context.getSharedPreferences(PenanceManager.PREFS_NAME, Context.MODE_PRIVATE);
+        assertTrue(values.edit().putString("events_v1", "older,1,1,25,1,PAID,old;malformed;"
+                + "first,2," + deadline + ",100,1,OPEN,,NEW_DETECTION;"
+                + "second,2,2,200,1,PAID,paid,NEW_DETECTION,USD").commit());
+
+        PenanceSnapshot before = manager.snapshot(deadline - 1);
+        assertEquals(100, before.getMercyCents());
+        assertEquals(0, before.getDueCents());
+        assertEquals(25, before.getPaidCents());
+        assertEquals(3, before.getEvents().size());
+        assertEquals("first", before.getEvents().get(0).getId());
+        assertEquals("second", before.getEvents().get(1).getId());
+        assertEquals("older", before.getEvents().get(2).getId());
+        assertThrows(UnsupportedOperationException.class, before.getEvents()::clear);
+
+        PenanceSnapshot due = manager.snapshot(deadline);
+        assertSame(before.getEvents().get(0), due.getEvents().get(0));
+        assertEquals(0, due.getMercyCents());
+        assertEquals(100, due.getDueCents());
+
+        PenanceManager writer = new PenanceManager(context);
+        assertTrue(writer.forgiveLatestInMercy(deadline - 1));
+        PenanceSnapshot changed = manager.snapshot(deadline);
+        assertEquals(PenanceEvent.Status.FORGIVEN, changed.getEvents().get(0).getStatus());
+        assertEquals(PenanceEvent.Status.OPEN, before.getEvents().get(0).getStatus());
+        assertEquals(0, changed.getDueCents());
+
+        assertTrue(writer.changeCurrency("USD"));
+        PenanceSnapshot newCurrency = manager.snapshot(deadline);
+        assertSame(changed.getEvents().get(0), newCurrency.getEvents().get(0));
+        assertEquals(200, newCurrency.getPaidCents());
+        assertEquals(25, changed.getPaidCents());
+    }
+
+    @Test public void unchangedPayPalLabelsAreNotRewrittenOnResume() {
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                var binding = ViewWalletConnectionBinding.inflate(LayoutInflater.from(activity));
+                var summary = new TextView(activity);
+                var autoPay = new HardcoreAutoPayManager(context);
+                autoPay.pause("Fixture pause");
+                try (var connection = new WalletConnectionController(activity, binding, summary,
+                        (message, duration) -> fail("Refreshing Wallet labels must not show feedback"))) {
+                    TextView[] labels = {summary, binding.paypalSandboxStatus, binding.paypalVaultStatus,
+                            binding.buttonLinkPaypalWallet, binding.walletCurrencyStatus, binding.paypalAutoPayStatus};
+                    int[] writes = new int[labels.length];
+                    for (int i = 0; i < labels.length; i++) {
+                        int index = i;
+                        labels[i].addTextChangedListener(new TextWatcher() {
+                            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+                            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                                writes[index]++;
+                            }
+                            @Override public void afterTextChanged(Editable text) {}
+                        });
+                    }
+
+                    connection.refresh();
+                    connection.onResume();
+                    assertArrayEquals(new int[6], writes);
+
+                    autoPay.pause("Changed fixture pause");
+                    connection.refresh();
+                    connection.onResume();
+                    assertArrayEquals(new int[]{0, 0, 0, 0, 0, 1}, writes);
+                    assertEquals(activity.getString(R.string.paypal_auto_pay_paused_status, "Changed fixture pause"),
+                            binding.paypalAutoPayStatus.getText().toString());
+                } finally {
+                    autoPay.disable();
+                }
+            });
         }
     }
 
@@ -187,6 +278,15 @@ public final class WalletCurrencyAndroidTest {
             androidx.test.uiautomator.UiDevice device = androidx.test.uiautomator.UiDevice.getInstance(
                     androidx.test.platform.app.InstrumentationRegistry.getInstrumentation());
             device.waitForIdle();
+            androidx.test.uiautomator.UiObject2 message = device.findObject(
+                    androidx.test.uiautomator.By.res(context.getPackageName(), "snackbar_text"));
+            androidx.test.uiautomator.UiObject2 navigation = device.findObject(
+                    androidx.test.uiautomator.By.res(context.getPackageName(), "bottom_navigation"));
+            assertNotNull("Currency feedback belongs to the Wallet window", message);
+            assertNotNull(navigation);
+            assertEquals(context.getString(com.subhub.app.R.string.wallet_currency_changed), message.getText());
+            assertTrue("Currency feedback must stay above navigation",
+                    message.getVisibleBounds().bottom <= navigation.getVisibleBounds().top);
             assertTrue(device.takeScreenshot(new java.io.File(context.getExternalFilesDir(null),
                     "wallet-currency-preview.png")));
         }
@@ -200,17 +300,15 @@ public final class WalletCurrencyAndroidTest {
         }
     }
 
-    @Test public void walletHeaderShowsActualCurrencyInBothModes() {
+    @Test public void walletOverviewShowsActualCurrencyInBothModes() {
         assertTrue(manager.changeCurrency("USD"));
+        assertEquals(0, manager.snapshot(System.currentTimeMillis()).getDueCents());
         for (boolean dom : new boolean[] {true, false}) {
-            if (dom) com.subhub.app.security.ControllerPinManager.enterDomMode();
-            else com.subhub.app.security.ControllerPinManager.enterSubMode();
-            try (androidx.test.core.app.ActivityScenario<PenanceActivity> scenario =
-                    androidx.test.core.app.ActivityScenario.launch(PenanceActivity.class)) {
-                scenario.onActivity(activity -> assertEquals(
-                                        "USD",
-                        ((android.widget.TextView) activity.findViewById(com.subhub.app.R.id.primary_header_subtitle))
-                                .getText().toString()));
+            if (dom) ControllerPinManager.enterDomMode();
+            else ControllerPinManager.enterSubMode();
+            try (ActivityScenario<PenanceActivity> scenario = ActivityScenario.launch(PenanceActivity.class)) {
+                scenario.onActivity(activity -> assertEquals(dom, ControllerPinManager.isDomModeActive()));
+                onView(withId(R.id.due_amount)).check(matches(allOf(isDisplayed(), withText("$0.00"))));
             }
         }
     }

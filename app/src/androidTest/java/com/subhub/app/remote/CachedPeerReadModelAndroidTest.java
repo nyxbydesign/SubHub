@@ -113,6 +113,29 @@ public final class CachedPeerReadModelAndroidTest {
         store.putMetadata(SUB,generation,"confirmed_APP_USAGE",Long.toString(now));
         saved=repository.load(selected);assertFalse(saved.sections.isEmpty());assertEquals(1,saved.allowances.size());
         assertEquals(-1,saved.allowances.get(0).usedMillis);assertEquals(7200,saved.protectedSeconds);
+        for (boolean includeContract : new boolean[]{false, true}) {
+            PersonSnapshot page = repository.loadForPage(selected, includeContract);
+            assertEquals(saved.id, page.id);
+            assertEquals(saved.profile, page.profile);
+            assertEquals(saved.capabilities, page.capabilities);
+            assertEquals(saved.contractName, page.contractName);
+            assertEquals(saved.sync.contract, page.sync.contract);
+            assertEquals(saved.sync.runtime, page.sync.runtime);
+            assertEquals(saved.sync.stats, page.sync.stats);
+            assertEquals(saved.sync.desiredRevision, page.sync.desiredRevision);
+            assertEquals(saved.sync.appliedRevision, page.sync.appliedRevision);
+            assertEquals(saved.connection, page.connection);
+            assertEquals(saved.lastOnlineAt, page.lastOnlineAt);
+            assertEquals(saved.protectedSeconds, page.protectedSeconds);
+            assertEquals(saved.featureConsent, page.featureConsent);
+            assertTrue(page.allowances.isEmpty());
+            assertEquals(includeContract ? saved.sections.size() : 0, page.sections.size());
+            if (includeContract) {
+                PersonSnapshot.Section apps = page.sections.stream()
+                        .filter(section -> "apps".equals(section.key)).findFirst().orElseThrow();
+                assertEquals("com.android.settings", apps.apps.get(0).packageName);
+            }
+        }
         PersonSnapshot summary=repository.loadSummary(selected);
         assertEquals(saved.id,summary.id);assertEquals(saved.profile,summary.profile);
         assertEquals(saved.connection,summary.connection);assertEquals(saved.lastOnlineAt,summary.lastOnlineAt);
@@ -126,9 +149,28 @@ public final class CachedPeerReadModelAndroidTest {
         PersonSnapshot local=new PersonSnapshot(PersonId.LOCAL,"Local Sub","","","",PersonSnapshot.Connection.LOCAL,
                 PersonSnapshot.Freshness.CURRENT,0,EnumSet.noneOf(PersonSnapshot.Capability.class),Collections.emptyList(),
                 Collections.emptyList(),"EUR",0,0,0,0,false);
+        RemoteStore.Peer dom = store.peer(DOM, incoming);
+        PersonSnapshot transportOnly = store.authorityObservation(() -> repository.localProjection(local));
+        assertEquals(RemotePersonRepository.id(dom), transportOnly.contractDomContact.id);
+        assertEquals(PersonSnapshot.Connection.OFFLINE, transportOnly.contractDomContact.state);
+        assertEquals(0, transportOnly.contractDomContact.lastOnlineAt);
+        assertEquals(0, transportOnly.lastSyncedAt);
+        assertEquals(domContact, dom.lastSyncedAt);
+
+        assertTrue(PeerPresence.receive(store, dom, new JSONObject()
+                .put("version", 1).put("sequence", 1).put("foreground", true)));
+        long onlineAt = PeerPresence.read(store, dom).lastOnlineAt;
+        assertTrue(onlineAt > domContact);
+        assertTrue(PeerPresence.receive(store, dom, new JSONObject()
+                .put("version", 1).put("sequence", 2).put("foreground", false).put("backgroundSync", false)));
         PersonSnapshot projected=store.authorityObservation(()->repository.localProjection(local));
-        assertEquals(RemotePersonRepository.id(store.peer(DOM,incoming)),projected.contractDomContact.id);
-        assertEquals(domContact,projected.contractDomContact.lastOnlineAt);assertEquals(0,projected.lastSyncedAt);
+        assertEquals(RemotePersonRepository.id(dom), projected.contractDomContact.id);
+        assertEquals(PersonSnapshot.Connection.OFFLINE, projected.contractDomContact.state);
+        assertEquals(onlineAt, projected.contractDomContact.lastOnlineAt);
+        assertEquals(0, projected.lastSyncedAt);
+        PersonSnapshot otherPeer = repository.loadForPage(selected, false);
+        assertEquals(old, otherPeer.lastSyncedAt);
+        assertEquals(0, otherPeer.lastOnlineAt);
         assertEquals(projected.contractDomContact,projected.withProfile(local.profile,Collections.emptyMap()).contractDomContact);
         assertEquals(projected.contractDomContact,projected.withContractDom(projected.contractDom,projected.contractDomId).contractDomContact);
         assertNull(projected.withContractDom(projected.contractDom).contractDomContact);
@@ -144,8 +186,12 @@ public final class CachedPeerReadModelAndroidTest {
         store.revoke(SUB,generation);saved=repository.load(selected);
         assertEquals(PersonSnapshot.Connection.REVOKED,saved.connection);assertFalse(saved.can(PersonSnapshot.Capability.EDIT_CONTRACT));
         assertFalse(saved.can(PersonSnapshot.Capability.END_SESSION));
+        PersonSnapshot revokedPage = repository.loadForPage(selected, false);
+        assertEquals(saved.capabilities, revokedPage.capabilities);
+        assertEquals(PersonSnapshot.Connection.REVOKED, revokedPage.connection);
         store.getWritableDatabase().execSQL("UPDATE linking_state SET revision=revision-1 WHERE id=1");
         assertThrows(IllegalStateException.class,()->repository.load(selected));
+        assertThrows(IllegalStateException.class,()->repository.loadForPage(selected, false));
     }
 
     @Test public void atmosphereSummaryUsesOnlyThePeerBaselineAndKeepsConsentFreshnessSeparate() throws Exception {
@@ -163,7 +209,7 @@ public final class CachedPeerReadModelAndroidTest {
         PersonSnapshot saved = repository.load(selected);
         PersonSnapshot.Section atmosphere = atmosphere(saved);
         assertEquals(PersonSnapshot.Freshness.CURRENT, saved.sync.contract);
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", atmosphere.summary);
         assertTrue(atmosphere.details.contains("Categories: Findom\nIntensity: Custom"));
         assertTrue(atmosphere.details.contains("Consent: Unknown"));
         assertFalse(atmosphere.details.contains("Never expose"));
@@ -174,10 +220,10 @@ public final class CachedPeerReadModelAndroidTest {
         assertTrue(RemoteTelemetry.validRuntime(runtime));
         mirror(RemoteProtocol.Stream.RUNTIME, "current", runtime);
         store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now));
-        assertEquals("Whispers Disabled by Sub\nPopup Storm On", atmosphere(repository.load(selected)).summary);
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On\nGagging Unknown", atmosphere(repository.load(selected)).summary);
         store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now - 120_000));
         atmosphere = atmosphere(repository.load(selected));
-        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on\nGagging Unknown", atmosphere.summary);
         assertTrue(atmosphere.details.contains("Consent: Last observed disabled by Sub"));
         store.putMetadata(SUB, generation, "confirmed_BASELINE", Long.toString(now - 40 * 60_000L));
         saved = repository.load(selected);

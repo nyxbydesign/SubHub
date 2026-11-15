@@ -4,8 +4,10 @@ import android.content.SharedPreferences;
 import com.subhub.app.commitment.PactDuration;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.configuration.ConfigurationSettingCatalog;
+import com.subhub.app.remote.GagContractFields;
 import com.subhub.app.settings.SettingsRepository;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -162,6 +164,7 @@ public final class InternalConfigurationStore {
         expectedSections.add(APPS); expectedSections.add(DURATION); expectedSections.add(ARTWORK);
         expectedSections.add(ALLOWANCES); expectedSections.add(WALLET_DISPLAY);
         expectedSections.add(POPUP_LOCAL); expectedSections.add(PRESETS);
+        if (source.containsKey(GagContractFields.SECTION)) expectedSections.add(GagContractFields.SECTION);
         if (!source.keySet().equals(expectedSections)) throw new IllegalArgumentException("Invalid internal sections");
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
         for (String section : ConfigurationSchema.SECTIONS) {
@@ -228,7 +231,20 @@ public final class InternalConfigurationStore {
         // Already validated saved looks can be large; do not reparse them for every slider event.
         if (knownValid == null || !presets.equals(knownValid.get(PRESETS))) validatePresets(presets.get("looks_v1"));
         result.put(PRESETS, Collections.unmodifiableMap(new LinkedHashMap<>(presets)));
+        Map<String, ?> gag = source.get(GagContractFields.SECTION);
+        if (gag != null) result.put(GagContractFields.SECTION, validatedGag(new JSONObject(gag)));
         return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, Object> validatedGag(JSONObject rules) {
+        try {
+            GagContractFields.validate(rules);
+            return Map.of("enabled", rules.getBoolean("enabled"), "mode", rules.getString("mode"),
+                    "interval", rules.getInt("interval"), "words", rules.getString("words"),
+                    "replacements", rules.getString("replacements"));
+        } catch (JSONException invalid) {
+            throw new IllegalArgumentException("Invalid Demo Gag rules", invalid);
+        }
     }
 
     private static Set<String> packageSet(Object value) {
@@ -306,6 +322,20 @@ public final class InternalConfigurationStore {
         public synchronized InternalSubRecord acknowledgedBase() { return base; }
         public synchronized boolean hasUnflushedChanges() { return !sections.equals(base.configuration()); }
 
+        public synchronized JSONObject gagRules() throws JSONException {
+            Map<String, Object> rules = sections.get(GagContractFields.SECTION);
+            return rules == null ? GagContractFields.defaults() : new JSONObject(rules);
+        }
+
+        public synchronized void editGagRules(JSONObject rules) {
+            Map<String, Object> validated = validatedGag(rules);
+            String section = GagContractFields.SECTION;
+            if (validated.equals(sections.get(section))) return;
+            Map<String, Map<String, Object>> updated = mutableSections();
+            updated.put(section, validated);
+            sections = validate(updated, sections);
+        }
+
         public synchronized SharedPreferences preferences(String name) {
             if (!SettingsRepository.PREFERENCES_NAME.equals(name)
                     && !ConfigurationSchema.preferenceStore(ConfigurationSchema.WALLET).equals(name)
@@ -356,6 +386,7 @@ public final class InternalConfigurationStore {
             Preferences(String name) {
                 main = SettingsRepository.PREFERENCES_NAME.equals(name);
                 for (String section : sections.keySet()) {
+                    if (GagContractFields.SECTION.equals(section)) continue;
                     String storeName = DURATION.equals(section) ? DURATION_PREFERENCES
                             : PRESETS.equals(section) ? PRESET_PREFERENCES
                             : ConfigurationSchema.WALLET.equals(section) || WALLET_DISPLAY.equals(section)

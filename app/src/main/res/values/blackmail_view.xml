@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="blackmail_messages">Messages</string>
+    <string name="blackmail_screen_tile">Screen</string>
+    <string name="blackmail_share_screen">Share screen</string>
+    <color name="blackmail_entry_iris">#373052</color>
+    <color name="blackmail_entry_rose">#452E4B</color>
+    <color name="blackmail_entry_violet">#3D3051</color>
+    <string name="blackmail_older_messages">Older messages</string>
+    <string name="blackmail_collapse_notifications">Hide notifications</string>
+    <string name="blackmail_older_notifications">Older notifications</string>
+    <string name="blackmail_notification_content_unavailable">Content unavailable</string>
+    <string name="blackmail_download_item">Download %1$s</string>
+    <string name="blackmail_download_folder_item">Download folder %1$s</string>
+    <string name="blackmail_close_preview">Close preview</string>
+    <string name="blackmail_live_screen">Live</string>
+    <string name="blackmail_messages_partial">Showing the most recent conversations.</string>
+    <string name="blackmail_list_incomplete">Some entries could not be loaded.</string>
+    <string name="blackmail_loading_entries">Loading entries…</string>
+    <string name="blackmail_refresh_unavailable">Couldn’t refresh. Showing the last loaded entries.</string>
+    <string name="blackmail_detail_update">Update the Sub’s app for conversations and grouped notifications.</string>
+    <plurals name="blackmail_notification_count">
+        <item quantity="one">%d notification</item>
+        <item quantity="other">%d notifications</item>
+    </plurals>
+</resources>

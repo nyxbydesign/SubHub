@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,9 +28,9 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
+import com.subhub.app.configuration.FeatureEditorActivity;
 import com.subhub.app.databinding.ActivityPopupStormBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
@@ -44,7 +45,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /** Styled local configuration UI with explicit consent and a persistent escape control. */
-public final class PopupStormActivity extends AppCompatActivity {
+public final class PopupStormActivity extends FeatureEditorActivity {
     private ActivityPopupStormBinding binding;
     private SharedPreferences preferences;
     private ControllerEditMode editMode;
@@ -58,7 +59,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable statusUpdater = new Runnable() {
         @Override public void run() {
-            if (binding == null) return;
+            if (binding == null || FeatureEditorSession.remote(PopupStormActivity.this)) return;
             refreshStatus();
             ui.postDelayed(this, 500);
         }
@@ -135,15 +136,14 @@ public final class PopupStormActivity extends AppCompatActivity {
     @Override protected void onResume() {
         super.onResume();
         if (binding == null) return;
-        if (FeatureEditorSession.preview(this) && !FeatureEditorSession.canView(this, "popup")) {
-            finish(); return;
-        }
         if (editMode != null) editMode.refresh();
         else applyEditState();
         FeatureEditorSession.decorate(this);
-        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         ui.removeCallbacks(statusUpdater);
-        ui.post(statusUpdater);
+        if (!FeatureEditorSession.remote(this)) {
+            PopupStormManager.get().reloadSettings(this);
+            ui.post(statusUpdater);
+        }
         mainDelayRefresh();
     }
 
@@ -566,7 +566,7 @@ public final class PopupStormActivity extends AppCompatActivity {
                 remove.setText(R.string.popup_remove);
                 remove.setAllCaps(false);
                 remove.setBackgroundResource(R.drawable.bg_outline_button);
-                remove.setTextColor(getColor(R.color.accent));
+                remove.setTextColor(getColorStateList(R.color.outline_button_text));
                 remove.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
                 remove.setOnClickListener(view -> removeFolder(value));
                 remove.setMinHeight(dp(48));
@@ -605,11 +605,11 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     private void refreshStatus() {
         if (FeatureEditorSession.remote(this)) return;
-        if (PopupStormManager.get().isPreviewing()) {
-            long remaining = PopupStormManager.get().remainingPreviewMillis();
-            binding.buttonPreview.setText(getString(R.string.popup_preview_active,
-                    (int) ((remaining + 999L) / 1000L)));
-        } else binding.buttonPreview.setText(R.string.popup_preview);
+        PopupStormManager manager = PopupStormManager.get();
+        CharSequence label = manager.isPreviewing()
+                ? getString(R.string.popup_preview_active, (int) ((manager.remainingPreviewMillis() + 999L) / 1000L))
+                : getText(R.string.popup_preview);
+        if (!TextUtils.equals(binding.buttonPreview.getText(), label)) binding.buttonPreview.setText(label);
     }
 
     private void mainDelayRefresh() {
@@ -645,15 +645,4 @@ public final class PopupStormActivity extends AppCompatActivity {
     private abstract static class SimpleSeekListener implements SeekBar.OnSeekBarChangeListener {
         @Override public void onStartTrackingTouch(SeekBar seekBar) {}
     }
-    @Override protected void onSaveInstanceState(Bundle state) {
-        FeatureEditorSession.saveState(this, state);
-        super.onSaveInstanceState(state);
-    }
-
-    @Override protected void onRestoreInstanceState(Bundle state) {
-        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
-    }
-
 }

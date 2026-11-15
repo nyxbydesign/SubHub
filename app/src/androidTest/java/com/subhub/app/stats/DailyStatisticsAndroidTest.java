@@ -39,28 +39,32 @@ public class DailyStatisticsAndroidTest {
             assertEquals(Long.valueOf(10),values.get("photos")); assertEquals(Long.valueOf(10),values.get("videos"));
         } finally { pool.shutdownNow(); context.deleteDatabase(name); }
     }
-    @Test public void clockSplitsMidnightAndIgnoresDowntimeAndStaleHeartbeats() {
-        String name="daily-test-"+UUID.randomUUID()+".db"; long start=Instant.parse("2026-10-08T23:59:50Z").toEpochMilli();
-        try(DailyStatsStore store=new DailyStatsStore(context,name)) {
-            store.heartbeat("first",1,start,1000,"UTC");
-            store.heartbeat("first",1,start+30000,31000,"UTC");
-            store.heartbeat("first",1,start+1000,2000,"UTC");
-            store.heartbeat("first",0,start+40000,41000,"UTC");
-            store.heartbeat("new-process",1,start+3600000,3601000,"UTC");
-            store.heartbeat("new-process",0,start+3610000,3611000,"UTC");
-            Map<String,Map<String,Long>> days=store.days("2026-10-08","2026-10-09");
-            assertEquals(Long.valueOf(10000),days.get("2026-10-08").get("service_ms"));
-            assertEquals(Long.valueOf(40000),days.get("2026-10-09").get("service_ms"));
-        } finally { context.deleteDatabase(name); }
-    }
-    @Test public void timezoneChangeUsesRecordedZoneWithoutMovingPreviousDays() {
-        String name="daily-test-"+UUID.randomUUID()+".db"; long start=Instant.parse("2026-10-08T22:59:50Z").toEpochMilli();
-        try(DailyStatsStore store=new DailyStatsStore(context,name)) {
-            store.heartbeat("p",1,start,0,"UTC");
-            store.heartbeat("p",1,start+10000,10000,"Asia/Tokyo");
-            store.heartbeat("p",0,start+20000,20000,"Asia/Tokyo");
-            assertEquals(Long.valueOf(10000),store.days("2026-10-08","2026-10-09").get("2026-10-08").get("service_ms"));
-            assertEquals(Long.valueOf(10000),store.days("2026-10-08","2026-10-09").get("2026-10-09").get("service_ms"));
-        } finally { context.deleteDatabase(name); }
+    @Test public void legacyClockRowDoesNotReplayIntoRetainedDailyTotals() {
+        String name = "daily-clock-" + UUID.randomUUID() + ".db";
+        long start = Instant.parse("2026-10-08T00:00:00Z").toEpochMilli();
+        try {
+            try (DailyStatsStore old = new DailyStatsStore(context, name)) {
+                old.getWritableDatabase().execSQL("CREATE TABLE clock(id INTEGER PRIMARY KEY, "
+                        + "process TEXT, mono INTEGER, wall INTEGER, zone TEXT, session INTEGER)");
+                old.getWritableDatabase().execSQL("INSERT INTO clock VALUES(1,'old',1,?,'UTC',1)",
+                        new Object[]{start});
+                old.getWritableDatabase().execSQL("INSERT INTO daily VALUES('2026-10-08','service_ms',40000)");
+            }
+            try (DailyStatsStore current = new DailyStatsStore(context, name)) {
+                current.syncStatsSnapshot(Map.of(), start + 60_000);
+                assertEquals(Map.of("2026-10-08", Map.of("service_ms", 40000L)),
+                        current.days("2026-10-08", "2026-10-09"));
+                Map<String, Object> active = Map.of(
+                        "active_session_identity", UUID.randomUUID().toString(),
+                        "active_session_start_ms", start + 60_000,
+                        StatsRepository.ACTIVE_SESSION_ZONE, "UTC");
+                current.syncStatsSnapshot(active, start + 70_000);
+                current.syncStatsSnapshot(active, start + 70_000);
+                assertEquals(Map.of("2026-10-08", Map.of("service_ms", 50000L)),
+                        current.days("2026-10-08", "2026-10-09"));
+            }
+        } finally {
+            context.deleteDatabase(name);
+        }
     }
 }

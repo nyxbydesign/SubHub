@@ -183,6 +183,18 @@ public class TaskPlaybackAndroidTest {
         seed(wav.array(), "audio/wav");
         try (ActivityScenario<TasksActivity> page = inline()) {
             awaitInline(page, "task_inline_play"); assertInstructionGrouping(page, "audio");
+            page.onActivity(activity -> {
+                android.view.View root = activity.findViewById(android.R.id.content);
+                android.view.View player = root.findViewWithTag("task_inline_player");
+                android.view.View action = root.findViewWithTag("task_inline_play");
+                assertEquals("Inline audio reserves no video-sized surface", 1, player.getHeight());
+                assertEquals(1, player.getWidth());
+                assertFalse(player.isFocusable());
+                assertSame(action.getParent(), player.getParent());
+                assertEquals(TasksActivity.mediaLabel(activity, attachment),
+                        ((android.view.View) player.getParent()).getContentDescription());
+                assertTrue(action.getHeight() >= PersonUi.dp(activity, 48));
+            });
             tapInline("task_inline_play"); awaitPlaying(page);
             ControllerPinManager.enterSubMode();
             await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(

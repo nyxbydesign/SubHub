@@ -23,6 +23,8 @@ import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.atmosphere.GagActivity;
+import com.subhub.app.atmosphere.GagParticipation;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -53,7 +55,8 @@ public final class ProfileAndroidTest {
 
     @Before public void prepare() {
         assertFalse(com.subhub.app.people.LocalSessionControls.isActive(context));
-        for (String store : new String[]{"subhub_profile_names", SubFeaturePolicy.STORE, "betablocker_achievements"})
+        for (String store : new String[]{"subhub_profile_names", SubFeaturePolicy.STORE,
+                GagParticipation.STORE, "betablocker_achievements"})
             before.put(store, new LinkedHashMap<>(context.getSharedPreferences(store, 0).getAll()));
         new SettingsRepository(context).preferences().edit().putString(DeviceRolePreferences.KEY_MODE,
                 DeviceRolePreferences.Mode.BOTH.name()).commit();
@@ -159,8 +162,7 @@ public final class ProfileAndroidTest {
             Intent edit = new Intent(context, ProfileEditorActivity.class).putExtra(ProfileEditorActivity.EXTRA_DOM, dom);
             try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
                 scenario.onActivity(a -> {
-                    TextView label = a.findViewById(android.R.id.content).findViewWithTag("profile_about_label");
-                    assertEquals(a.getString(R.string.profile_about_optional), label.getText().toString());
+                    assertProfileFieldLabels(a, dom);
                     java.util.ArrayList<View> obsolete = new java.util.ArrayList<>();
                     a.findViewById(android.R.id.content).findViewsWithText(obsolete,
                             a.getString(R.string.profile_optional_visibility), View.FIND_VIEWS_WITH_TEXT);
@@ -168,8 +170,12 @@ public final class ProfileAndroidTest {
                 });
                 onView(tag("profile_about")).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
                 scenario.recreate();
-                scenario.onActivity(a -> assertEquals("", ((TextView) a.findViewById(android.R.id.content)
-                        .findViewWithTag("profile_about")).getText().toString()));
+                scenario.onActivity(a -> {
+                    assertProfileFieldLabels(a, dom);
+                    assertFalse(a.getCurrentFocus() instanceof EditText);
+                    assertEquals("", ((EditText) a.findViewById(android.R.id.content)
+                            .findViewWithTag("profile_about")).getText().toString());
+                });
                 assertEquals(original, ProfileStore.load(context, dom));
                 onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
             }
@@ -188,6 +194,25 @@ public final class ProfileAndroidTest {
                         .findViewWithTag("profile_about")).getText().toString()));
             }
         }
+    }
+
+    private static void assertProfileFieldLabels(ProfileEditorActivity activity, boolean dom) {
+        View root = activity.findViewById(android.R.id.content);
+        TextView name = root.findViewWithTag("profile_name_label");
+        TextView about = root.findViewWithTag("profile_about_label");
+        assertEquals(activity.getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name),
+                name.getText().toString());
+        assertEquals(activity.getString(R.string.profile_about_optional), about.getText().toString());
+        assertProfileFieldLabel(name, root.findViewWithTag(dom ? "profile_name:dom" : "profile_name:sub"), root);
+        assertProfileFieldLabel(about, root.findViewWithTag("profile_about"), root);
+    }
+
+    private static void assertProfileFieldLabel(TextView label, EditText input, View root) {
+        assertNotEquals(View.NO_ID, input.getId());
+        assertSame(input, root.findViewById(label.getLabelFor()));
+        assertNull(input.getHint());
+        assertNull(input.getContentDescription());
+        assertFalse(input.isSaveEnabled());
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
@@ -243,6 +268,7 @@ public final class ProfileAndroidTest {
     @Test public void subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation() {
         java.util.Map<String, ?> baseline = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> {
                 assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features"));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor"));
@@ -255,6 +281,7 @@ public final class ProfileAndroidTest {
                 if (back) androidx.test.espresso.Espresso.pressBack();
                 else onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
                 resumed(ProfileActivity.class);
+                awaitOwnSubProfile(scenario);
                 assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
             }
             onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
@@ -267,9 +294,11 @@ public final class ProfileAndroidTest {
             assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
             onView(tag("profile_save")).perform(revealAboveNavigation(), click());
             resumed(ProfileActivity.class);
+            awaitOwnSubProfile(scenario);
             assertFalse(SubFeaturePolicy.chosen(context, "censor"));
             assertFalse(ControllerPinManager.isDomModeActive());
             scenario.recreate();
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features")));
         }
     }
@@ -279,6 +308,7 @@ public final class ProfileAndroidTest {
         assertTrue(ProfileStore.save(context, false, "Milo", "A steady routine and clear communication.", ""));
         assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", true).commit());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            awaitOwnSubProfile(scenario);
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup hero = root.findViewWithTag("self_profile:sub");
                 View features = root.findViewWithTag("self_profile_features"); View preview = root.findViewWithTag("profile_preview:sub");
@@ -287,7 +317,9 @@ public final class ProfileAndroidTest {
                 assertTrue(hero.indexOfChild(preview) < hero.indexOfChild(features));
                 assertTrue(hero.indexOfChild(features) < hero.indexOfChild(journal));
                 assertReadOnly(features);
-                assertEquals(6, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+                assertEquals(7, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+                assertNotNull(root.findViewWithTag("person_allowance:gag"));
+                assertNull(root.findViewWithTag("profile_gag_setup"));
             });
             onView(tag("person_allowance:censor")).perform(revealAboveNavigation()); capture(scenario,"profile-readonly-choices").recycle();
             onView(tag("profile_edit")).perform(revealAboveNavigation(), click()); resumed(ProfileEditorActivity.class);
@@ -312,6 +344,83 @@ public final class ProfileAndroidTest {
                 assertTrue(SubFeaturePolicy.chosen(context, "tasks")); ControllerPinManager.enterSubMode();
             });
             onView(tag("profile_cancel")).perform(revealAboveNavigation(), click()); resumed(ProfileActivity.class);
+        }
+    }
+
+    private static void awaitOwnSubProfile(ActivityScenario<ProfileActivity> scenario) {
+        await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("self_profile:sub") != null);
+    }
+
+    @Test public void gagParticipationUsesThePreviousChoiceAndSaveOpensOnlyKeyboardSetup() {
+        assertTrue(context.getSharedPreferences(GagParticipation.STORE, 0).edit()
+                .putBoolean("enabled", false).putString("replacements", "old local rule").commit());
+        assertFalse(GagParticipation.allowed(context));
+        try (ActivityScenario<ProfileActivity> profile = ActivityScenario.launch(ProfileActivity.class)) {
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            resumed(ProfileEditorActivity.class);
+            onView(tag("sub_feature:gag")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isNotChecked()));
+            onView(tag("sub_feature:gag")).perform(revealAboveNavigation(), click());
+            assertFalse(GagParticipation.allowed(context));
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            GagActivity setup = resumed(GagActivity.class);
+            assertTrue(GagParticipation.allowed(context));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertTrue(setup.findViewById(R.id.gag_keyboard_settings).isClickable());
+                assertNull(setup.findViewById(R.id.gag_modes));
+                assertNull(setup.findViewById(R.id.gag_replacements));
+                setup.finish();
+            });
+            resumed(ProfileActivity.class);
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            resumed(ProfileEditorActivity.class);
+            onView(tag("sub_feature:gag")).perform(revealAboveNavigation(), click());
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            resumed(ProfileActivity.class);
+            assertFalse(GagParticipation.allowed(context));
+            assertEquals("old local rule", context.getSharedPreferences(GagParticipation.STORE, 0)
+                    .getString("replacements", ""));
+        }
+    }
+
+    @Test public void gagSetupHasOneAndroidActionAndNoRuleControlsInTheSubWorkspace() {
+        var dictionary = new com.subhub.app.atmosphere.GagPersonalDictionary(context);
+        boolean priorLearning = dictionary.isLearningEnabled();
+        String word = "fixture" + java.util.UUID.randomUUID().toString().substring(0, 8)
+                .chars().mapToObj(digit -> Character.toString('a' + Character.digit(digit, 16)))
+                .collect(java.util.stream.Collectors.joining());
+        try (ActivityScenario<com.subhub.app.atmosphere.GagActivity> setup =
+                     ActivityScenario.launch(com.subhub.app.atmosphere.GagActivity.class)) {
+            setup.onActivity(activity -> {
+                assertTrue(activity.findViewById(R.id.gag_keyboard_settings).isClickable());
+                assertFalse(activity.findViewById(R.id.gag_dictionary_content).isShown());
+                assertNull(activity.findViewById(R.id.gag_enabled));
+                assertNull(activity.findViewById(R.id.gag_modes));
+                assertNull(activity.findViewById(R.id.gag_replacements));
+            });
+            onView(withId(R.id.gag_personal_dictionary)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_custom_word)).perform(revealAboveNavigation(), replaceText(word));
+            onView(withId(R.id.gag_add_custom_word)).perform(revealAboveNavigation(), click());
+            assertTrue(dictionary.customWords().contains(word));
+            onView(withId(R.id.gag_learning_enabled)).perform(revealAboveNavigation(), click());
+            assertEquals(!priorLearning, dictionary.isLearningEnabled());
+            setup.recreate();
+            onView(withId(R.id.gag_clear_learned)).perform(revealAboveNavigation());
+            onView(withContentDescription(context.getString(R.string.gag_remove_custom_word, word)))
+                    .perform(revealAboveNavigation(), click());
+            assertFalse(dictionary.customWords().contains(word));
+        } finally {
+            dictionary.removeCustomWord(word);
+            if (dictionary.isLearningEnabled() != priorLearning) dictionary.setLearningEnabled(priorLearning);
+        }
+        ControllerPinManager.enterDomMode();
+        boolean prior = GagParticipation.allowed(context);
+        assertFalse(GagParticipation.setAllowed(context, !prior));
+        assertEquals(prior, GagParticipation.allowed(context));
+        try (ActivityScenario<com.subhub.app.atmosphere.GagActivity> denied =
+                     ActivityScenario.launch(com.subhub.app.atmosphere.GagActivity.class)) {
+            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, denied.getState());
+        } finally {
+            ControllerPinManager.enterSubMode();
         }
     }
 
@@ -718,7 +827,9 @@ public final class ProfileAndroidTest {
                 card.getLocationOnScreen(cardPoint); grid.getLocationOnScreen(gridPoint);
                 assertTrue(gridPoint[0] >= cardPoint[0] + card.getPaddingLeft());
                 assertTrue(gridPoint[0] + grid.getWidth() <= cardPoint[0] + card.getWidth() - card.getPaddingRight());
-                assertEquals(6, grid.getChildCount());
+                assertEquals(7, grid.getChildCount());
+                assertEquals(GagParticipation.allowed(context),
+                        ((CompoundButton) root.findViewWithTag("sub_feature:gag")).isChecked());
                 for (String key : SubFeaturePolicy.FEATURES) {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
                     assertNotNull(choice); assertTrue(choice.getHeight() >= PersonUi.dp(a, 48));

@@ -13,6 +13,7 @@ import com.subhub.app.appmode.DeviceStartResultRegistry;
 import com.subhub.app.appmode.DeviceStartViewModel;
 import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.configuration.FeatureEditorSession;
+import com.subhub.app.journal.JournalPreview;
 import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.security.ControllerPinManager;
@@ -32,7 +33,8 @@ public final class PersonActivity extends RolePage {
     private final java.util.Map<String, java.util.List<Object>> signatures = new java.util.HashMap<>();
     private final java.util.Map<String, Integer> positions = new java.util.HashMap<>();
     private boolean observing;
-    private AutoCloseable appIconObserver, presenceObserver;
+    private AutoCloseable appIconObserver, presenceObserver, runtimeObserver;
+    private boolean runtimeRefreshPending;
     private long appIconEpoch;
     private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
     private com.subhub.app.security.KeyholderProvider appIconAuthority;
@@ -248,6 +250,11 @@ public final class PersonActivity extends RolePage {
         if (!expected.isLocal()) appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
             if (canRefreshRemote(request, expected, provider, authority)) refresh();
         });
+        if (!expected.isLocal()) runtimeObserver = com.subhub.app.remote.RemoteUi.observeRuntime(person -> {
+            if (!expected.equals(person) || !canRefreshRemote(request, expected, provider, authority)) return;
+            runtimeRefreshPending = true;
+            observePerson();
+        });
     }
 
     private boolean canRefreshRemote(long request, PersonId expected,
@@ -261,10 +268,12 @@ public final class PersonActivity extends RolePage {
 
     private void stopRemoteChanges() {
         ++appIconEpoch;
-        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver})
+        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver, runtimeObserver})
             if (observer != null) try { observer.close(); } catch (Exception ignored) { /* The epoch fences callbacks. */ }
         appIconObserver = null;
         presenceObserver = null;
+        runtimeObserver = null;
+        runtimeRefreshPending = false;
     }
 
     private void observePerson() {
@@ -276,20 +285,23 @@ public final class PersonActivity extends RolePage {
             currentCountdown.setText(com.subhub.app.commitment.CommitmentManager.countdownLabel(this));
         }
         if (data.isPending("person") || data.isPending("person-observe")) return;
+        runtimeRefreshPending = false;
         PersonId requested = personId;
+        boolean includeContract = "contracts".equals(section);
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         data.load("person-observe", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
-            return repository.load(requested);
+            return repository.loadForPage(requested, includeContract);
         }, person -> {
             if (!guardTarget() || !observing || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
             if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
             com.subhub.app.appmode.ExtraTimeEntry.refresh(body, requested);
             render(person);
+            if (runtimeRefreshPending) observePerson();
         }, failure -> {
             if (guardTarget() && observing && provider == com.subhub.app.relationships.RelationshipUi.provider()
                     && authority == People.keyholder()) { renderedSection = null; unavailable(); }
@@ -382,18 +394,27 @@ public final class PersonActivity extends RolePage {
         data.cancel("contract-cover");
         loading();
         PersonId requested = personId;
+        boolean includeContract = "contracts".equals(section);
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
+        boolean includeJournal = ("profile".equals(section) || "stats".equals(section))
+                && !"profile".equals(renderedSection);
+        boolean dom = com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(this);
         data.load("person", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
-            return repository.load(requested);
-        }, person -> {
+            PersonSnapshot person = repository.loadForPage(requested, includeContract);
+            JournalPreview.Initial journal = includeJournal && requested.equals(person.id)
+                    ? JournalPreview.loadInitial(app, dom, ProfileViews.journalTarget(requested)) : null;
+            return new ProfileLoad(person, journal);
+        }, loaded -> {
             if (!guardTarget() || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
+            PersonSnapshot person = loaded.person();
             if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
-            render(person);
+            render(person, loaded.journal());
+            if (runtimeRefreshPending) observePerson();
         }, failure -> { if (guardTarget() && provider == com.subhub.app.relationships.RelationshipUi.provider()
                 && authority == People.keyholder()) { renderedSection = null; unavailable(); } });
     }
@@ -429,11 +450,15 @@ public final class PersonActivity extends RolePage {
         });
     }
 
-    private void render(PersonSnapshot person) {
+    private record ProfileLoad(PersonSnapshot person, JournalPreview.Initial journal) {}
+
+    private void render(PersonSnapshot person) { render(person, null); }
+
+    private void render(PersonSnapshot person, JournalPreview.Initial journal) {
         if (!guardTarget() || !personId.equals(person.id)) return;
         if ("stats".equals(section)) {
             section = "profile";
-            render(person);
+            render(person, journal);
             openStats(person);
             return;
         }
@@ -445,7 +470,7 @@ public final class PersonActivity extends RolePage {
             if ("profile".equals(section)) {
                 title(R.string.role_profile);
                 reconcile("identity", java.util.Arrays.asList(person.profile), parent -> {
-                    ProfileViews.identity(parent, person, !internal);
+                    ProfileViews.identity(parent, person, !internal, journal);
                     if (internal) {
                         boolean writable = InternalSubData.get(this).ownerDataReady();
                         TextView edit = PersonUi.action(parent, R.string.internal_sub_edit_profile, () -> {
@@ -479,6 +504,14 @@ public final class PersonActivity extends RolePage {
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+                    if (internal || person.can(PersonSnapshot.Capability.VIEW_BLACKMAIL)) {
+                        PersonUi.row(destinations, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
+                            if (!guardTarget()) return;
+                            if (internal) startActivity(DummySubPreview.childIntent(this,
+                                    com.subhub.app.fullaccess.DemoFullAccessActivity.class));
+                            else com.subhub.app.fullaccess.FullAccessActivity.openPeer(this, person.id);
+                        }).setTag("person_tab:full_access");
+                    }
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
                 });
                 if (!internal) reconcile("activity", java.util.List.of(person.id), parent ->
@@ -655,17 +688,17 @@ public final class PersonActivity extends RolePage {
                         : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
-        PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
-        if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
-                getString(R.string.role_changes_pending), false);
-        freshness(scope, person.sync.contract);
+        if (!internal) {
+            PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+            if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
+                    getString(R.string.role_changes_pending), false);
+            freshness(scope, person.sync.contract);
+        }
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable && !internal) appsTitle.setTag("person_apps");
+        if (!editable) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !internal);
-        if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
-                getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, internal || person.id.isLocal());
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
         LinearLayout features = null;
@@ -689,7 +722,7 @@ public final class PersonActivity extends RolePage {
             PersonSnapshot.Section value, boolean editable) {
         int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
                 : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
-        boolean allowed = internal || (person.id.isLocal()
+        boolean allowed = internal ? FeatureEditorSession.canEdit(this, value.key) : (person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
@@ -697,10 +730,10 @@ public final class PersonActivity extends RolePage {
         LinearLayout row = PersonUi.row(parent, icon, value.title,
                 atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
                         : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                (internal || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
+                editable && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
-        if (atmosphere && known) {
+        if (atmosphere && known && !internal) {
             for (String block : value.details.split("\\n\\s*\\n")) {
                 android.text.SpannableString copy = new android.text.SpannableString(block);
                 int firstLine = block.indexOf('\n');
@@ -713,7 +746,11 @@ public final class PersonActivity extends RolePage {
 
     private void editSection(PersonSnapshot person, String section) {
         if (!guardTarget() || !personId.equals(person.id)) return;
-        if (internal) { startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section))); return; }
+        if (internal) {
+            if (FeatureEditorSession.canEdit(this, section))
+                startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section)));
+            return;
+        }
         if (person.id.isLocal()) {
             PersonRoutes.editSection(this, person.id, section);
             return;

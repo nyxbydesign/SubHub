@@ -145,7 +145,7 @@ public final class GitHubHttpTransportTest {
         JSONObject json = new JSONObject(manifest.json()).put("releaseNotes", "Notes — naïve");
         byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
         manifestBodies.put("/" + tag, bytes);
-        String digest = UpdateVerifier.hex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        String digest = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         JSONObject asset = new JSONObject().put("name", "SubHub-" + tag.substring(1) + "-update.json")
                 .put("browser_download_url", root + "/" + tag).put("digest", "sha256:" + digest);
         return new JSONObject().put("tag_name", tag).put("draft", false).put("immutable", immutable)

@@ -7,10 +7,19 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /** Optional wire references; durable records and acknowledgments always use the complete batch. */
 final class RemoteSectionTransfer {
+    private static final Set<String> SECTIONS;
+    static {
+        Set<String> sections = new LinkedHashSet<>(ConfigurationSchema.SECTIONS);
+        sections.add(GagContractFields.SECTION);
+        SECTIONS = Collections.unmodifiableSet(sections);
+    }
     private RemoteSectionTransfer() { }
 
     static final class MissingBasis extends IOException {
@@ -44,7 +53,7 @@ final class RemoteSectionTransfer {
             if(row.getBoolean("deleted") || !documentKey(batch.stream,row.getString("key")))continue;
             JSONObject doc=document(batch.stream,row.getJSONObject("body")), values=sections(doc);
             if(values==null)continue;
-            for(String name:ConfigurationSchema.SECTIONS) {
+            for(String name:SECTIONS) {
                 JSONObject value=values.optJSONObject(name), previous=known.optJSONObject(name);
                 if(value!=null && previous!=null) {
                     String hash=digest(value);
@@ -77,20 +86,20 @@ final class RemoteSectionTransfer {
             JSONObject row=rows.getJSONObject(i);
             RemoteConfiguration.keys(row,"seq","key","body","deleted","observedAt","sectionRefs");
             JSONObject refs=row.getJSONObject("sectionRefs");
-            if(refs.length()>ConfigurationSchema.SECTIONS.size())throw new IOException("Too many section references");
+            if(refs.length()>SECTIONS.size())throw new IOException("Too many section references");
             JSONObject values=null;
             if(refs.length()>0) {
                 referenced=true;
                 if(row.getBoolean("deleted") || !documentKey(stream,row.getString("key")))throw new IOException("Invalid section document");
                 values=sections(document(stream,row.getJSONObject("body")));
-                if(values==null || values.length()+refs.length()>ConfigurationSchema.SECTIONS.size())throw new IOException("Invalid section set");
+                if(values==null || values.length()+refs.length()>SECTIONS.size())throw new IOException("Invalid section set");
                 Iterator<String> actual=values.keys();
-                while(actual.hasNext())if(!ConfigurationSchema.SECTIONS.contains(actual.next()))throw new IOException("Unknown section");
+                while(actual.hasNext())if(!SECTIONS.contains(actual.next()))throw new IOException("Unknown section");
             }
             Iterator<String> names=refs.keys();
             while(names.hasNext()) {
                 String name=names.next();Object hash=refs.get(name);
-                if(!ConfigurationSchema.SECTIONS.contains(name) || !(hash instanceof String)
+                if(!SECTIONS.contains(name) || !(hash instanceof String)
                         || !((String)hash).matches("[0-9a-f]{64}") || values.has(name))throw new IOException("Invalid section reference");
                 JSONObject previous=known==null?null:known.optJSONObject(name);
                 if(previous==null || !hash.equals(digest(previous)))missing=true;

@@ -108,7 +108,6 @@ public final class AppTimerManager {
     private final SharedPreferences settingsPreferences;
     private final SharedPreferences usagePreferences;
     private final StatsRepository stats;
-    private final boolean preview;
     private final Context context;
     private final com.subhub.app.stats.DailyAppUsageStore suppliedHistory;
     private final OwnerUsage ownerUsage;
@@ -124,14 +123,13 @@ public final class AppTimerManager {
         this.context = application;
         ownerUsage = null;
         configurationOnly = false;
-        preview = com.subhub.app.configuration.FeatureEditorSession.preview(application);
         suppliedHistory=history;
         settingsPreferences = application.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
         usagePreferences = application.getSharedPreferences(
                 USAGE_PREFERENCES, Context.MODE_PRIVATE);
         // StatsRepository construction itself queues live daily-history work.
-        stats = preview ? null : new StatsRepository(application);
+        stats = new StatsRepository(application);
     }
 
     /** No Context, device statistics constructor, global history, policy lookup or peer credit. */
@@ -145,7 +143,7 @@ public final class AppTimerManager {
     private AppTimerManager(SharedPreferences configuration, OwnerUsage usage, boolean configurationOnly) {
         settingsPreferences = java.util.Objects.requireNonNull(configuration);
         ownerUsage = usage; this.configurationOnly = configurationOnly;
-        context = null; usagePreferences = null; stats = null; suppliedHistory = null; preview = false;
+        context = null; usagePreferences = null; stats = null; suppliedHistory = null;
     }
 
     public Settings loadSettings() {
@@ -162,13 +160,11 @@ public final class AppTimerManager {
 
     /** Disable an individual budget without requiring valid drafts in the other editor. */
     public void disableBudget(boolean perApp) {
-        if (preview) return;
         settingsPreferences.edit().putBoolean(perApp ? KEY_PER_APP_ENABLED : KEY_TOTAL_ENABLED, false).apply();
     }
 
     public void saveSettings(boolean perAppEnabled, int perAppMinutes,
             boolean totalEnabled, int totalMinutes) {
-        if (preview) return;
         settingsPreferences.edit()
                 .putBoolean(KEY_PER_APP_ENABLED, perAppEnabled)
                 .putInt(KEY_PER_APP_MINUTES, sanitizeMinutes(perAppMinutes))
@@ -178,9 +174,14 @@ public final class AppTimerManager {
     }
 
     public int allowanceMinutes(String packageName) {
+        return allowanceMinutes(packageName, loadSettings());
+    }
+
+    /** Resolve an override against the same settings sample used by a budget list. */
+    public int allowanceMinutes(String packageName, Settings settings) {
         return sanitizeMinutes(settingsPreferences.getInt(
                 ALLOWANCE_PREFIX + safePackage(packageName),
-                loadSettings().perAppMinutes));
+                settings.perAppMinutes));
     }
 
     public Map<String, Integer> loadAllowances(Set<String> packages) {
@@ -207,7 +208,6 @@ public final class AppTimerManager {
     }
 
     public void saveAllowances(Set<String> selectedPackages, Map<String, Integer> allowances) {
-        if (preview) return;
         SharedPreferences.Editor editor = settingsPreferences.edit();
         for (String key : settingsPreferences.getAll().keySet()) {
             if (key.startsWith(ALLOWANCE_PREFIX)) editor.remove(key);
@@ -225,7 +225,6 @@ public final class AppTimerManager {
 
     /** Editing visible apps must not erase a retained allowance for an excluded app. */
     public void updateAllowances(Map<String, Integer> allowances) {
-        if (preview) return;
         SharedPreferences.Editor editor = settingsPreferences.edit();
         for (Map.Entry<String, Integer> entry : allowances.entrySet()) {
             String name = safePackage(entry.getKey());
@@ -238,7 +237,6 @@ public final class AppTimerManager {
     public synchronized void recordUsage(String packageName, long elapsedMillis,
             Set<String> selectedPackages, long nowMillis) {
         requireUsage();
-        if (preview) return;
         Settings settings = loadSettings();
         if (!settings.anyEnabled() || elapsedMillis <= 0L
                 || !isSelected(packageName, selectedPackages)) return;
@@ -305,15 +303,26 @@ public final class AppTimerManager {
     public synchronized LimitStatus limitStatus(String packageName,
             Set<String> selectedPackages, long nowMillis) {
         requireUsage();
-        if (preview) return LimitStatus.NONE;
         if (!isSelected(packageName, selectedPackages)) return LimitStatus.NONE;
         Settings settings = loadSettings();
         if (!settings.anyEnabled()) return LimitStatus.NONE;
         UsageSnapshot usage = snapshot(packageName, nowMillis);
         ExtraTimeAllowance extra = ownerUsage != null ? ExtraTimeAllowance.NONE
                 : com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
+        return evaluateLimit(settings, usage, settings.perAppEnabled ? allowanceMinutes(packageName) : 0, extra);
+    }
+
+    /** Project one already sampled budget for an included app. */
+    public LimitStatus projectedLimit(Settings settings, UsageSnapshot usage,
+            int individualMinutes, ExtraTimeAllowance extra) {
+        requireUsage();
+        return evaluateLimit(settings, usage, individualMinutes, extra);
+    }
+
+    private static LimitStatus evaluateLimit(Settings settings, UsageSnapshot usage,
+            int individualMinutes, ExtraTimeAllowance extra) {
         if (settings.perAppEnabled
-                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(allowanceMinutes(packageName)))) {
+                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(individualMinutes))) {
             return LimitStatus.PER_APP;
         }
         if (settings.totalEnabled
@@ -336,12 +345,10 @@ public final class AppTimerManager {
     synchronized void clearUsageForTesting() {
         requireUsage();
         if (ownerUsage != null) throw new UnsupportedOperationException("Owner usage cleanup belongs to its test fixture");
-        if (preview) return;
         usagePreferences.edit().clear().commit();
     }
 
     private void ensureCurrentDay(long nowMillis) {
-        if (preview) return;
         String today = dayKey(nowMillis);
         String previous=usagePreferences.getString(KEY_DAY, "");
         if(today.equals(previous)) {
@@ -370,7 +377,6 @@ public final class AppTimerManager {
     }
 
     private void queueHistory(String packageName,long millis) {
-        if (preview) return;
         history().queue(new com.subhub.app.stats.DailyAppUsageStore.Entry(
                 usagePreferences.getString("history_epoch",""),usagePreferences.getString(KEY_DAY,""),
                 usagePreferences.getString("history_zone",java.time.ZoneId.systemDefault().getId()),packageName,millis));
@@ -380,7 +386,6 @@ public final class AppTimerManager {
     public synchronized void checkpointHistory(long nowMillis) {
         requireUsage();
         if (ownerUsage != null) { ownerUsage.checkpointHistory(nowMillis); return; }
-        if (preview) return;
         ensureCurrentDay(nowMillis);
         java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
         String epoch=usagePreferences.getString("history_epoch",""),day=usagePreferences.getString(KEY_DAY,""),zone=usagePreferences.getString("history_zone","");
@@ -395,7 +400,6 @@ public final class AppTimerManager {
     private com.subhub.app.stats.DailyAppUsageStore history() {
         requireUsage();
         if (ownerUsage != null) throw new IllegalStateException("Owner usage never enters device history");
-        if (preview) throw new IllegalStateException("Preview has no usage history");
         return suppliedHistory==null?com.subhub.app.stats.DailyAppUsageStore.get(context):suppliedHistory;
     }
 

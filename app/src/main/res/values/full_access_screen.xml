@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="full_access_screen_request">Screen share request</string>
+    <string name="full_access_screen_channel">Screen sharing</string>
+    <string name="full_access_screen_active">Sharing your screen with your Dom</string>
+    <string name="full_access_screen_stop">Stop sharing</string>
+    <string-array name="full_access_screen_toasts">
+        <item>Oh-oh… your Dom wants a peek.</item>
+        <item>Your Dom’s curious. Care to share?</item>
+        <item>A little screen time for your Dom?</item>
+    </string-array>
+</resources>

@@ -48,11 +48,13 @@ public final class RemoteFeaturePolicy {
         return result;
     }
     public static boolean remoteAllowed(RemoteStore store, RemoteStore.Peer peer, String section) {
+        if (GagContractFields.SECTION.equals(section)) return GagContractFields.supported(store, peer);
         JSONObject runtime = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.RUNTIME, "current");
         if (runtime == null || !runtime.has("featureConsent")) return true;
         JSONObject consent = runtime.optJSONObject("featureConsent");
         if (consent == null) return false;
-        if ("atmosphere".equals(section)) return consent.optBoolean("subliminal", false) || consent.optBoolean("popup", false);
+        if ("atmosphere".equals(section)) return consent.optBoolean("subliminal", false)
+                || consent.optBoolean("popup", false) || GagContractFields.supported(store, peer);
         return !SubFeaturePolicy.FEATURES.contains(section) || consent.optBoolean(section, false);
     }
 }

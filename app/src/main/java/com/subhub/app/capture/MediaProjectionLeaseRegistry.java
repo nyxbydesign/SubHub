@@ -2,7 +2,7 @@ package com.subhub.app.capture;
 
 /** Process-local guard preventing two SubHub services from consuming MediaProjection at once. */
 public final class MediaProjectionLeaseRegistry {
-    public enum Owner { PROTECTION, CENSOR_LAB }
+    public enum Owner { PROTECTION, CENSOR_LAB, FULL_ACCESS }
 
     private static Owner owner;
 

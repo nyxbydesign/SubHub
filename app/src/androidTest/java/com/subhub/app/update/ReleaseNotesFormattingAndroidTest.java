@@ -36,7 +36,7 @@ public final class ReleaseNotesFormattingAndroidTest {
     @Before public void setup() {
         context = ApplicationProvider.getApplicationContext();
         context.getSharedPreferences("subhub_updates", Context.MODE_PRIVATE).edit().clear()
-                .putBoolean("automatic_checks", false).commit();
+                .putBoolean("automatic_checks", false).putBoolean("dev_updates", true).commit();
         new UpdateStateStore(context).setReleaseHistory(Collections.singletonList(
                 new ReleaseHistoryItem("0.6.5-dev.56", "v0.6.5-dev.56", NOTES,
                         "https://github.com/confiteor48/SubHub/releases", "2026-10-08", true)));
@@ -54,7 +54,7 @@ public final class ReleaseNotesFormattingAndroidTest {
             scenario.onActivity(activity -> {
                 TextView details = activity.findViewById(R.id.release_details);
                 assertNotNull(details);
-                ((View) details.getParent()).performClick();
+                activity.findViewById(R.id.release_item_heading).performClick();
                 assertEquals(View.VISIBLE, details.getVisibility());
                 assertFormatting(details);
             });

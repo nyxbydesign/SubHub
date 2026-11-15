@@ -46,10 +46,15 @@ public final class RemoteTelemetry {
         long usageAt=System.currentTimeMillis();JSONObject effectiveBudgets=new JSONObject();
         JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(timers.loadSettings().anyEnabled()?apps.getIncludedPackages():Collections.emptySet(),usageAt);
         for(Map.Entry<String,AppTimerManager.UsageSnapshot> entry:usage.entrySet())now.put(entry.getKey(),entry.getKey().isEmpty()?entry.getValue().totalUsedMillis:entry.getValue().appUsedMillis);
-        if(timers.loadSettings().perAppEnabled)for(String name:usage.keySet())if(!name.isEmpty()) {
-            int dailyMinutes=timers.allowanceMinutes(name);
-            long effective=ExtraTimeRequests.allowance(context,name,usageAt).individualBudget(dailyMinutes*60_000L);
-            effectiveBudgets.put(name,new JSONObject().put("daily",dailyMinutes).put("millis",effective));
+        if(timers.loadSettings().perAppEnabled && usage.size()>1) {
+            Map<String, ExtraTimeAllowance> credits =
+                    ExtraTimeRequests.allowances(context,usage.keySet(),usageAt);
+            for(String name:usage.keySet())if(!name.isEmpty()) {
+                int dailyMinutes=timers.allowanceMinutes(name);
+                long effective=credits.getOrDefault(name,ExtraTimeAllowance.NONE)
+                        .individualBudget(dailyMinutes*60_000L);
+                effectiveBudgets.put(name,new JSONObject().put("daily",dailyMinutes).put("millis",effective));
+            }
         }
         publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("zone",java.time.ZoneId.systemDefault().getId()).put("millis",now).put("effectiveBudgets",effectiveBudgets));
         Set<String> catalog=new HashSet<>();
@@ -77,6 +82,8 @@ public final class RemoteTelemetry {
             consent.put(feature, com.subhub.app.security.SubFeaturePolicy.allowed(context, feature));
         runtime.put("featureConsent", consent);
         runtime.put("hardcoreEnabled", new com.subhub.app.security.HardcoreModeManager(context).isEnabled());
+        runtime.put("blackmailEnabled", com.subhub.app.fullaccess.FullAccessGrant.epoch(
+                context, peer.identity, peer.generation) > 0);
         publish(peer,RemoteProtocol.Stream.RUNTIME,"current",runtime);
     }
     public static boolean validSummary(JSONObject value) {
@@ -97,6 +104,7 @@ public final class RemoteTelemetry {
             }
             if(value.has("endSessionSupported") && !(value.get("endSessionSupported") instanceof Boolean))return false;
             if(value.has("hardcoreEnabled") && !(value.get("hardcoreEnabled") instanceof Boolean))return false;
+            if(value.has("blackmailEnabled") && !(value.get("blackmailEnabled") instanceof Boolean))return false;
             if(value.has("sessionIdentity") && (!(value.get("sessionIdentity") instanceof String) || !value.getString("sessionIdentity").matches("([0-9a-f]{64})?")))return false;
             return true;
         }catch(JSONException|IllegalArgumentException invalid){return false;}

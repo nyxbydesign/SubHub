@@ -47,6 +47,10 @@ public final class RemoteConfiguration {
         java.util.Iterator<String> sectionNames=sections.keys();
         while(sectionNames.hasNext()) {
             String section=sectionNames.next();
+            if(GagContractFields.SECTION.equals(section)) {
+                normalized.put(section,GagContractFields.validate(sections.getJSONObject(section)));
+                continue;
+            }
             if(!ConfigurationSchema.SECTIONS.contains(section))throw new IllegalArgumentException("Unsupported contract section");
             JSONObject values=sections.getJSONObject(section);java.util.Iterator<String> names=values.keys();
             while(names.hasNext()) {
@@ -108,6 +112,7 @@ public final class RemoteConfiguration {
     static JSONObject active(JSONObject input,String installedVersion) throws JSONException {
         JSONObject result=validate(input,installedVersion),sections=result.getJSONObject("contract").getJSONObject("sections");
         Set<String> included=new HashSet<>();sections.keys().forEachRemaining(included::add);
+        included.remove(GagContractFields.SECTION);
         if(!included.equals(ConfigurationSchema.SECTIONS))throw new IllegalArgumentException("Incomplete active configuration");
         com.subhub.app.tasks.TaskContractFields.expandLegacy(sections);
         ExtraTimeContractFields.expandLegacy(sections);

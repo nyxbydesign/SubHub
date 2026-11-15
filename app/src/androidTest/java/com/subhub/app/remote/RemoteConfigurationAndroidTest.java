@@ -325,6 +325,27 @@ public class RemoteConfigurationAndroidTest {
         assertFalse(main().contains("app_timer_allowance_minutes:com.android.settings"));
     }
 
+    @Test public void gagRulesRequireNegotiationAndAnAppliedCommandFromTheCurrentPairing() throws Exception {
+        JSONObject doc=GagContractFields.forPeer(configuration(),true,false);
+        GagContractFields.section(doc).put("enabled",true).put("mode","MATCH").put("words","fixture");
+        assertThrows(SecurityException.class,()->dom.queueConfiguration(SUB,generation,0,0,doc));
+        assertThrows(SecurityException.class,()->sub.queueConfiguration(DOM,generation,0,0,doc));
+        dom.putMetadata(SUB,generation,GagContractFields.VERSION,"1");
+        sub.putMetadata(DOM,generation,GagContractFields.VERSION,"1");
+        RemoteStore.Peer owner=sub.peer(DOM,generation);
+        RemoteStore.Command command=deliver(doc);
+        assertNull(GagContractFields.applied(sub,owner));
+        assertTrue(writer().apply(owner,command,assets,Set.of()));
+        assertTrue(GagContractFields.applied(sub,owner).getBoolean("enabled"));
+        assertNull(GagContractFields.applied(dom,dom.peer(SUB,generation)));
+        sub.revoke(DOM,generation);
+        assertNull(GagContractFields.applied(sub,owner));
+        PairingInvite next=PairingInvite.create(DOM,"next",2000);
+        sub.acceptInvite(next,"Same Dom, new pairing"); sub.activate(DOM,next.id);
+        sub.putMetadata(DOM,next.id,GagContractFields.VERSION,"1");
+        assertNull(GagContractFields.applied(sub,sub.peer(DOM,next.id)));
+    }
+
     private RemoteConfigurationWriter writer(){return new RemoteConfigurationWriter(context,sub,(name,editor)->editor.commit(),new File(root,"writer"));}
     private RemoteStore.Command deliver(JSONObject doc) throws Exception {
         RemoteStore.Command queued=dom.queueConfiguration(SUB,generation,0,0,doc);RemoteProtocol.Batch batch=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONFIGURATION);
@@ -558,9 +579,11 @@ public class RemoteConfigurationAndroidTest {
 
     @Test public void staleWorkspaceRevisionCannotSaveOrDiscardConfigurationEdits() throws Exception {
         JSONObject baseline=configuration();RemoteConfigurationEdits edits=new RemoteConfigurationEdits(context,dom);
+        JSONObject staleGag=GagContractFields.forPeer(baseline,true,false);
+        GagContractFields.section(staleGag).put("enabled",true);
         long stale=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()+1;
         RemoteStore.Peer peer=dom.peer(SUB,generation);
-        SecurityException save=assertThrows(SecurityException.class,()->edits.save(peer,baseline,baseline,stale));
+        SecurityException save=assertThrows(SecurityException.class,()->edits.save(peer,baseline,staleGag,stale));
         assertEquals("Dom workspace changed",save.getMessage());
         SecurityException reload=assertThrows(SecurityException.class,()->edits.reload(peer,stale));
         assertEquals("Dom workspace changed",reload.getMessage());

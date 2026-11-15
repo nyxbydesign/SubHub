@@ -16,11 +16,13 @@ public final class TaskEngine {
         public final TaskAction submission, review;
         /** First recorded transition into History, or zero while not recorded there. */
         public final long historyEnteredAt;
+        /** Recorded time of the displayed History outcome. Cancellation can supersede an earlier outcome. */
+        public final long outcomeAt;
         Occurrence(TaskDefinition task, LocalDate date, Status status, TaskAction submission, TaskAction review,
-                long historyEnteredAt) {
+                long historyEnteredAt, long outcomeAt) {
             this.task = task; this.date = date; id = task.occurrenceId(date); this.status = status;
             this.submission = submission; this.review = review;
-            this.historyEnteredAt = historyEnteredAt;
+            this.historyEnteredAt = historyEnteredAt; this.outcomeAt = outcomeAt;
         }
         public boolean failed() { return status == Status.DENIED || status == Status.TIMED_OUT; }
         public boolean inHistory() { return status != Status.SCHEDULED && status != Status.ACTIVE && status != Status.PENDING; }
@@ -36,7 +38,7 @@ public final class TaskEngine {
     private final Map<String, TaskAction> submissions = new HashMap<>();
     private final Map<String, TaskAction> reviews = new HashMap<>();
     private final Set<String> refusedSeries = new HashSet<>();
-    private final Set<String> cancelledOccurrences = new HashSet<>(), cancelledSeries = new HashSet<>();
+    private final Map<String, Long> cancelledOccurrences = new HashMap<>(), cancelledSeries = new HashMap<>();
     private final Map<String, TaskAttachment> media = new HashMap<>();
 
     public static int activeCount(Collection<Occurrence> occurrences) {
@@ -56,9 +58,9 @@ public final class TaskEngine {
 
     public List<TaskDefinition> definitions() { return new ArrayList<>(tasks.values()); }
     public boolean seriesRefused(String id) { return refusedSeries.contains(id); }
-    public boolean seriesCancelled(String id) { return cancelledSeries.contains(id); }
+    public boolean seriesCancelled(String id) { return cancelledSeries.containsKey(id); }
     public boolean cancelled(String id, LocalDate date) {
-        return cancelledSeries.contains(id) || date != null && cancelledOccurrences.contains(id + ":" + date);
+        return seriesCancelled(id) || date != null && cancelledOccurrences.containsKey(id + ":" + date);
     }
     public boolean hasCancellations() { return !cancelledSeries.isEmpty() || !cancelledOccurrences.isEmpty(); }
     public TaskAction action(String id) { return seen.get(id); }
@@ -71,8 +73,12 @@ public final class TaskEngine {
         if (state == null) state = refusedSeries.contains(id) ? Status.REFUSED
                 : now < task.start(date).toEpochMilli() ? Status.SCHEDULED : Status.ACTIVE;
         TaskAction submission = state == Status.CANCELLED ? null : submissions.get(key);
+        long historyEnteredAt = historyEntries.getOrDefault(key, 0L);
+        long outcomeAt = state == Status.CANCELLED
+                ? cancelledOccurrences.getOrDefault(key, cancelledSeries.get(id))
+                : historyEnteredAt;
         return new Occurrence(task, date, state, submission,
-                submission == null ? null : reviews.get(submission.id), historyEntries.getOrDefault(key, 0L));
+                submission == null ? null : reviews.get(submission.id), historyEnteredAt, outcomeAt);
     }
     private void recordState(String key, Status status, long at) {
         states.put(key, status);
@@ -105,12 +111,12 @@ public final class TaskEngine {
             String key = occurrence.id;
             if (action.cancellation()) {
                 if (action.kind == TaskAction.Kind.CANCEL_SERIES) {
-                    cancelledSeries.add(task.id);
+                    cancelledSeries.putIfAbsent(task.id, action.at);
                     // Pending work on other dates enters History too; finished entries keep their place.
                     for (String recorded : states.keySet()) if (recorded.startsWith(task.id + ":"))
                         historyEntries.putIfAbsent(recorded, action.at);
                 }
-                else cancelledOccurrences.add(key);
+                else if (!seriesCancelled(task.id)) cancelledOccurrences.putIfAbsent(key, action.at);
                 recordState(key, Status.CANCELLED, action.at);
             } else if (!cancelled(task.id, action.date)) switch (action.kind) {
                 case SUBMIT: case OUTSIDE:

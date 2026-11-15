@@ -1,5 +1,6 @@
 package com.subhub.app.update;
 
+import com.subhub.app.util.LowercaseHex;
 import android.content.Context;
 import android.os.Build;
 
@@ -204,7 +205,7 @@ public final class GitHubReleaseRepository {
                         || (manifest.versionCode == available.manifest.versionCode
                         && available.prerelease && !release.prerelease)) {
                     available = new UpdateCandidate(manifest, releaseNotes(manifest, release.body),
-                            release.htmlUrl, release.prerelease);
+                            release.htmlUrl, release.prerelease, release.publishedAt);
                 }
             } catch (Exception ignored) {
                 // A malformed or unavailable individual release must not mask a valid newer build.
@@ -305,7 +306,7 @@ public final class GitHubReleaseRepository {
             }
             return new HttpResponse(code, body, connection.getHeaderField("ETag"),
                     connection.getHeaderField("X-RateLimit-Remaining"), bodyBytes,
-                    digest == null ? "" : "sha256:" + UpdateVerifier.hex(digest.digest()));
+                    digest == null ? "" : "sha256:" + LowercaseHex.encode(digest.digest()));
         } finally {
             connection.disconnect();
         }

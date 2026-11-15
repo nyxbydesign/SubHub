@@ -3,6 +3,240 @@
 User-facing changes from every tagged SubHub release.
 
 <details open>
+<summary><strong>SubHub 0.7.4</strong></summary>
+
+## What’s new in SubHub 0.7.4
+
+### New
+
+- **Add opt-in Full Access to paired profiles** — A Sub can share selected phone data with their paired Dom during Hardcore Mode, including read-only shared files and Android-approved live screen viewing.
+- **Put Full Access on one page and use phone data in Demo Sub** — Browse Full Access in one page, turn it on directly in Edit profile, and view data from this phone through Demo Sub.
+- **Rename the Full Access view to Blackmail** — The paired and Demo views now display Blackmail.
+- **Improve Blackmail browsing and conversation views** — Browse shared storage from its available roots, see contact photos in compact rows, open SMS threads and app notification groups, and hide preinstalled system apps.
+- **Give Blackmail dedicated pages and show original SMS text** — Open Contacts, Messages, Notifications, Apps, Files, and Share screen directly from the Blackmail landing page.
+- **Restart dev labels and sort What’s New by publication** — Restart displayed development labels after each stable publication and list release notes in newest-first publication order.
+- **Arrange Blackmail entries in a two-column grid** — Show six Blackmail entries in two columns with centered icons, and allow screenshots in the Demo and paired Blackmail viewers.
+- **Load Blackmail lists continuously while scrolling** — Scroll through Contacts, Apps, conversations, SMS threads, and grouped Notifications as the next records load automatically.
+- **Add an optional Gag keyboard in Atmosphere** — The locally selected SubHub keyboard replaces all completed words, every N words, or configured matches with entries from a replacement list.
+- **Stream paired screen sharing with hardware video** — Share approved screens at up to 25 frames per second using hardware AVC when both devices support it.
+- **Match the Gag keyboard to the dark key layout** — Give Gag staggered translucent keys with working symbol hints and add its local toggle to Profile Features.
+- **Let paired Doms configure Gag rules** — Set Gag word replacement rules from the paired Dom phone while keeping keyboard setup on the Sub phone.
+- **Improve Gag keyboard typing and haptics** — Adjust key sizing and navigation insets, add repeating backspace and a long-press keyboard picker, and use system keypress haptics.
+- **Use the supplied Gag keyboard wallpaper** — Show the supplied image behind the keys and dim the backdrop so key labels stay legible.
+- **Add Gag word suggestions and symbol pages** — Offer tap-to-accept English and German suggestions and add two symbol pages and a numeric keypad.
+- **Personalize Gag keyboard suggestions and correct key touches** — Learn words and short sentence starts locally, support custom words, center the strongest match, refresh after Backspace, and preserve numbers when spacing punctuation.
+- **Improve Gag suggestions and add an emoji picker** — Keep the exact match centered, refresh suggestions after Backspace, and remove status text from the suggestion bar.
+- **Expand Gag emoji and spelling suggestions** — Open the complete Unicode Emoji 18.0 catalog through category tabs while keeping Recent first, and offer high-confidence spelling alternatives for known words such as hose without replacing typed text.
+- **Add Gag clipboard history and bilingual word suggestions** — Offer manual suggestions before typing and after familiar English and German phrases.
+- **Add Gagging long-press letters and symbols** — Hold supported keys to type accented letters, including umlauts, and more symbols on both symbol pages.
+- **Show a centered keyboard switcher on held spacebar** — Show enabled keyboards and their language options in a centered Change keyboard dialog, marking the current entry and preserving the draft when the dialog is canceled.
+- **Fill English US long-press symbol gaps** — Add the remaining digit superscripts and fractions, middle dot on hyphen, alternate pi and question symbols, and additional currency and angle marks.
+- **Preview Gagging keys and slide to alternate characters** — Press a character to preview it.
+- **Suggest repairs for missed spaces in Gagging** — Suggest whole phrases when a missed space or nearby character joins words, including repeated B-for-space errors.
+- **Show clipboard text and images in Gagging** — Show the latest eligible clipboard item before typing and keep opted-in text and image history for up to six hours while Gagging is running.
+- **Show three next-word suggestions in Gagging** — Offer context-aware next words after a space or an accepted suggestion and insert a prediction only when tapped.
+- **Undo and redo longer deletions in Gagging** — Show Undo and Redo after deleting at least two complete words and keep a short history within the current editor.
+- **Add saved screenshots to Gagging clipboard** — Offer automatic clipboard entries for newly saved screenshots after the user enables the feature and grants Android photo access.
+
+### Fixed
+
+- **Show Screen sharing notification setup** — The Sub can open notification settings from Full Access when screen share requests or the Stop action would otherwise be hidden.
+- **Put Blackmail in the Hardcore Features grid** — Show the standard Blackmail feature toggle only while Hardcore Mode is active, and show the paired Dom’s destination after a current grant syncs.
+- **Show available Blackmail notification details and icons** — Blackmail now shows readable notification previews and icons, and an explicit local option can share additional ordinary Android-delivered notification text.
+- **Respect Battery Saver in Whole Screen Censor** — Whole Screen Censor releases idle detection models while Android Battery Saver is on and updates active detection when it turns on or off.
+- **Simplify Blackmail notification and file approvals** — Notifications include available text through normal Blackmail setup, and an existing Android All files grant needs no duplicate approval when the current sharing scope already covers it.
+- **Stream paired Blackmail data without blocking on sync** — Open each Blackmail page independently of ordinary sync and show small initial batches before fetching visible photos and app usage.
+- **Show opted-in background peers as Idle** — Show an orange Idle badge when a paired device confirms background sync while its app is out of view.
+- **Restore separators in Idle status labels** — Idle status labels use the same middle-dot separator as Online and Offline summaries.
+- **Match Blackmail setup dialogs to the app theme** — Blackmail approval and access review use the same dialog styling as the rest of SubHub.
+- **Match role action buttons to the muted primary palette** — Add Sub and the other role-style primary actions use SubHub’s muted plum fill and light labels.
+- **Limit automatic APK download retries** — Failed automatic downloads now back off and stop after three starts per APK, while manual downloads remain available.
+- **Label the Blackmail screen tile Screen** — Use the shorter Screen label on the Blackmail landing page.
+- **Match Demo Sub to the Contract layout** — Use the shared Apps and Duration and Features cards for Demo Sub, with summaries from its own saved settings and guarded edit actions.
+- **Put Gag keyboard setup on the Sub phone** — Open local keyboard setup from Sub Features and Android permissions, and show Gag in Contract Atmosphere details.
+- **Show unavailable Gag status on Demo Sub** — Show Unknown for Gag in Demo Sub Atmosphere because its isolated profile has no keyboard setting.
+- **Keep Demo Sub Contract available for numeric settings** — Render saved numeric and other unlisted values directly so Demo Sub Contract can open with its default configuration.
+- **Restore Gag in Sub Features** — Let the Sub turn Gag participation on or off in Features and open keyboard setup when turning it on.
+- **Match Gag keyboard portrait height** — Increase portrait row spacing and key height, and align the bottom-row keys without covering the gesture navigation area.
+- **Open the paired Gag editor without crashing** — Bind the paired Gag editor to the full activity content so the editor can find its header and queue rules for the selected Sub.
+- **Match the Demo Sub Contract to paired editing** — Use the paired Sub Contract layout and feature editors for Demo Sub, with Gag rules saved in the Demo draft and Popup artwork read from the scoped source.
+- **Hide disabled settings in the Sub Contract** — The Sub Contract keeps each disabled feature’s name and status while hiding its configuration details.
+- **Show only today's app time requests in Overview** — Keep the Sub Overview focused on the current allowance day while preserving older requests in history.
+- **Compact the shared Sub task schedule** — Show same-day task windows without repeating the date and keep weekdays on their own line in task details and completion requests.
+- **Polish the shared Gag rules editor** — Group replacement modes and their contextual fields in themed cards and label the replacement list.
+- **Associate remote form fields with their labels** — Let Android accessibility announce the existing captions for pairing and remote Contract text fields.
+- **Associate Profile editor labels with their fields** — Give Android accessibility the visible Name and About captions and keep Profile draft restoration explicit.
+- **Use shared outline text colors for Popup folder removal** — Give the Popup Storm Photos Remove button the shared default, pressed, focused, and disabled text colors.
+- **Make release history headings accessible** — Make each release heading a distinct button with expanded state and keep the release notes separately readable.
+- **Give each Atmosphere card one accessible action** — Announce the effect title and status on one button per card and keep the chevron as part of the same touch target.
+- **Keep gated Permission Setup instructions readable** — Keep the setup explanations at full opacity while the action buttons unlock in the existing order.
+- **Use the disabled text state for Onboarding Continue** — Show the themed muted Continue text until a role is selected and preserve the enabled appearance.
+- **Use themed disabled labels for Device Role choices** — Show the shared muted text color when role choices are unavailable and preserve their enabled appearance.
+- **Say On for enabled Gag in Contract** — Use On in both the Contract Atmosphere summary and the expanded Gag details.
+- **Simplify the Demo Contract page** — Show one editable Atmosphere summary and remove peer sync and consent copy from the local Demo Contract.
+- **Open Gag emoji picker on Recent** — Open Recent first when holding comma, with the Emoji catalog available in its own tab.
+- **Use singular copy for a one-day streak** — Show 1 day for a one-day streak in local and internal Statistics, with localized quantity selection for other counts.
+- **Move App Mode and Limits badges to Dom** — Show On Command, Chosen Temptations, Clocked and Kept, and Double Curfew under Dom Achievements and preserve saved unlock dates and requirements.
+- **Move tribute setup achievements to Dom** — Show Tribute Rules Set, Three Ways to Owe, and Permission Has a Price under Dom Achievements, preserving existing unlock dates and requirements.
+- **Load Sub profile previews without a second pass** — Load the newest available Journal preview with the initial profile and refresh Blackmail availability when its peer runtime checkpoint is confirmed.
+- **Render local Sub Overview cards together** — Show the local Journal entry and achievement progress in the first populated Sub Overview alongside Tasks and app usage.
+- **Clarify task schedules and completion requests** — Show the completion request time, proof, decision, and review actions together in Tasks.
+- **Smooth Gag suggestion spacing and symbol navigation** — Reuse whitespace when correcting a word and remove the automatically added space before punctuation or brackets.
+- **Name task submissions and put schedule days inline** — Show Submission and Submitted in Tasks.
+- **Give selected outer navigation tabs more breathing room** — Add 3dp inside each side of the floating pill.
+- **Use Gagging across the app and keyboard picker** — Name the feature Gagging and show SubHub Gagging keyboard when selecting or configuring the input method.
+- **Show Blackmail in the first eligible Sub profile grid** — Show the read-only Blackmail row when Hardcore is active and update its status in place when the local grant check finishes.
+- **Label Gagging in the Contract summary** — Show the Gagging name in the collapsed Atmosphere summary for both local and paired contracts.
+- **Put Task status badges before the date** — Show the status badge inline before Starts or Due on Task list cards.
+- **Show Sub Overview cards together on first open** — Show Session when the other ready Sub Overview cards first appear.
+- **Keep same-device link reviews through PIN confirmation** — Confirm and unlink local relationships after fresh authentication in the current Dom session.
+- **Keep Wallet feedback above the navigation** — Show Wallet and PayPal settings feedback in the app theme, above the bottom navigation.
+- **Format Task dates in the app language** — Show dates and times in Task lists, completion requests, and shared headers using the app's language settings and the task's original time zone.
+- **Show Extra Time errors inside the review screen** — Keep a failed decision message visible in the Extra Time review with the same themed Snackbar as Wallet.
+- **Preserve image coverage when media replaces censored text** — Keep text and visual track identities separate so a photo replacing a censored line can reach the visual renderer on its first qualified detection.
+- **Match the internal Statistics history action to local Statistics** — Use the same text, spacing and touch target for expanding or collapsing recent sessions in both Statistics views.
+- **Remove the blank video area from inline Task audio** — Keep the audio playback surface behind the existing Play control.
+- **Show the date of each Task outcome** — Keep Tasks list cards to one status and timing row, with the actual outcome date in History and the same Approved and Denied badges inside a task.
+- **Move Wallet Bound to Sub achievements** — Show Wallet Bound under Sub Wallet achievements and label Dom Wallet milestones Taken.
+- **Complete Gagging letter-hold alternatives** — Include the English US and German QWERTY letter alternatives in Gagging's shared layout.
+- **Filter Updates history by development channel** — Hide development releases when Development updates is off, keep the exact installed build visible, and shorten the marked Updates and settings help text.
+- **Make Gagging clipboard and typing controls work as expected** — Edit and pin clipboard text, swipe to pin or delete, and open saved screenshots from Clipboard without a separate setup step.
+
+### Faster & smoother
+
+- **Reduce Gag keyboard setup on reopen** — Reuse keyboard views when their layout still matches and retain the decoded wallpaper so the app does less work when the keyboard reopens.
+- **Make Gag keypress feedback immediate** — Draw pressed feedback immediately and handle overlapping taps in release order while preserving cancellation when a finger moves away.
+- **Drop unused legacy achievement badge images** — Remove eight obsolete packaged WebP images and keep the current achievement artwork.
+- **Remove retired marathon badge artwork** — Omit the two images referenced only by retired achievements and keep the art for all active badges.
+- **Stream APK hashes in the peer artifact verifier** — Use bounded memory to hash APK files while keeping the existing peer-library checks and report fields.
+- **Batch app-time reads on the Sub Overview** — Reuse a single request journal and one usage sample for all selected apps when showing app limits and approved time.
+- **Remove a repeated Journal preview access check** — Use the access check already performed by the Journal list query, and keep the final withdrawal check before rendering.
+- **Format Wallet amounts directly from cents** — Display the same USD and EUR amounts with direct integer formatting to avoid constructing a Formatter on each refresh.
+- **Reuse Journal row timestamps and titles** — Format each creation timestamp once and reuse the resulting text for the date, untitled fallback, and accessibility label.
+- **Reuse the collator for paired app picker sorting** — Use one locale-aware comparator per paired or Demo picker sort while preserving stable label order.
+- **Reuse lowercase hex encoding for digests** — Share the same digest encoding across Journal, remote assets, and Updates, preserving exact lowercase hashes without per-byte formatters.
+- **Reuse unchanged Wallet snapshot rows** — Decode and order Wallet rows only when the ledger changes.
+- **Skip unchanged Wallet status label writes** — Avoid sending unchanged PayPal and currency labels to Android views on Wallet resume.
+- **Skip redundant Popup preview status updates** — Stop polling physical preview status from paired and Internal Popup editors, avoid rewriting an unchanged countdown label on the device editor, and hide the idle save label in Internal Popup.
+- **Render saved Contract data together** — Read configured sections and the cached authorized Dom portrait for the first populated Contract frame without loading usage history, statistics, or session state.
+- **Load the Sub profile and Journal preview together** — Prepare the local Sub identity and Journal preview before attaching the profile card, with existing access and withdrawal checks at publication.
+- **Render local allowances with Statistics totals** — Read app allowances directly and combine them with the first populated Statistics render.
+- **Reuse the Contract portrait across refreshes** — Reuse the rendered portrait when the refreshed Contract contains the same image bytes.
+- **Format Contract Limits and Atmosphere once** — The Sub Contract builds Limits and Atmosphere from one pass over the configured settings, so it no longer computes a generic version of either section before rendering.
+- **Skip the disabled Wallet ledger on Contract** — The Sub Contract shows a disabled Wallet without reading its balance.
+- **Read only the data needed by Person pages** — Profile and Connection show the same identity, capabilities, and session state without formatting Contract sections or loading app usage allowances.
+- **Read only the data needed by Sub Overview** — Sub Overview reads the authorized Contract owner and configured app allowances without building generic Contract rows, reading separate Statistics totals, or sampling Session state a second time.
+- **Read the Dom app-time review count directly** — Refresh the pending review badge from the authorized request journal without loading receipt details, app icons, or Wallet settings.
+- **Batch Extra Time reads for displayed app allowances** — Read the Extra Time journal once per Limits, local profile, or telemetry refresh.
+- **Skip unchanged Limits status updates** — Update Limits labels and progress when the displayed values change, while continuing to evaluate usage and allowances on each refresh.
+- **Skip unchanged Wallet overview labels** — Refresh Wallet balances, status and action labels only when their displayed text changes.
+- **Compress the launcher PNG losslessly** — Reduce the packaged launcher image by 49,665 bytes with identical artwork pixels and color metadata.
+- **Group Tasks rows in one pass per refresh** — Group the current Tasks snapshot once for the counters and list sections so reopening History does less work.
+- **Keep Remote End rows attached on unchanged polls** — Reuse the review controls when the displayed receipt and runtime information is unchanged.
+- **Retire idle Accessibility censor after 30 seconds** — High-quality Accessibility censoring now releases its warm workers after 30 seconds in an untracked app to reduce idle power use.
+
+### Improved
+
+- **Share the card factory across role and settings pages** — Reuse the card layout in Overview, people pages, and preferences while preserving the card styles.
+- **Remove unused pact keeper-code methods** — Delete the obsolete overload and status check while preserving pact cleanup and authorized release behavior.
+- **Simplify verified download cleanup** — Remove the unused preserve-file option from updater cleanup while keeping state, file deletion and notification behavior.
+- **Share secondary header spacing on utility screens** — Use the common header bottom spacing for Help, Permission setup and Updates.
+- **Share card styling across five screens** — Use one card style for the existing surface background and logical padding in Atmosphere, Help, Permission Setup, Popup Storm, and Whispers.
+- **Retire the unused Commitment screen** — Remove the obsolete private screen and keep service duration and protection countdowns on the current Contract and Home routes.
+- **Share navigation row controls across Overview and People** — Use common click, focus and chevron helpers for Overview actions, People destinations and roster cards.
+- **Remove unused Android controls and settings sections** — Remove retired compact form and expandable controls, the unused settings section enum, and the obsolete session trend widget.
+- **Retire unused Wallet onboarding views** — Remove the unreachable Wallet rules setup screen and its artwork.
+- **Retire the unused statistics heartbeat** — Remove the retired duration checkpoint path and Wallet onboarding strings.
+- **Share Atmosphere editor draft restoration** — Use one save and restore implementation across Atmosphere, Popup Storm, and Whispers.
+- **Reuse identical card drawables** — Use the existing shared card backgrounds for overview, dashboard, and Global Settings surfaces.
+- **Share Wallet event labels** — Use one event label mapping for Wallet history and PayPal order rows, and remove the unused Wallet activity mapping.
+- **Share internal record byte encoding** — Share strict UTF-8, digest, and bounded output routines across the internal profile and runtime record formats.
+- **Share Local Apps and Service Duration editor lifecycle** — Share the contract header, target validation, access checks, and draft restoration for Local Apps and Service Duration while keeping their individual controls and refresh behavior.
+- **Retire dead read-only editor preview branches** — Remove obsolete preview branches from app limits, configuration editors, Wallet, and Popup Storm.
+- **Share Blackmail message and notification pagination** — Use one nested-page queue for message threads and notification groups, retaining separate response and refresh behavior.
+- **Share Statistics rows and formatting** — Use the same headings, labels, values, and duration formatting in Local and Internal Statistics while keeping their data and authority paths intact.
+- **Reuse the shared legacy artwork digest encoder** — Remove the per-byte formatter from artwork recovery while preserving every content-addressed directory name and image hash.
+- **Reuse Wallet snapshot validation during legacy recovery** — Let the credential store validate its own encrypted snapshot before applying the rest of the journal.
+- **Share choice-grid measurement and layout** — Use one row-measurement and placement implementation for radio choices and independent checkboxes.
+- **Share file checksum verification** — Use one streaming SHA-256 reader for migrated artwork, synchronized assets, and downloaded updates.
+- **Share choice-grid measurement state** — Measure and lay out checkbox and radio grids with one implementation.
+
+### Documentation
+
+- **Document local x86_64 emulator builds** — Show how to build and verify only the app and instrumentation APKs needed on an x86_64 emulator.
+
+### Build & release
+
+- **Align development updates with 0.7.0** — Full Access development builds can update an existing SubHub 0.7.0 installation in place.
+- **Register the Blackmail loading test in the diagnostic allowlist** — Keep sanitized Android diagnostics working for the new Blackmail loading tests.
+- **Recognize Gag contract compiler diagnostics** — Use a fixed diagnostic label for the new Gag contract source while keeping raw compiler output out of CI logs.
+- **Register Gag Android fixtures** — Add the Gag pairing and keyboard setup fixtures to the reviewed native test inventories.
+- **Register Gag participation test and diagnostics** — Register the Sub Features regression and give Gag participation a fixed compiler diagnostic label.
+- **Wait for trusted canonical CI on development releases** — Allow an in-progress check for the exact dev commit to finish before signing the APKs, without accepting an older passing run.
+- **Register Gag compiler diagnostic paths** — Add the new keyboard source names to the literal diagnostic allowlists so canonical CI can sanitize compiler failures.
+- **Allowlist the shared contract editor diagnostic label** — Register ContractEditorPage in the literal Java source inventory so diagnostic reports can name this tracked source with a sanitized label.
+- **Register the Internal Popup native test** — Keep the exact dummy-preview method inventory aligned with the new Internal Popup fixture.
+- **Add the shared file checksum source to diagnostic inventory** — Register the checksum utility so canonical CI can identify a compiler diagnostic from that file without publishing its source messages.
+- **Register the Limits refresh regression witness** — Record the new Limits test in the source inventory for direct device qualification.
+- **Register Gagging clipboard diagnostic labels** — Allow the Gradle diagnostic sanitizer to identify the three new Clipboard classes using fixed source labels.
+
+### Quality
+
+- **Exercise Full Access permission and screen sharing flows** — Cover the real guided permission checklist and Android screen-sharing consent with synthetic device data.
+- **Launch Full Access setup prompts from the foreground** — Drive Device Admin and Contacts prompts from the focused SubHub setup Activity in the disposable Android fixture.
+- **Capture the Android Device Admin confirmation** — Retain the actual system dialog hierarchy and use the same activation lifecycle as Settings in the owned synthetic fixture.
+- **Tap the visible Android Device Admin approval** — The synthetic Full Access test now taps the enabled Settings approval at its visible bounds and waits for Android to report active Device Admin.
+- **Register the owned Sub Contract regression** — Keep the paired Sub Contract regression in the source inventory without adding it to the ordinary device suite, since it needs explicit admission on an owned guest.
+- **Check the Contract profile fallback in the name row** — Verify that a missing counterpart profile shows the fallback name and hides its empty details row.
+- **Cover a pending Studio journal restored after migration** — Verify that restored pending data closes readiness despite the migration marker and that recovery restores the Popup setting and preserves its artwork.
+- **Preserve explicit empty app selections during migration** — Check that an empty legacy selection survives conversion and a later All Apps override.
+- **Check Wallet currency on the visible amount** — Check the visible USD amount for both roles using the Wallet overview.
+- **Check release history dates in descending order** — Expect the date-only preview before the older stable timestamp in the Updates accessibility fixture.
+- **Attach Gag touch fixtures to an Android window** — Use normal Android click callbacks while exercising hit bounds and touch ownership in the keyboard fixture.
+- **Verify the local Sub identity on Profile statistics**
+- **Observe catalog closure from the instrumentation thread**
+- **Wait for onboarding scroll geometry to settle** — Capture the bottom of each setup page after two consistent composed frames so a relayout cannot bind the screenshot to stale scroll coordinates.
+- **Check Journal readiness with the first Sub profile render** — Assert the preview immediately alongside the profile and respect the current saved Switch label in the independent empty-profile check.
+- **Verify instructions below task schedule divider** — Keep the schedule and weekday line assertions and verify the instructions beneath the new visual separator.
+- **Verify Gag spacing through the installed input method** — Drive the selected Gag input method with a synthetic editor in the test APK.
+- **Exercise Gag correction with a known suggestion** — Use a deterministic correction from the shipped lexicon to verify spacing before an existing separator and at the end of the editor.
+- **Position the synthetic editor after focus** — Set the cursor after the editor acquires focus and observe the first typed character before asserting suggestion spacing.
+- **Register the Gagging alternatives test diagnostics** — Name the focused key alternatives test in the literal diagnostic inventory.
+- **Observe keyboard picker dismissal after Back** — Send the normal Back action and assert dialog dismissal and unchanged selection.
+- **Check choice grids in their current screens** — Measure Censor Settings and Export Workspace choices on the Android main thread at narrow and wide widths and scaled text sizes.
+- **Exercise the Contract refresh directly** — Trigger the existing refresh entry point and match the renamed Gagging label in the existing authorization checks.
+- **Check the expanded paired Gagging label** — Use Gagging in the two paired Atmosphere detail assertions to match the previously renamed display label.
+- **Verify Last seen from authenticated presence** — Verify that a transport sync alone leaves Last seen unset and that an exact paired presence observation survives going offline without crossing identities.
+- **Isolate the Demo Task roster acknowledgement** — Check the existing roster journal acknowledgement separately, then require exact physical state throughout the Demo Task flow.
+- **Keep Demo Task checks strict after roster setup** — Complete the authorized roster setup before capturing the baseline.
+- **Register the Gagging keyboard diagnostics** — Name the keyboard preview and clipboard source files in the literal CI diagnostic inventory.
+- **Seed a canonical usage epoch in the Extra Time fixture** — Use a UUID for the synthetic daily usage checkpoint so the telemetry test can exercise the ordinary history and budget publication path.
+- **Exercise Tasks locale after activity launch** — Set the process format locale after Android has applied the activity locale so the Tasks test reaches the actual timestamp assertions.
+- **Drive the Tasks history checked state** — Trigger the checkbox's normal checked-change listener in the locale fixture and verify the control starts unchecked.
+- **Capture Extra Time feedback with a stable frame marker** — Use the review content for the frame marker and check the visible error message independently.
+
+### Maintenance
+
+- **Deps: Bump com.google.android.material:material** — Bumps [com.google.android.material:material](https://github.com/material-components/material-components-android) from 1.11.0 to 1.14.0.
+- **Prepare Gag setup and Demo Sub release** — Move Gag setup to the Sub phone and align the Demo Sub preview with the Contract screen.
+- **Remove retired pack labels and examples** — Remove references that survived the removal of the old pack importer.
+- **Remove unreferenced interface drawables** — Remove eighteen obsolete drawable resources while preserving the current interface artwork.
+- **Remove the retired Studio card resource ID** — Remove an unused Studio resource and check that the former Studio and Packs activities stay unregistered.
+- **Remove unused Settings resources** — Remove unreferenced group labels and obsolete Keyholder resource IDs.
+- **Integrate Tasks headers with current dev and Gag copy** — Keep the current dev changes and qualify the approved Tasks headers and Gag labels together.
+- **Remove unused Demo Sub, People, and Full Access strings** — Remove 73 unreferenced labels from three role UI resource files.
+- **Remove unused Setup and Keyholder labels** — Remove 67 unreferenced strings from Setup, Keyholder, and earlier UI updates.
+- **Integrate the qualified Gag keyboard baseline** — Carry the signed keyboard release baseline into the reviewed Tasks and navigation candidate.
+- **Integrate the current Tasks and navigation release** — Keep the verified Gagging UI and keyboard changes on the latest signed development baseline.
+- **Integrate the current Gagging release baseline** — Keep the tested first-render production paths and carry over the Gagging copy assertions.
+- **Integrate the current Contract and Profile release** — Keep the verified keyboard switching and English US key options on the latest dev baseline.
+- **Integrate current development baseline into shared grids** — Keep the existing signed choice-grid change while incorporating subsequent qualified development changes.
+- **Remove retired tile styles and background** — Remove four unused tile styles and the background drawable they alone referenced.
+- **Remove the retired authenticator layout** — Remove the old QR layout and its background.
+
+</details>
+
+<details>
 <summary><strong>SubHub 0.7.0</strong></summary>
 
 ## What’s new in SubHub 0.7.0

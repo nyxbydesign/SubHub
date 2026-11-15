@@ -18,13 +18,13 @@
             android:layout_marginTop="@dimen/primary_header_top" />
 
         <LinearLayout
+            style="@style/Widget.SubHub.Card"
             android:id="@+id/popup_configuration_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
+            android:orientation="vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:text="@string/popup_configuration" />
@@ -86,13 +86,13 @@
         </LinearLayout>
 
         <LinearLayout
+            style="@style/Widget.SubHub.Card"
             android:id="@+id/popup_images_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
+            android:orientation="vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:text="@string/popup_library" />
@@ -113,13 +113,13 @@
         </LinearLayout>
 
         <LinearLayout
+            style="@style/Widget.SubHub.Card"
             android:id="@+id/popup_advanced_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
+            android:orientation="vertical">
             <TextView android:id="@+id/button_advanced_details" style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:minHeight="48dp" android:gravity="center_vertical"

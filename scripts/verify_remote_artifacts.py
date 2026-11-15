@@ -59,12 +59,20 @@ def elf_alignment(data):
     return alignments
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def inspect(apk, expected, aapt, native=False):
     result = subprocess.run([str(aapt), "dump", "badging", str(apk)], capture_output=True, encoding="utf-8", check=True)
     parsed = metadata(result.stdout, expected)
     if parsed["minSdk"] > 26:
         raise ValueError("Minimum Android version increased")
-    report = {**parsed, "path": str(apk.resolve()), "sha256": hashlib.sha256(apk.read_bytes()).hexdigest()}
+    report = {**parsed, "path": str(apk.resolve()), "sha256": file_sha256(apk)}
     if native:
         inventory = {}
         with zipfile.ZipFile(apk) as archive:

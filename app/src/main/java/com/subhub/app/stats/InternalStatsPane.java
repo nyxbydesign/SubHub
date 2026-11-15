@@ -1,8 +1,6 @@
 package com.subhub.app.stats;
 
-import android.app.Activity;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
 import com.subhub.app.R;
@@ -14,14 +12,14 @@ import java.util.*;
 
 /** Normal statistics components fed only by one acknowledged internal observation. */
 final class InternalStatsPane extends LinearLayout {
-    private final Activity activity;
+    private final StatsActivity activity;
     private final InternalStatsSource source;
     private final AsyncUiScope requests;
     private final LinearLayout totals, details, allowances, sessions, achievements;
     private final DailyStatsPanel daily;
     private int sessionLimit;
     private InternalStatsSource.Loaded rendered;
-    InternalStatsPane(Activity activity,InternalStatsSource source,Bundle state,int sessionLimit) {
+    InternalStatsPane(StatsActivity activity,InternalStatsSource source,Bundle state,int sessionLimit) {
         super(activity); this.activity=activity; this.source=source; this.sessionLimit=sessionLimit;
         requests=AsyncUiScope.forContext(activity); setOrientation(VERTICAL); setTag("internal_statistics");
         totals=PersonUi.card(this);totals.setId(R.id.stats_lifetime_summary);
@@ -54,30 +52,35 @@ final class InternalStatsPane extends LinearLayout {
     }
     private void render(InternalStatsSource.Loaded value){
         InternalRuntimePresentationSnapshot snapshot=value.snapshot;StatsSnapshot stats=snapshot.statistics();
-        totals.removeAllViews();heading(totals,R.string.stats_all_time);
-        row(totals,R.string.stats_time,duration(stats.getTotalProtectedSeconds()));
-        row(totals,R.string.stats_censors,number(stats.getTotalBlocks()));
-        row(totals,R.string.stats_sessions,number(stats.getSessions()));
+        totals.removeAllViews();
+        activity.heading(totals, R.string.stats_all_time);
+        activity.row(totals,R.string.stats_time,activity.duration(stats.getTotalProtectedSeconds()));
+        activity.row(totals,R.string.stats_censors,activity.number(stats.getTotalBlocks()));
+        activity.row(totals,R.string.stats_sessions,activity.number(stats.getSessions()));
         PersonUi.text(totals,activity.getString(R.string.stats_session_as_of,
                 java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM)
                         .withLocale(activity.getResources().getConfiguration().getLocales().get(0))
                         .withZone(java.time.ZoneId.of(snapshot.observed.zone)).format(java.time.Instant.ofEpochMilli(snapshot.observed.at))
                         + " · " + snapshot.observed.zone),false);
         // Session occupancy is owned by the runtime gateway, never inferred from historical counters.
-        row(totals,R.string.role_service_duration,activity.getString(R.string.role_unknown_data));
+        activity.row(totals,R.string.role_service_duration,activity.getString(R.string.role_unknown_data));
         allowances.removeAllViews();PersonUi.allowances(allowances,value.person);
         allowances.setVisibility(allowances.getChildCount()==0?GONE:VISIBLE);
-        details.removeAllViews();heading(details,R.string.profile_stats_feature_totals);
-        row(details,R.string.statistics_longest,duration(stats.getLongestSessionSeconds()));
-        row(details,R.string.statistics_current_streak,activity.getString(R.string.stats_days_value,stats.getCurrentStreak()));
-        row(details,R.string.stats_limited_app_time,duration(stats.getLimitedAppMillis()/1000));
-        row(details,R.string.stats_limit_stops,number(stats.getLimitInterventions()));
-        row(details,R.string.stats_whispers,number(stats.getSubliminalImpressions()));
-        row(details,R.string.stats_popups,number(stats.getPopupImpressions()));
-        row(details,R.string.stats_tributes,number(stats.getTributeEvents()));
-        for(String currency:List.of("EUR","USD"))row(details,R.string.stats_assessed,WalletCurrency.format(currency,snapshot.assessed(currency))+" "+currency);
+        details.removeAllViews();
+        activity.heading(details, R.string.profile_stats_feature_totals);
+        activity.row(details,R.string.statistics_longest,activity.duration(stats.getLongestSessionSeconds()));
+        activity.row(details,R.string.statistics_current_streak,activity.days(stats.getCurrentStreak()));
+        activity.row(details,R.string.stats_limited_app_time,activity.duration(stats.getLimitedAppMillis()/1000));
+        activity.row(details,R.string.stats_limit_stops,activity.number(stats.getLimitInterventions()));
+        activity.row(details,R.string.stats_whispers,activity.number(stats.getSubliminalImpressions()));
+        activity.row(details,R.string.stats_popups,activity.number(stats.getPopupImpressions()));
+        activity.row(details,R.string.stats_tributes,activity.number(stats.getTributeEvents()));
+        for (String currency : List.of("EUR", "USD"))
+            activity.row(details, R.string.stats_assessed,
+                    WalletCurrency.format(currency, snapshot.assessed(currency)) + " " + currency);
         renderSessions(snapshot);
-        achievements.removeAllViews();heading(achievements,R.string.achievements_title);
+        achievements.removeAllViews();
+        PersonUi.text(achievements, activity.getString(R.string.achievements_title), true);
         Object unlocked=snapshot.runtime.namespaces().getOrDefault("achievements",Collections.emptyMap()).get("unlocked");
         if(unlocked!=null&&!(unlocked instanceof Set))throw new IllegalStateException("Internal achievement receipts unavailable");
         int count=unlocked==null?0:((Set<?>)unlocked).size();
@@ -86,7 +89,8 @@ final class InternalStatsPane extends LinearLayout {
         if(subtitle instanceof TextView){((TextView)subtitle).setText(value.person.name+" · "+activity.getString(R.string.internal_sub_device));subtitle.setVisibility(VISIBLE);}
     }
     private void renderSessions(InternalRuntimePresentationSnapshot snapshot){
-        sessions.removeAllViews();heading(sessions,R.string.stats_recent_sessions);
+        sessions.removeAllViews();
+        activity.heading(sessions, R.string.stats_recent_sessions);
         List<StatsRepository.SessionEntry> entries=new ArrayList<>(snapshot.accounting.sessions());Collections.reverse(entries);
         entries.removeIf(e->e.getDurationSeconds()==0&&e.getActivityEvents()==0&&e.getLimitedAppMillis()==0);
         if(entries.isEmpty()){PersonUi.text(sessions,activity.getString(R.string.statistics_no_history),false);return;}
@@ -97,20 +101,20 @@ final class InternalStatsPane extends LinearLayout {
                     .withLocale(activity.getResources().getConfiguration().getLocales().get(0)).withZone(java.time.ZoneId.of(entry.zone()))
                     .format(java.time.Instant.ofEpochMilli(entry.getStartMillis()));
             PersonUi.text(line,date+" · "+entry.zone(),true);
-            row(line,R.string.stats_time,duration(entry.getDurationSeconds()));row(line,R.string.stats_censors,number(entry.getBlocks()));
-            row(line,R.string.stats_limited_app_time,duration(entry.getLimitedAppMillis()/1000));
+            activity.row(line, R.string.stats_time, activity.duration(entry.getDurationSeconds()));
+            activity.row(line, R.string.stats_censors, activity.number(entry.getBlocks()));
+            activity.row(line,R.string.stats_limited_app_time,activity.duration(entry.getLimitedAppMillis()/1000));
         }
-        if(entries.size()>3){Button more=new Button(activity);more.setId(R.id.stats_sessions_more);
-            more.setText(sessionLimit>=entries.size()?R.string.stats_fewer_sessions:R.string.stats_more_sessions);
-            more.setOnClickListener(v->{if(!source.accessible()||rendered==null||rendered.snapshot!=snapshot){unavailable();return;}
-                sessionLimit=sessionLimit>=entries.size()?3:Math.min(entries.size(),sessionLimit+3);renderSessions(snapshot);});sessions.addView(more);}
+        if (entries.size() > 3) {
+            boolean expanded = sessionLimit >= entries.size();
+            activity.addSessionHistoryAction(sessions, expanded, () -> {
+                if (!source.accessible() || rendered == null || rendered.snapshot != snapshot) {
+                    unavailable();
+                    return;
+                }
+                sessionLimit = expanded ? 3 : Math.min(entries.size(), sessionLimit + 3);
+                renderSessions(snapshot);
+            });
+        }
     }
-    private void heading(LinearLayout parent,int text){PersonUi.text(parent,activity.getString(text),true);}
-    private void row(LinearLayout parent,int label,String value){
-        LinearLayout line=new LinearLayout(activity);line.setGravity(Gravity.CENTER_VERTICAL);parent.addView(line,new LayoutParams(-1,-2));
-        TextView name=PersonUi.text(line,activity.getString(label),false);name.setLayoutParams(new LayoutParams(0,-2,1));
-        TextView amount=PersonUi.text(line,value,false);amount.setGravity(Gravity.END);amount.setLayoutParams(new LayoutParams(-2,-2));
-    }
-    private String duration(long seconds){return seconds>0&&seconds<60?activity.getString(R.string.stats_seconds_value,seconds):StatsSnapshot.formatDuration(seconds);}
-    private String number(long value){return java.text.NumberFormat.getIntegerInstance().format(value);}
 }

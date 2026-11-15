@@ -8,13 +8,12 @@ import android.content.pm.Signature;
 import android.os.Build;
 
 import com.subhub.app.BuildConfig;
+import com.subhub.app.util.LowercaseHex;
+import com.subhub.app.util.Sha256;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 
 /** Rejects any downloaded APK that cannot be a signed SubHub upgrade. */
@@ -35,7 +34,7 @@ public final class UpdateVerifier {
             UpdateManifest.Asset asset) {
         try {
             if (!apk.isFile() || apk.length() != asset.size) return Result.failure(Failure.SIZE);
-            if (!sha256(apk).equals(asset.sha256)) return Result.failure(Failure.HASH);
+            if (!Sha256.file(apk, 64 * 1024).equals(asset.sha256)) return Result.failure(Failure.HASH);
             if (!asset.abi.equals("universal") && !supports(asset.abi, Build.SUPPORTED_ABIS)) {
                 return Result.failure(Failure.ABI);
             }
@@ -84,24 +83,8 @@ public final class UpdateVerifier {
         if (signatures == null) return values;
         for (Signature signature : signatures) {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray());
-            values.add(hex(digest));
+            values.add(LowercaseHex.encode(digest));
         }
         return values;
-    }
-
-    private static String sha256(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (BufferedInputStream input = new BufferedInputStream(new FileInputStream(file))) {
-            byte[] buffer = new byte[64 * 1024];
-            int count;
-            while ((count = input.read(buffer)) >= 0) digest.update(buffer, 0, count);
-        }
-        return hex(digest.digest());
-    }
-
-    static String hex(byte[] value) {
-        StringBuilder output = new StringBuilder(value.length * 2);
-        for (byte element : value) output.append(String.format(Locale.ROOT, "%02x", element & 0xff));
-        return output.toString();
     }
 }

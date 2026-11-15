@@ -29,7 +29,7 @@ public final class AchievementCatalogContractTest {
         Context context = ApplicationProvider.getApplicationContext();
         AchievementManager manager = new AchievementManager(context);
 
-        assertEquals(49, manager.getTotalCount());
+        assertEquals(43, manager.getTotalCount());
         Set<String> ids = new HashSet<>();
         Set<Integer> badgeResources = new HashSet<>();
         Set<String> badgeDigests = new HashSet<>();
@@ -50,28 +50,28 @@ public final class AchievementCatalogContractTest {
             }
         }
 
-        assertEquals(49, badgeResources.size());
-        assertEquals(49, badgeDigests.size());
+        assertEquals(43, badgeResources.size());
+        assertEquals(43, badgeDigests.size());
         assertFalse(ids.contains("pack_curator"));
         assertFalse(ids.contains("profile_creator"));
         assertFalse(ids.contains("profile_organizer"));
-        assertEquals(R.drawable.achievement_badge_app_mode_guardian,
-                find(manager, "app_mode_guardian").getBadgeArtRes());
-        assertEquals(R.drawable.achievement_badge_limits_setter,
-                find(manager, "limits_setter").getBadgeArtRes());
+        for (String id : java.util.List.of("app_mode_guardian", "app_assignment_curator",
+                "limits_setter", "limits_dual_guard")) assertFalse(ids.contains(id));
         assertEquals(R.drawable.achievement_badge_pact_sealed,
                 find(manager, "pact_sealed").getBadgeArtRes());
         assertEquals(R.drawable.achievement_badge_hardcore_guardian,
                 find(manager, "hardcore_guardian").getBadgeArtRes());
-        assertFalse(ids.contains("paypal_vault"));
+        assertEquals(R.drawable.achievement_badge_paypal_vault,
+                find(manager, "paypal_vault").getBadgeArtRes());
+        assertEquals(AchievementRole.SUB, find(manager, "paypal_vault").getRole());
         assertFalse(ids.contains("first_custom_phrase"));
         assertFalse(ids.contains("phrase_library"));
         for (String id : java.util.List.of("text_filter_enabled", "text_filter_catalog",
                 "color_picker", "border_artist", "style_explorer")) assertFalse(ids.contains(id));
         assertEquals(R.drawable.achievement_badge_wallet_paid_1000,
                 find(manager, "wallet_paid_1000").getBadgeArtRes());
-        assertFalse(find(manager, "app_mode_guardian").getCategory().isEmpty());
-        assertFalse(find(manager, "paid_pause").getCategory().isEmpty());
+        for (String id : java.util.List.of("wallet_keeper", "tribute_rulesmith", "paid_pause"))
+            assertFalse(ids.contains(id));
     }
 
     @Test

@@ -119,18 +119,7 @@ public final class WalletHistoryView extends LinearLayout {
     }
 
     private String labelFor(PenanceInfraction kind) {
-        int id =
-                switch (kind) {
-                    case PAID_PAUSE -> R.string.paid_pause_history_label;
-                    case CENSORED_DWELL -> R.string.penance_history_dwell;
-                    case CENSORED_TAP -> R.string.penance_history_tap;
-                    case WATCHED_APP_OPEN -> R.string.penance_history_app_open;
-                    case EXTRA_TIME_REQUEST -> R.string.extra_time_tribute_rule_enabled;
-                    case TASK_FAILURE -> R.string.tasks_tribute_rule;
-                    case TAMPER_ATTEMPT -> R.string.penance_history_tamper;
-                    default -> R.string.penance_history_detection;
-                };
-        String label = getContext().getString(id);
+        String label = getContext().getString(kind.historyLabel());
         return label.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + label.substring(1);
     }
 

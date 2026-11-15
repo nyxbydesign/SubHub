@@ -55,6 +55,35 @@ Android device and creates an owned fresh-data guest. Guest fixture state change
 exact restoration, source/APK identity, evidence bounds and owned shutdown remain
 required. This is synthetic emulator qualification, not a personal phone test.
 
+## Local x86_64 APK pair on Windows
+
+With the Android SDK and Gradle dependencies already available, build the debug
+app and its instrumentation APK together from the same checkout. In PowerShell,
+quote each Gradle property argument.
+
+```powershell
+.\gradlew.bat --offline '-Pandroid.injected.build.abi=x86_64' `
+    '-Pandroid.buildOnlyTargetAbi=true' ':app:assembleDebug' ':app:assembleDebugAndroidTest'
+```
+
+This local deployment build selects the x86_64 app output. Read the fresh
+`output-metadata.json` in each of these directories and use its `outputFile`.
+Ordinary APKs from previous builds may still be present under `app/build/outputs/apk/`.
+
+- `app/build/intermediates/apk/debug/` identifies `com.subhub.app` and its single x86_64 output.
+- `app/build/intermediates/apk/androidTest/debug/` identifies the single `com.subhub.app.test` output.
+
+Before installing either APK, record both SHA-256 hashes. Use `aapt2 dump badging`
+to confirm the package names, the app version, device SDK compatibility and that
+the app APK contains exactly the x86_64 ABI. Use `apksigner verify --print-certs`
+on each APK and require valid signatures with the same signer certificate digest.
+Check the test APK manifest for `com.subhub.app.SubHubTestRunner` and target package
+`com.subhub.app`. After installation, confirm the registered runner with
+`adb shell pm list instrumentation` before invoking it.
+
+Use these flags for local emulator builds. Public releases still require the
+universal APK and all four signed per-ABI APKs.
+
 ## Manual selection on a candidate branch
 
 The existing Android CI workflow must be registered on the repository's default

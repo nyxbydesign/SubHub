@@ -118,7 +118,6 @@ public final class OnboardingActivity extends PreferencePage {
         }
         if (step == 0) chooseRole(); else showPage(flow.get(step - 1));
         Button next = findViewById(R.id.tour_next);
-        next.setBackgroundResource(R.drawable.bg_primary_button); next.setTextColor(getColor(R.color.text_primary));
         next.setText(step == flow.size() ? R.string.tour_finish : R.string.tour_next);
         next.setEnabled(step > 0 || roleChosen);
         next.setOnClickListener(v -> next());

@@ -192,6 +192,142 @@ public class RemoteSessionControlsAndroidTest {
         }
     }
 
+    @Test public void legacyEndPollRetainsUnchangedRowsAndUpdatesReceipts() throws Exception {
+        String name = peer.name;
+        String requested = context.getString(R.string.remote_end_requested);
+        String retry = context.getString(R.string.role_retry);
+        String unknown = context.getString(R.string.remote_unknown);
+        String sync = context.getString(R.string.remote_sync_now);
+        Intent intent = new Intent(context, RemoteEndActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, RemotePersonRepository.id(peer).value())
+                .putExtra("expectedSession", WITNESS);
+        java.lang.reflect.Field pollField = RemoteEndActivity.class.getDeclaredField("poll");
+        java.lang.reflect.Field clockField = RemoteEndActivity.class.getDeclaredField("clock");
+        pollField.setAccessible(true);
+        clockField.setAccessible(true);
+        // The isolated endpoint has no runtime observation at launch. Its automatic request
+        // fails validation before creating a command, which exposes Retry on the actual screen.
+        assertNull(feature.store.mirrored(SUB, peer.generation, RemoteProtocol.Stream.RUNTIME, "current"));
+        try (ActivityScenario<RemoteEndActivity> page = ActivityScenario.launch(intent)) {
+            List<String> beforeReceipt = List.of(name, requested, retry, unknown, unknown, sync);
+            AtomicBoolean ready = new AtomicBoolean();
+            await(() -> {
+                page.onActivity(a -> ready.set(beforeReceipt.equals(endRows(a.body))));
+                return ready.get();
+            });
+            assertNull(feature.endCommands.latest(peer));
+            AtomicReference<Runnable> tick = new AtomicReference<>();
+            page.onActivity(a -> {
+                try {
+                    Runnable poll = (Runnable) pollField.get(a);
+                    android.os.Handler clock = (android.os.Handler) clockField.get(a);
+                    clock.removeCallbacks(poll);
+                    tick.set(() -> { poll.run(); clock.removeCallbacks(poll); });
+                } catch (IllegalAccessException error) { throw new AssertionError(error); }
+                AtomicInteger mutations = new AtomicInteger();
+                a.body.setOnHierarchyChangeListener(new android.view.ViewGroup.OnHierarchyChangeListener() {
+                    @Override public void onChildViewAdded(View parent, View child) { mutations.incrementAndGet(); }
+                    @Override public void onChildViewRemoved(View parent, View child) { mutations.incrementAndGet(); }
+                });
+                View[] rows = new View[a.body.getChildCount()];
+                for (int i = 0; i < rows.length; i++) rows[i] = a.body.getChildAt(i);
+                tick.get().run();
+                tick.get().run();
+                assertEquals("Unchanged poll must not detach or replace a row", 0, mutations.get());
+                for (int i = 0; i < rows.length; i++) assertSame(rows[i], a.body.getChildAt(i));
+                assertEndActions(a.body, true);
+                a.body.setOnHierarchyChangeListener(null);
+            });
+
+            feature.store.putMetadata(SUB, peer.generation, "latest_end", "fixture-receipt");
+            org.json.JSONObject receipt = new org.json.JSONObject().put("request",
+                    new org.json.JSONObject().put("sessionIdentity", WITNESS));
+            var labels = Map.of("SENT", R.string.remote_end_received,
+                    "DISPATCHED", R.string.remote_end_dispatched, "ENDED", R.string.remote_target_ended,
+                    "EXPIRED", R.string.remote_end_expired, "REJECTED", R.string.remote_end_rejected,
+                    "UNRECOGNIZED", R.string.remote_end_requested);
+            for (var status : labels.entrySet()) {
+                feature.store.putMetadata(SUB, peer.generation, "end:fixture-receipt",
+                        receipt.put("state", status.getKey()).toString());
+                page.onActivity(a -> {
+                    tick.get().run();
+                    assertEquals(List.of(name, context.getString(status.getValue()), unknown, unknown, sync),
+                            endRows(a.body));
+                    assertEquals(context.getColor(R.color.text_primary),
+                            ((TextView) a.body.getChildAt(1)).getCurrentTextColor());
+                    assertEndActions(a.body, false);
+                });
+            }
+            feature.store.putMetadata(SUB, peer.generation, "end:fixture-receipt", "{}");
+            page.onActivity(a -> {
+                tick.get().run();
+                assertEquals(List.of(name, context.getString(R.string.remote_incomplete), sync), endRows(a.body));
+                assertEndActions(a.body, false);
+            });
+            receipt.getJSONObject("request").put("sessionIdentity", IDLE);
+            feature.store.putMetadata(SUB, peer.generation, "end:fixture-receipt", receipt.toString());
+            page.onActivity(a -> {
+                tick.get().run();
+                assertEquals(beforeReceipt, endRows(a.body));
+                assertEndActions(a.body, true);
+            });
+
+            long confirmed = 1_700_000_000_000L;
+            org.json.JSONObject runtime = new org.json.JSONObject().put("schema", 1).put("device", "Fixture Sub")
+                    .put("observedAt", confirmed).put("sessionStart", 0).put("sessionEnd", 0)
+                    .put("appliedRevision", 0).put("sessionIdentity", IDLE);
+            for (String key : List.of("screenCapture", "recognitionActive", "accessibilityBound",
+                    "accessibilityEnabled", "overlayPermission", "notifications", "armed", "paused")) {
+                runtime.put(key, false);
+            }
+            String observed = java.text.DateFormat.getDateTimeInstance().format(new Date(confirmed));
+            for (boolean active : new boolean[]{true, false}) {
+                runtime.put("serviceActive", active);
+                assertTrue(RemoteTelemetry.validRuntime(runtime));
+                source.publish(DOM, peer.generation, RemoteProtocol.Stream.RUNTIME, "current", runtime, false, confirmed);
+                source.acknowledge(DOM, feature.store.receive(SUB,
+                        source.nextBatch(DOM, peer.generation, RemoteProtocol.Stream.RUNTIME)));
+                feature.store.putMetadata(SUB, peer.generation, "confirmed_RUNTIME", Long.toString(confirmed));
+                page.onActivity(a -> {
+                    tick.get().run();
+                    assertEquals(List.of(name, requested, retry, observed, context.getString(R.string.remote_last_observed,
+                            context.getString(active ? R.string.remote_active : R.string.remote_inactive)), sync), endRows(a.body));
+                    assertEndActions(a.body, true);
+                });
+            }
+            page.onActivity(a -> {
+                ControllerPinManager.enterSubMode();
+                tick.get().run();
+                assertTrue("Poll still checks Dom authorization on an unchanged display", a.isFinishing());
+            });
+        }
+        assertFalse(feature.store.nextBatch(SUB, peer.generation, RemoteProtocol.Stream.CONFIGURATION)
+                .changes.stream().anyMatch(row -> row.key.startsWith("end:")));
+    }
+
+    private static List<String> endRows(LinearLayout body) {
+        List<String> rows = new ArrayList<>();
+        for (int i = 0; i < body.getChildCount(); i++) {
+            rows.add(((TextView) body.getChildAt(i)).getText().toString());
+        }
+        return rows;
+    }
+
+    private static void assertEndActions(LinearLayout body, boolean retry) {
+        View sync = body.getChildAt(body.getChildCount() - 1);
+        assertTrue(sync.isAttachedToWindow() && sync.isEnabled() && sync.hasOnClickListeners());
+        String retryLabel = body.getContext().getString(R.string.role_retry);
+        int retryActions = 0;
+        for (int i = 0; i < body.getChildCount(); i++) {
+            View child = body.getChildAt(i);
+            if (child instanceof TextView label && retryLabel.contentEquals(label.getText())) {
+                assertTrue(child.isAttachedToWindow() && child.isEnabled() && child.hasOnClickListeners());
+                retryActions++;
+            }
+        }
+        assertEquals(retry ? 1 : 0, retryActions);
+    }
+
     @Test public void delayedReviewCannotConfirmAfterRecreationOrControllerLock() throws Exception {
         Gateway gateway = new Gateway(); gateway.reviewed = new CompletableFuture<>();
         try (ActivityScenario<PersonActivity> page = open()) {

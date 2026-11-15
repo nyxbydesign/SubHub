@@ -220,13 +220,24 @@ public final class ControllerPinManager {
     }
 
     public static boolean verify(Context context, String pin) {
+        return verify(context, pin, null, 0);
+    }
+
+    static boolean verify(Context context, String pin, KeyholderProvider sessionProvider, long sessionRevision) {
         if (remoteKeyholderState() != KeyholderProvider.State.NONE || !isConfigured(context)) return false;
         try {
             SharedPreferences preferences = preferences(context);
-            byte[] salt = Base64.decode(preferences.getString(KEY_SALT, ""), Base64.NO_WRAP);
-            byte[] expected = Base64.decode(preferences.getString(KEY_HASH, ""), Base64.NO_WRAP);
+            String savedSalt = preferences.getString(KEY_SALT, "");
+            String savedHash = preferences.getString(KEY_HASH, "");
+            byte[] salt = Base64.decode(savedSalt, Base64.NO_WRAP);
+            byte[] expected = Base64.decode(savedHash, Base64.NO_WRAP);
             byte[] actual = derive(normalize(pin), salt);
             boolean matches = MessageDigest.isEqual(expected, actual);
+            if (sessionProvider != null) {
+                return matches && withLocalDomSession(sessionProvider, sessionRevision, () ->
+                        savedSalt.equals(preferences.getString(KEY_SALT, ""))
+                                && savedHash.equals(preferences.getString(KEY_HASH, "")));
+            }
             return withLocalAuthority(() -> {
                 if (matches) enterDomMode();
                 return matches;
@@ -325,6 +336,24 @@ public final class ControllerPinManager {
 
     public static void enterSubMode() {
         synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=domModeActive;domModeActive = false;invalidateWorkspace();if(changed)sessionChanged();}
+    }
+
+    static boolean currentLocalDomSession(KeyholderProvider provider, long revision) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            return isDomModeActive() && provider == com.subhub.app.people.People.keyholder()
+                    && revision == domWorkspaceRevision();
+        }
+    }
+
+    static boolean withLocalDomSession(KeyholderProvider provider, long revision,
+            java.util.function.BooleanSupplier action) {
+        try {
+            return provider.withLocalAuthority(() -> {
+                synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                    return currentLocalDomSession(provider, revision) && action.getAsBoolean();
+                }
+            });
+        } catch (RuntimeException unavailable) { return false; }
     }
 
     static KeyholderProvider.State remoteKeyholderState() {
