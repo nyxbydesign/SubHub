@@ -405,6 +405,48 @@ public final class AtmosphereContractDetailsAndroidTest {
         }
     }
 
+    @Test public void pairedContractEditsPopupInlineAndHonorsTargetConsent() throws Exception {
+        readyUi(true);
+        try (RemoteExtraTimeUiFixture paired = RemoteExtraTimeUiFixture.setupSub(context)) {
+            paired.switchDom();
+            paired.seedAtmosphereContract();
+            Intent intent = new Intent(context, PersonActivity.class)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, paired.subPerson.value())
+                    .putExtra("person_section", "contracts");
+            try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(intent)) {
+                await(page, a -> tagged(a, "atmosphere_panel:subliminal") != null);
+                page.onActivity(a -> {
+                    View whispers = tagged(a, "atmosphere_panel:subliminal");
+                    assertEquals(View.VISIBLE, whispers.getVisibility());
+                    assertEquals(context.getString(R.string.sub_feature_disabled), text(whispers));
+                    assertNull(a.findViewById(R.id.switch_whispers));
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                });
+                onView(withTagValue(is("atmosphere_header:popup")))
+                        .perform(NativeUiActions.revealAboveNavigation(), click());
+                page.onActivity(a -> {
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:subliminal").getVisibility());
+                    assertEquals(View.VISIBLE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                    com.subhub.app.util.StateToggle popup = a.findViewById(R.id.switch_popup_storm);
+                    assertTrue(popup.isChecked());
+                    assertTrue(popup.isEnabled());
+                    assertEquals(View.GONE, a.findViewById(R.id.button_preview).getVisibility());
+                });
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_popup_storm))
+                        .perform(NativeUiActions.revealAboveNavigation(), click());
+                page.recreate();
+                await(page, a -> tagged(a, "atmosphere_panel:popup") != null);
+                page.onActivity(a -> {
+                    assertEquals(View.VISIBLE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:subliminal").getVisibility());
+                    com.subhub.app.util.StateToggle popup = a.findViewById(R.id.switch_popup_storm);
+                    assertFalse(popup.isChecked());
+                    assertTrue(preferences.getBoolean(PopupStormSettings.K_ENABLED, false));
+                });
+            }
+        }
+    }
+
     @Test public void unknownContractHidesDetailsWhileStaleContractKeepsLabeledSavedValues() throws Exception {
         for (boolean dom : new boolean[]{false, true}) {
             for (PersonSnapshot.Freshness freshness : List.of(PersonSnapshot.Freshness.STALE, PersonSnapshot.Freshness.UNKNOWN)) {

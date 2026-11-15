@@ -982,6 +982,7 @@
     <string name="subliminal_preset_strict">Strict</string>
     <string name="subliminal_preset_ultra">Ultra</string>
     <string name="subliminal_advanced">Advanced controls</string>
+    <string name="subliminal_override_preset">Use custom timing and appearance</string>
     <string name="subliminal_opacity_value">Opacity · %1$d%%</string>
     <string name="subliminal_duration_value">Visible time · %1$.1f seconds</string>
     <string name="subliminal_min_interval_value">Shortest interval · %1$d seconds</string>
@@ -1016,6 +1017,7 @@
     <string name="atmosphere_subtitle_dom">Choose how you tease your Sub during service.</string>
     <string name="atmosphere_subtitle_sub">Your Dom’s little distractions during service.</string>
     <string name="atmosphere_whispers_title">Subliminal Messaging</string>
+    <string name="atmosphere_gag_unavailable">Gagging is unavailable on this device</string>
     <string name="atmosphere_shape_whispers">Configure messages</string>
     <string name="atmosphere_enable_whispers">Configure messages</string>
     <string name="atmosphere_open_popup_storm">Open Popup Storm</string>

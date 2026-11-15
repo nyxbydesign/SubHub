@@ -78,7 +78,7 @@ public final class UiComponentContractTest {
                 LayoutInflater.from(context)
                         .inflate(R.layout.activity_subliminal_settings, null, false);
         int[] ids = {
-            R.id.preset_slider,
+            R.id.whispers_preset_slider,
             R.id.pack_obedience,
             R.id.pack_focus,
             R.id.pack_beta,

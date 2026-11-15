@@ -120,5 +120,7 @@ final class InternalEditorAutosave implements AutoCloseable {
         // Stage this binding once before detaching. The shared drain needs no disposed Views to
         // finish a held ACK, save later staged edits, or serve a replacement binding after rotation.
         flush(); closed = true; main.removeCallbacks(save); observation.close();
+        if (status.getParent() instanceof android.view.ViewGroup parent) parent.removeView(status);
+        if (reload.getParent() instanceof android.view.ViewGroup parent) parent.removeView(reload);
     }
 }

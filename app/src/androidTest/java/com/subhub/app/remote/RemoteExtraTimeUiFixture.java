@@ -245,6 +245,32 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         assertTrue(ControllerPinManager.isDomWorkspaceUnlocked());
     }
 
+    /** Seed a paired snapshot with Whispers opted out, Popup allowed, and no Gag capability. */
+    public void seedAtmosphereContract() throws Exception {
+        assertSame(dom, selected);
+        org.json.JSONObject baseline = RemoteConfigurationAndroidTest.configuration();
+        baseline.getJSONObject("contract").getJSONObject("sections").getJSONObject("popup")
+                .put(com.subhub.app.popup.PopupStormSettings.K_ENABLED, true);
+        org.json.JSONObject consent = new org.json.JSONObject();
+        for (String section : SubFeaturePolicy.FEATURES) consent.put(section, !"subliminal".equals(section));
+        long now = System.currentTimeMillis();
+        org.json.JSONObject runtime = new org.json.JSONObject().put("schema", 1).put("device", "Fixture device")
+                .put("observedAt", now).put("sessionStart", 0).put("sessionEnd", 0)
+                .put("appliedRevision", 0).put("featureConsent", consent);
+        for (String key : List.of("serviceActive", "screenCapture", "recognitionActive", "accessibilityBound",
+                "accessibilityEnabled", "overlayPermission", "notifications", "armed", "paused")) runtime.put(key, false);
+        mirrorAtmosphere(RemoteProtocol.Stream.BASELINE, "active", baseline, now);
+        mirrorAtmosphere(RemoteProtocol.Stream.RUNTIME, "current", runtime, now);
+    }
+
+    private void mirrorAtmosphere(RemoteProtocol.Stream stream, String item, org.json.JSONObject body, long observed) {
+        dom.store.getWritableDatabase().execSQL("INSERT OR REPLACE INTO "
+                + "remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,?,?,?,1,?,0,?)",
+                new Object[]{subIdentity, generation, stream.name(), item,
+                        com.subhub.app.storage.StoredPayloads.bind(body.toString()), observed});
+        dom.store.putMetadata(subIdentity, generation, "confirmed_" + stream.name(), Long.toString(observed));
+    }
+
     public void switchSub() throws Exception {
         select(sub); ControllerPinManager.enterSubMode();
         assertFalse(ControllerPinManager.isDomWorkspaceUnlocked());

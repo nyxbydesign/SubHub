@@ -128,6 +128,8 @@ public final class PublicFormIdentityAndroidTest {
                 page.onActivity(a -> {
                     View advanced = a.findViewById(R.id.button_advanced_details);
                     if (advanced != null) advanced.performClick();
+                    View whispersAdvanced = a.findViewById(R.id.whispers_advanced_button);
+                    if (whispersAdvanced != null) whispersAdvanced.performClick();
                     View timing = a.findViewById(R.id.advanced_enabled);
                     if (timing instanceof StateToggle) ((StateToggle) timing).setChecked(true);
                     View custom = a.findViewById(R.id.pack_custom);

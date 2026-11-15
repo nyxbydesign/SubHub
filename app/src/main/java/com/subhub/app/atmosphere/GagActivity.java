@@ -11,7 +11,6 @@ import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
@@ -27,16 +26,12 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.InputFocusPolicy;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.StateToggle;
-import org.json.JSONException;
 
 public final class GagActivity extends AppCompatActivity {
     private static final String WORKSPACE = "gag_editor_workspace";
     private static final String DICTIONARY_EXPANDED = "gag_dictionary_expanded";
-    private StateToggle enabled;
-    private RadioGroup modes;
-    private EditText interval;
-    private EditText words;
-    private EditText replacements;
+    private static final String EDITOR_STATE = "gag_rules_editor_state";
+    private GagRulesEditor editor;
     private TextView keyboardStatus;
     private TextView keyboardAction;
     private GagPersonalDictionary dictionary;
@@ -71,34 +66,14 @@ public final class GagActivity extends AppCompatActivity {
             keyboardAction.setOnClickListener(view -> openKeyboardSetup());
             bindDictionary(state != null && state.getBoolean(DICTIONARY_EXPANDED));
         } else {
-            bindEditor(findViewById(android.R.id.content));
+            Bundle retained = state != null && (!FeatureEditorSession.internal(this)
+                    || FeatureEditorSession.restoreInternalWidgets(this, state)) ? state.getBundle(EDITOR_STATE) : null;
+            try {
+                editor = new GagRulesEditor(this, findViewById(R.id.gag_rules_settings), retained);
+            } catch (Exception unavailable) { finish(); return; }
+            FeatureEditorSession.bind(this, findViewById(android.R.id.content), GagContractFields.SECTION, editor::flush);
         }
         InputFocusPolicy.openActivityForReading(this);
-    }
-
-    private void bindEditor(View content) {
-        enabled = findViewById(R.id.gag_enabled);
-        modes = findViewById(R.id.gag_modes);
-        interval = findViewById(R.id.gag_interval);
-        words = findViewById(R.id.gag_words);
-        replacements = findViewById(R.id.gag_replacements);
-        GagSettings settings;
-        try { settings = GagSettings.from(FeatureEditorSession.gagRules(this)); }
-        catch (Exception unavailable) { finish(); return; }
-        enabled.setText(R.string.gag_enable);
-        enabled.setChecked(settings.enabled());
-        modes.check(switch (settings.mode()) {
-            case ALL -> R.id.gag_all;
-            case INTERVAL -> R.id.gag_every_n;
-            case MATCH -> R.id.gag_specific;
-        });
-        interval.setText(Integer.toString(settings.interval()));
-        words.setText(settings.words());
-        replacements.setText(settings.replacements());
-        enabled.setOnCheckedChangeListener((view, checked) -> rulesChanged());
-        modes.setOnCheckedChangeListener((group, id) -> { updateFields(); rulesChanged(); });
-        updateFields();
-        FeatureEditorSession.bind(this, content, GagContractFields.SECTION, this::applyRules);
     }
 
     @Override protected void onResume() {
@@ -117,7 +92,10 @@ public final class GagActivity extends AppCompatActivity {
     @Override protected void onSaveInstanceState(Bundle state) {
         if (localSetup && dictionaryContent != null)
             state.putBoolean(DICTIONARY_EXPANDED, dictionaryContent.getVisibility() == View.VISIBLE);
-        else if (!localSetup && requireRole()) FeatureEditorSession.saveState(this, state);
+        else if (!localSetup && requireRole()) {
+            FeatureEditorSession.saveState(this, state);
+            if (editor != null) state.putBundle(EDITOR_STATE, editor.saveState());
+        }
         super.onSaveInstanceState(state);
     }
 
@@ -238,41 +216,5 @@ public final class GagActivity extends AppCompatActivity {
 
     private boolean currentWorkspace() {
         return getIntent().getLongExtra(WORKSPACE, -1) == ControllerPinManager.domWorkspaceRevision();
-    }
-
-    private void updateFields() {
-        int mode = modes.getCheckedRadioButtonId();
-        findViewById(R.id.gag_interval_field).setVisibility(mode == R.id.gag_every_n ? View.VISIBLE : View.GONE);
-        findViewById(R.id.gag_words_field).setVisibility(mode == R.id.gag_specific ? View.VISIBLE : View.GONE);
-    }
-
-    private void rulesChanged() {
-        if (requireRole()) FeatureEditorSession.gagRulesChanged(this);
-    }
-
-    private boolean applyRules() {
-        if (!requireRole()) return false;
-        int id = modes.getCheckedRadioButtonId();
-        GagRules.Mode mode = id == R.id.gag_every_n ? GagRules.Mode.INTERVAL
-                : id == R.id.gag_specific ? GagRules.Mode.MATCH : GagRules.Mode.ALL;
-        int count = 3;
-        if (mode == GagRules.Mode.INTERVAL) {
-            try { count = Integer.parseInt(interval.getText().toString().trim()); }
-            catch (NumberFormatException invalid) { count = 0; }
-            if (count < 1 || count > 999) { interval.setError(getString(R.string.gag_interval_error)); return false; }
-        }
-        String sourceWords = words.getText().toString();
-        String replacementWords = replacements.getText().toString();
-        if (enabled.isChecked() && mode == GagRules.Mode.MATCH && GagSettings.items(sourceWords).isEmpty()) {
-            words.setError(getString(R.string.gag_words_error)); return false;
-        }
-        if (enabled.isChecked() && GagSettings.items(replacementWords).isEmpty()) {
-            replacements.setError(getString(R.string.gag_replacements_error)); return false;
-        }
-        try {
-            FeatureEditorSession.editGagRules(this,
-                    new GagSettings(enabled.isChecked(), mode, count, sourceWords, replacementWords).json());
-            return true;
-        } catch (JSONException | IllegalArgumentException invalid) { return false; }
     }
 }
