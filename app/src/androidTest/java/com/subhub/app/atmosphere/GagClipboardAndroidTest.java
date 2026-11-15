@@ -252,6 +252,19 @@ public final class GagClipboardAndroidTest {
                 "x".repeat(GagClipboard.MAX_TEXT_LENGTH + 1))));
     }
 
+    @Test public void longTextKeepsItsFullContentsAndUsesABoundedUnicodePreview() {
+        String emoji = "😀";
+        String text = "\n  " + emoji.repeat(257) + "x".repeat(GagClipboard.MAX_TEXT_LENGTH - 517);
+        assertEquals(GagClipboard.MAX_TEXT_LENGTH, text.length());
+        assertEquals(text, GagClipboard.plainText(ClipData.newPlainText("Fixture", text)));
+        GagClipboard history = new GagClipboard();
+        history.remember(text, 20, 20, 20);
+        GagClipboard.Entry entry = history.recentEntries(20).get(0);
+        assertEquals(text, entry.text());
+        assertEquals(emoji.repeat(256) + "…", GagClipboard.previewText(entry.text()));
+        assertEquals(emoji.repeat(256), GagClipboard.previewText(emoji.repeat(256)));
+    }
+
     @Test public void loneImageChipCentersItsThumbnailAndLabelBetweenTheKeyboardGutters() {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         var context = instrumentation.getTargetContext();
@@ -444,5 +457,6 @@ public final class GagClipboardAndroidTest {
         assertEquals(text, GagClipboard.applyWords(text, word -> word));
         assertEquals("[don't],  [skip]\t[me]\n192.168.1.14",
                 GagClipboard.applyWords(text, word -> "[" + word + "]"));
+        assertNull(GagClipboard.applyWords("x ".repeat(100), word -> "x".repeat(2048)));
     }
 }

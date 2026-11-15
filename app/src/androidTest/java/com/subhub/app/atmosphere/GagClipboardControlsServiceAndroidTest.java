@@ -79,12 +79,33 @@ public final class GagClipboardControlsServiceAndroidTest {
         assertEditor(" ");
     }
 
+    @Test public void longClipboardCardPastesTheEntireEntry() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        openFixture(true, true);
+        openClipboard();
+        UiObject2 card = await(By.pkg(APP).textStartsWith(GagEditorFixtureActivity.LONG_CLIPBOARD_PREFIX));
+        assertTrue(card.getText().length() <= 257);
+        card.click();
+        String expected = GagEditorFixtureActivity.longClipboardResult(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT);
+        UiObject2 result = device().wait(Until.findObject(By.pkg(FIXTURE).desc(expected)), TIMEOUT);
+        if (result == null) {
+            UiObject2 editor = await(By.pkg(FIXTURE).descStartsWith(GagEditorFixtureActivity.EDITOR));
+            assertEquals(expected, editor.getContentDescription());
+        }
+    }
+
     private static void openFixture(boolean seed) throws Exception {
+        openFixture(seed, false);
+    }
+
+    private static void openFixture(boolean seed, boolean longText) throws Exception {
         assertEquals(APP + "/.atmosphere.GagKeyboardService",
                 shell("settings get secure default_input_method").trim());
         String started = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + "/" + GagEditorFixtureActivity.class.getName()
                 + " --ez gag_seed_clipboard " + seed
+                + " --ez " + GagEditorFixtureActivity.SEED_LONG_CLIPBOARD + " " + longText
                 + " --ez " + GagEditorFixtureActivity.SUPPRESS_CLIPBOARD_OVERLAY + " " + seed);
         assertTrue(started, started.contains("Status: ok"));
         await(By.pkg(APP).text("q"));

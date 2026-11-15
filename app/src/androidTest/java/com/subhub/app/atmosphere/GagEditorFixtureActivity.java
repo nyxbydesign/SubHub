@@ -5,7 +5,10 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.os.Bundle;
 import android.os.PersistableBundle;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 
@@ -14,6 +17,9 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String ACTION = "com.subhub.app.test.GAG_EDITOR_FIXTURE";
     static final String EDITOR = "Gag spacing test editor";
     static final String CLIPBOARD_TEXT = "Synthetic clipboard fixture";
+    static final String LONG_CLIPBOARD_PREFIX = "Long clipboard fixture ";
+    static final String LONG_CLIPBOARD_TEXT = LONG_CLIPBOARD_PREFIX + "abc 123 ".repeat(768) + "tail";
+    static final String SEED_LONG_CLIPBOARD = "gag_seed_long_clipboard";
     static final String DELETION_TEXT = "keep über café tail";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private boolean seedClipboard;
@@ -25,14 +31,24 @@ public final class GagEditorFixtureActivity extends Activity {
             return;
         }
 
+        boolean longClipboard = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false);
         EditText editor = new EditText(this);
-        editor.setSingleLine(true);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT);
+        editor.setSingleLine(!longClipboard);
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | (longClipboard ? InputType.TYPE_TEXT_FLAG_MULTI_LINE : 0));
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
         editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
+        if (longClipboard) {
+            editor.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+                @Override public void afterTextChanged(Editable text) {
+                    editor.setContentDescription(longClipboardResult(text));
+                }
+            });
+        }
         setContentView(editor);
         editor.requestFocus();
         editor.post(() -> {
@@ -42,11 +58,17 @@ public final class GagEditorFixtureActivity extends Activity {
         });
     }
 
+    static String longClipboardResult(CharSequence text) {
+        return EDITOR + " length=" + text.length() + " exact=" + TextUtils.equals(LONG_CLIPBOARD_TEXT, text);
+    }
+
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && seedClipboard) {
             seedClipboard = false;
-            ClipData clip = ClipData.newPlainText("Fixture", CLIPBOARD_TEXT);
+            String text = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)
+                    ? LONG_CLIPBOARD_TEXT : CLIPBOARD_TEXT;
+            ClipData clip = ClipData.newPlainText("Fixture", text);
             if (getIntent().getBooleanExtra(SUPPRESS_CLIPBOARD_OVERLAY, false)) {
                 // Android honors this for emulator clipboard synchronization.
                 PersistableBundle extras = new PersistableBundle();

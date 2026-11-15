@@ -14,7 +14,9 @@ import java.util.stream.Collectors;
 
 /** Bounded IME-process history with a separate lease on the visible editor. */
 final class GagClipboard {
-    static final int MAX_TEXT_LENGTH = 2048;
+    static final int MAX_TEXT_LENGTH = 32_768;
+    private static final int MAX_PREVIEW_CODE_POINTS = 256;
+    private static final int MAX_EXPANDED_PASTE_LENGTH = 65_536;
     private static final int MAX_ITEMS = 8;
     static final long LIFETIME_MS = 6 * 60 * 60 * 1_000L;
     private static final String SENSITIVE = "android.content.extra.IS_SENSITIVE";
@@ -89,7 +91,26 @@ final class GagClipboard {
     }
 
     static boolean validText(String text) {
-        return text != null && !text.isBlank() && text.length() <= MAX_TEXT_LENGTH;
+        return text != null && text.length() <= MAX_TEXT_LENGTH && firstNonWhitespace(text) < text.length();
+    }
+
+    static String previewText(String text) {
+        int start = firstNonWhitespace(text);
+        int end = start;
+        for (int count = 0; count < MAX_PREVIEW_CODE_POINTS && end < text.length(); count++) {
+            end += Character.charCount(text.codePointAt(end));
+        }
+        return end == text.length() ? text.substring(start) : text.substring(start, end) + "…";
+    }
+
+    private static int firstNonWhitespace(String text) {
+        int index = 0;
+        while (index < text.length()) {
+            int point = text.codePointAt(index);
+            if (!Character.isWhitespace(point)) break;
+            index += Character.charCount(point);
+        }
+        return index;
     }
 
     void remember(GagClipboardImage image, long copiedAt, long wallNow, long elapsedNow) {
@@ -225,11 +246,12 @@ final class GagClipboard {
     }
 
     static String applyWords(String value, java.util.function.UnaryOperator<String> complete) {
-        StringBuilder result = new StringBuilder();
+        StringBuilder result = new StringBuilder(value.length());
         for (int start = 0; start < value.length(); ) {
             int point = value.codePointAt(start);
             int end = start + Character.charCount(point);
             if (!GagRules.wordCharacter(point)) {
+                if (result.length() + end - start > MAX_EXPANDED_PASTE_LENGTH) return null;
                 result.append(value, start, end);
             } else {
                 while (end < value.length()) {
@@ -237,7 +259,10 @@ final class GagClipboard {
                     if (!GagRules.wordCharacter(next) && !GagRules.apostrophe(next)) break;
                     end += Character.charCount(next);
                 }
-                result.append(complete.apply(value.substring(start, end)));
+                String replacement = complete.apply(value.substring(start, end));
+                // Keep a rule that expands a long clip from creating an oversized IME transaction.
+                if (replacement.length() > MAX_EXPANDED_PASTE_LENGTH - result.length()) return null;
+                result.append(replacement);
             }
             start = end;
         }
