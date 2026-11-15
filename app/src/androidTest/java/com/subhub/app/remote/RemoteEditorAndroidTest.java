@@ -389,13 +389,18 @@ public class RemoteEditorAndroidTest {
         values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
         values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
         values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/");
-        Uri image = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+        ContentResolver resolver = context.getApplicationContext().getContentResolver();
+        Uri image = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
         assertNotNull(image);
-        try {
-            try (OutputStream output = context.getContentResolver().openOutputStream(image)) {
+        try (AutoCloseable cleanup = () -> assertEquals(1, resolver.delete(image, null, null))) {
+            try (OutputStream output = resolver.openOutputStream(image)) {
                 assertNotNull(output);
                 output.write(bytes);
             }
+            values.clear();
+            values.put(MediaStore.Images.Media.IS_PENDING, 0);
+            assertEquals(1, resolver.update(image, values, null, null));
             Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
             UiDevice device = UiDevice.getInstance(instrument);
             try (ActivityScenario<PopupStormActivity> page = ActivityScenario.launch(pairedIntent(PopupStormActivity.class))) {
@@ -422,8 +427,6 @@ public class RemoteEditorAndroidTest {
                 assertTrue(added.getString("path").startsWith("assets/popup/"));
                 assertEquals(hash, added.getString("hash"));
             }
-        } finally {
-            context.getContentResolver().delete(image, null, null);
         }
     }
 

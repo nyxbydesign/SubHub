@@ -136,10 +136,17 @@ public class RemoteDurationAndroidTest {
             });
 
             String dom = source.peers(false).get(0).identity;
-            source.publish(dom, peer.generation, RemoteProtocol.Stream.BASELINE, "active", original, false, 2);
-            feature.store.receive(peer.identity, source.nextBatch(dom, peer.generation, RemoteProtocol.Stream.BASELINE));
+            JSONObject recovered = new JSONObject(original.toString());
+            recovered.getJSONObject("service").put("hidden", !original.getJSONObject("service").getBoolean("hidden"));
+            assertEquals(2L, source.publish(dom, peer.generation, RemoteProtocol.Stream.BASELINE,
+                    "active", recovered, false, 2));
+            assertEquals(2L, feature.store.receive(peer.identity,
+                    source.nextBatch(dom, peer.generation, RemoteProtocol.Stream.BASELINE)).through);
             onView(retry).perform(NativeUiActions.revealAboveNavigation(), click());
             ready(page);
+            onView(withTagValue(is("remote_duration_hidden"))).check(
+                    androidx.test.espresso.assertion.ViewAssertions.matches(
+                            recovered.getJSONObject("service").getBoolean("hidden") ? isChecked() : isNotChecked()));
             assertNull(feature.store.latestCommand(peer.identity, peer.generation));
         }
     }
