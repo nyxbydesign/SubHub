@@ -162,8 +162,10 @@ public class RemoteEditorAndroidTest {
             View manage = scope.findViewWithTag("person_apps");
             LinearLayout contract = (LinearLayout) scope.getParent();
             assertNotNull(allowedFeatures);
-            assertSame(contract, allowedFeatures.getParent());
-            assertTrue(contract.indexOfChild(scope) < contract.indexOfChild(allowedFeatures));
+            LinearLayout body = (LinearLayout) contract.getParent();
+            View permissions = (View) allowedFeatures.getParent();
+            assertSame(body, permissions.getParent());
+            assertTrue(body.indexOfChild(contract) < body.indexOfChild(permissions));
             assertTrue(manage.isClickable());
             assertTrue(scope.indexOfChild(manage) < scope.indexOfChild(rows));
             for (int index = 1; index <= 6; index++) {

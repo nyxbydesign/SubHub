@@ -126,6 +126,12 @@ public final class FeatureEditorSession {
         duration.putBoolean("hidden",service.getBoolean("hidden")).commit();
     }
     public static boolean attach(AppCompatActivity activity,String section,Bundle saved) {
+        return attach(activity, saved, false);
+    }
+    public static boolean attachEmbedded(AppCompatActivity activity, Bundle saved) {
+        return scope(activity) != null || attach(activity, saved, true);
+    }
+    private static boolean attach(AppCompatActivity activity, Bundle saved, boolean embedded) {
         if(!DummySubPreview.isRequested(activity.getIntent())&&PersonRoutes.isLocalTarget(activity.getIntent()))return true;
         try{
             String token=saved==null?activity.getIntent().getStringExtra(TOKEN):saved.getString(TOKEN);
@@ -142,17 +148,14 @@ public final class FeatureEditorSession {
             activity.getLifecycle().addObserver((LifecycleEventObserver)(owner,event)->{
                 if(event==Lifecycle.Event.ON_RESUME){
                     if(attached.invalidated){restart(activity);return;}
-                    EditorBinding binding=attached.bindings.get(activity);
-                    if(binding!=null){
-                        binding.active=true;
-                        if(attached.restorePending||attached.userDirty){
-                            try{if(!RemoteProtocol.canonical(attached.snapshot()).equals(RemoteProtocol.canonical(binding.autosave.base())))binding.autosave.changed();else attached.userDirty=false;}
-                            catch(Exception incomplete){binding.autosave.changed();}
-                            attached.restorePending=false;
-                        }
+                    try { attached.requireAuthority(); }
+                    catch (RuntimeException denied) {
+                        if (!embedded) activity.finish();
+                        return;
                     }
-                    try{attached.requireAuthority();}catch(RuntimeException denied){activity.finish();return;}
-                    activity.getWindow().getDecorView().post(()->decorate(activity));
+                    EditorBinding binding=attached.bindings.get(activity);
+                    if(binding!=null) attached.activate(binding);
+                    if(!embedded)activity.getWindow().getDecorView().post(()->decorate(activity));
                 } else if(event==Lifecycle.Event.ON_PAUSE){
                     EditorBinding binding=attached.bindings.get(activity);
                     if(binding!=null){binding.autosave.flush();binding.active=false;attached.remember(binding);}
@@ -166,7 +169,25 @@ public final class FeatureEditorSession {
                 }
             });
             return true;
-        }catch(Exception unavailable){Toast.makeText(activity,R.string.remote_reload,Toast.LENGTH_LONG).show();activity.finish();return false;}
+        }catch(Exception unavailable){
+            if (!embedded) {
+                Toast.makeText(activity,R.string.remote_reload,Toast.LENGTH_LONG).show();
+                activity.finish();
+            }
+            return false;
+        }
+    }
+    private void activate(EditorBinding binding) {
+        binding.active = true;
+        if (!restorePending && !userDirty) return;
+        try {
+            if (RemoteProtocol.canonical(snapshot()).equals(RemoteProtocol.canonical(binding.autosave.base()))) {
+                userDirty = false;
+            } else binding.autosave.changed();
+        } catch (Exception incomplete) {
+            binding.autosave.changed();
+        }
+        restorePending = false;
     }
     private void attachInternalLifecycle(AppCompatActivity activity){
         Runnable check=new Runnable(){public void run(){
@@ -263,11 +284,16 @@ public final class FeatureEditorSession {
     }
 
     public static void gagRulesChanged(AppCompatActivity activity) {
-        if (canEditGag(activity)) {
-            FeatureEditorSession scope = scope(activity);
-            if (scope.internal) scope.internalEditEpoch.incrementAndGet();
-            scope.markDraftChanged();
-        }
+        if (canEditGag(activity)) markEditorInput(activity);
+    }
+    public static void editorInputChanged(AppCompatActivity activity, String section) {
+        if (canEdit(activity, section)) markEditorInput(activity);
+    }
+    private static void markEditorInput(AppCompatActivity activity) {
+        FeatureEditorSession scope = scope(activity);
+        if (scope == null) return;
+        if (scope.internal) scope.internalEditEpoch.incrementAndGet();
+        scope.markDraftChanged();
     }
     private void requireAuthority(){
         if(internal){if(invalidated||!DummySubPreview.current(physical,internalGeneration,controllerRevision))throw new SecurityException("Internal Sub unavailable");return;}
@@ -319,8 +345,31 @@ public final class FeatureEditorSession {
 
         LinearLayout body=body(root);
         if(body==null)throw new IllegalStateException("Feature editor has no content");
+        scope.bind(activity, body, root, section, flush);
+    }
+    public static void bindEmbedded(AppCompatActivity activity, LinearLayout body, String section, BooleanSupplier flush) {
+        FeatureEditorSession scope = scope(activity);
+        if (scope == null) throw new IllegalStateException("Embedded editor has no target");
+        scope.bind(activity, body, null, section, flush);
+    }
+    public static void flushBinding(AppCompatActivity activity) {
+        FeatureEditorSession scope = scope(activity);
+        EditorBinding binding = scope == null ? null : scope.bindings.get(activity);
+        if (binding != null) binding.flush();
+    }
+    public static void unbind(AppCompatActivity activity) {
+        FeatureEditorSession scope = scope(activity);
+        if (scope == null) return;
+        EditorBinding binding = scope.bindings.remove(activity);
+        if (binding == null) return;
+        binding.active = false;
+        binding.close();
+        scope.remember(binding);
+    }
+    private void bind(AppCompatActivity activity, LinearLayout body, View textRoot, String section, BooleanSupplier flush) {
+        FeatureEditorSession scope = this;
         try {
-            EditorBinding old=scope.bindings.remove(activity);if(old!=null){old.close();scope.remember(old);}
+            unbind(activity);
             EditorBinding binding=new EditorBinding();scope.bindings.put(activity,binding);
             if(scope.internal){
                 binding.internalAutosave=new InternalEditorAutosave(activity,body,scope.internalData,scope.internalDraft,
@@ -329,7 +378,8 @@ public final class FeatureEditorSession {
                     scope.flushing=true;try{return flush.getAsBoolean();}finally{scope.flushing=false;}
                 },()->{scope.invalidated=true;DRAFTS.remove(scope.token);restart(activity);},
                         !(activity instanceof PersonActivity) && !"popup".equals(section));
-                scope.watchText(root,binding);binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
+                if (textRoot != null) scope.watchText(textRoot,binding);
+                binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
             }
             binding.autosave=new RemoteConfigurationAutosave(activity,body,scope.feature,scope.peer,scope.editBase,()->{
                 if(!(GagContractFields.SECTION.equals(section)?canEditGag(activity):canEdit(activity,section)))
@@ -341,8 +391,8 @@ public final class FeatureEditorSession {
                 scope.invalidated=true;DRAFTS.remove(scope.token);
                 restart(activity);
             });
-            scope.watchText(root,binding);
-            binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);
+            if (textRoot != null) scope.watchText(textRoot,binding);
+            if (activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)) scope.activate(binding);
         }catch(Exception invalid){throw new IllegalStateException("Could not start automatic editing",invalid);}
     }
     private static final class EditorBinding {
