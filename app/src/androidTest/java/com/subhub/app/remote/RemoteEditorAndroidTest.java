@@ -49,13 +49,6 @@ public class RemoteEditorAndroidTest {
         singleton=RemoteFeature.class.getDeclaredField("instance");singleton.setAccessible(true);previous=(RemoteFeature)singleton.get(null);singleton.set(null,feature);
     }
     @After public void cleanup()throws Exception {singleton.set(null,previous);feature.shutdownForTest();source.close();context.deleteDatabase(database+".db");context.deleteDatabase(database+"source.db");File assets=new File(context.getNoBackupFilesDir(),"remote-assets/"+peer.identity+"/"+generation);if(assets.isDirectory())try(java.util.stream.Stream<java.nio.file.Path> paths=java.nio.file.Files.walk(assets.toPath())){for(java.nio.file.Path path:paths.sorted(Comparator.reverseOrder()).toArray(java.nio.file.Path[]::new))java.nio.file.Files.delete(path);}ControllerPinManager.enterSubMode();}
-    @Test public void draftAndInvalidRawBudgetSurviveRecreation()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
-            ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
-            ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
-            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,generation));
-        }
-    }
     @Test @SdkSuppress(minSdkVersion = 29)
     public void pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance() throws Exception {
         String addedPackage = "com.example.fixture.browser";

@@ -159,6 +159,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
         "actualRemoteStatsReprojectsVisibleAllowanceAfterDescriptorArrival",
         "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "pairedLimitsRetainsIncompleteAllowanceDuringIconArrivalAndRecreation",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons"
     ],
     "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
@@ -196,7 +197,6 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "draftAndInvalidRawBudgetSurviveRecreation",
         "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
@@ -420,6 +420,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
         "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "pairedLimitsRetainsIncompleteAllowanceDuringIconArrivalAndRecreation",
         "sharedNativeLimitsAndAppSelectorKeepRemoteIconScope",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons",
     ],
@@ -737,7 +738,6 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor",
-        "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",

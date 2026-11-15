@@ -24,6 +24,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
@@ -37,6 +38,7 @@ import com.subhub.app.activity.ActivityEvent;
 import com.subhub.app.activity.ActivityPreview;
 import com.subhub.app.activity.ActivityText;
 import com.subhub.app.activity.DomActivityActivity;
+import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.people.ContractAppList;
 import com.subhub.app.people.FavoriteSubStore;
@@ -323,6 +325,96 @@ public final class RemoteAppIconPresentationAndroidTest {
                 });
             });
         }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void pairedLimitsRetainsIncompleteAllowanceDuringIconArrivalAndRecreation() throws Exception {
+        try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
+            fixture.enablePages();
+            RemoteStore.Peer peer = fixture.peer();
+            String packageName = fixture.packageName();
+            String inputTag = "limit:" + packageName;
+            String iconTag = "app_icon:" + packageName;
+            Intent contract = route(PersonActivity.class, fixture).putExtra("person_section", "contracts");
+            page(contract, (scenario, profile) -> {
+                try {
+                    String limitsTag = "person_section:limits";
+                    await(() -> {
+                        View limits = tagged(profile.get(), limitsTag);
+                        return profile.get().hasWindowFocus() && limits != null
+                                && limits.isClickable() && limits.isLaidOut();
+                    });
+                    onView(withTagValue(is(limitsTag))).perform(revealAboveNavigation(), click());
+                    AppModeActivity editor = awaitLimitsEditor(null, inputTag);
+                    assertEquals(fixture.personId(), PersonRoutes.requireId(editor.getIntent()));
+                    ImageView originalIcon = image(editor, iconTag);
+                    AtomicReference<EditText> originalInput = new AtomicReference<>();
+                    main(() -> {
+                        assertGeneric(originalIcon);
+                        originalInput.set((EditText) tagged(editor, inputTag));
+                        assertEquals("47", originalInput.get().getText().toString());
+                    });
+
+                    onView(withTagValue(is(inputTag))).perform(revealAboveNavigation(), click(),
+                            replaceText(""), closeSoftKeyboard());
+                    await(() -> {
+                        TextView status = (TextView) tagged(editor, "remote_configuration_save_status");
+                        return status != null && status.getText().toString()
+                                .equals(editor.getString(R.string.remote_check_fields));
+                    });
+                    fixture.offer();
+                    await(() -> magenta((ImageView) tagged(editor, iconTag)));
+                    main(() -> {
+                        assertSame(originalIcon, tagged(editor, iconTag));
+                        assertSame(originalInput.get(), tagged(editor, inputTag));
+                        assertEquals("", originalInput.get().getText().toString());
+                    });
+                    assertComposedPixel(editor, originalIcon, "paired-limits-incomplete-allowance");
+                    assertNull(fixture.store().latestCommand(peer.identity, peer.generation));
+
+                    main(editor::recreate);
+                    AppModeActivity recreated = awaitLimitsEditor(editor, inputTag);
+                    assertEquals(fixture.personId(), PersonRoutes.requireId(recreated.getIntent()));
+                    main(() -> {
+                        EditText restored = (EditText) tagged(recreated, inputTag);
+                        assertNotSame(originalInput.get(), restored);
+                        assertEquals("", restored.getText().toString());
+                    });
+                    assertNull(fixture.store().latestCommand(peer.identity, peer.generation));
+
+                    onView(withTagValue(is(inputTag))).perform(revealAboveNavigation(), replaceText("53"));
+                    await(() -> fixture.store().latestCommand(peer.identity, peer.generation) != null);
+                    RemoteStore.Command saved = fixture.store().latestCommand(peer.identity, peer.generation);
+                    org.json.JSONObject configuration = new org.json.JSONObject(saved.body).getJSONObject("configuration");
+                    assertEquals(RemoteStore.CommandState.QUEUED, saved.state);
+                    assertEquals(1, saved.revision);
+                    assertEquals(Set.of(packageName), RemoteConfiguration.selected(configuration));
+                    assertEquals(53, configuration.getJSONObject("apps")
+                            .getJSONObject("allowances").getInt(packageName));
+                } catch (Exception | AssertionError failure) {
+                    captureFailure(failure, "paired-limits-incomplete-allowance");
+                    throw failure;
+                } finally {
+                    main(() -> {
+                        AppModeActivity editor = resumed(AppModeActivity.class);
+                        if (editor != null) editor.finish();
+                    });
+                }
+            });
+        }
+    }
+
+    private static AppModeActivity awaitLimitsEditor(AppModeActivity previous, String inputTag) throws Exception {
+        AtomicReference<AppModeActivity> editor = new AtomicReference<>();
+        await(() -> {
+            AppModeActivity current = resumed(AppModeActivity.class);
+            if (current == null || current == previous || !current.hasWindowFocus()) return false;
+            View input = tagged(current, inputTag);
+            if (input == null || !input.isEnabled() || !input.isLaidOut()) return false;
+            editor.set(current);
+            return true;
+        });
+        return editor.get();
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
