@@ -30,6 +30,7 @@ public final class RemotePersonRepository implements PersonRepository {
     private enum Read { FULL, SUMMARY, CONTRACT_PAGE, PERSON_PAGE }
 
     private PersonSnapshot load(PersonId id, Read read) {
+        if (read == Read.FULL || read == Read.CONTRACT_PAGE) feature.appIcons.prepareCachedForDisplay();
         return store.authorityObservation(()->loadObserved(id, read));
     }
 
