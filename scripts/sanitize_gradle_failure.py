@@ -623,6 +623,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/remote/icons/AndroidAppIconSource.java": "main_remote_icons_android_app_icon_source",
     b"app/src/main/java/com/subhub/app/remote/icons/AppIconCache.java": "main_remote_icons_app_icon_cache",
     b"app/src/main/java/com/subhub/app/remote/icons/AppIconExchange.java": "main_remote_icons_app_icon_exchange",
+    b"app/src/main/java/com/subhub/app/remote/icons/AppIconIndex.java": "main_remote_icons_app_icon_index",
     b"app/src/main/java/com/subhub/app/remote/icons/IconPng.java": "main_remote_icons_icon_png",
     b"app/src/main/java/com/subhub/app/runtime/ActiveRuntimeCoordinator.java": "main_runtime_active_runtime_coordinator",
     b"app/src/main/java/com/subhub/app/runtime/AndroidDeviceBackend.java": "main_android_device_backend",
