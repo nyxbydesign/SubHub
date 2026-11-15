@@ -417,8 +417,15 @@ public class RemoteEditorAndroidTest {
                 assertTrue(device.wait(Until.gone(By.text("Open from")), 10_000));
                 BySelector tile = By.descStartsWith(name + ", ");
                 assertTrue(device.wait(Until.hasObject(tile), 15_000));
-                device.findObject(tile).click();
-                assertTrue(device.wait(Until.gone(By.pkg("com.google.android.documentsui").depth(0)), 10_000));
+                String picker = device.getCurrentPackageName();
+                assertTrue("Unexpected document picker " + picker,
+                        "com.google.android.documentsui".equals(picker) || "com.android.documentsui".equals(picker));
+                device.findObject(tile).longClick();
+                var select = device.wait(Until.findObject(By.res(picker, "action_menu_select")), 10_000);
+                assertNotNull("Document picker did not select the synthetic image", select);
+                select.click();
+                assertTrue("Picker did not return to Popup Storm",
+                        device.wait(Until.hasObject(By.res("com.subhub.app", "button_add_folder")), 10_000));
                 page.onActivity(activity -> assertNotSame(original.get(), activity));
                 try {
                     await(() -> latestArtworkCommand().length() == 2);
