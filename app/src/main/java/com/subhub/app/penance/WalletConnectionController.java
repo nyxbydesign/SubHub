@@ -4,10 +4,10 @@ import android.content.Intent;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.TextView;
-import android.widget.Toast;
-
+import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ViewWalletConnectionBinding;
 import com.subhub.app.security.ControllerPinManager;
@@ -15,6 +15,7 @@ import com.subhub.app.util.AsyncUiScope;
 
 import java.net.URI;
 import java.util.Locale;
+import java.util.function.BiConsumer;
 
 /**
  * Wallet-owned connection UI; payment clients, storage and authorization boundaries stay central.
@@ -27,6 +28,7 @@ public final class WalletConnectionController implements AutoCloseable {
     private final PayPalOrdersClient paypalClient;
     private final HardcoreAutoPayManager autoPay;
     private final AsyncUiScope uiData;
+    private final BiConsumer<CharSequence, Integer> feedback;
     private boolean updatingPaypalEnvironment,
             updatingAutoPay,
             paypalConnecting,
@@ -37,10 +39,12 @@ public final class WalletConnectionController implements AutoCloseable {
             paypalReadyForDisplay;
 
     public WalletConnectionController(
-            AppCompatActivity activity, ViewWalletConnectionBinding binding, TextView summary) {
+            AppCompatActivity activity, ViewWalletConnectionBinding binding, TextView summary,
+            BiConsumer<CharSequence, Integer> feedback) {
         this.activity = activity;
         this.binding = binding;
         this.summary = summary;
+        this.feedback = feedback;
         paypalCredentials = new PayPalCredentialStore(activity);
         paypalClient = new PayPalOrdersClient(activity);
         autoPay = new HardcoreAutoPayManager(activity);
@@ -84,15 +88,11 @@ public final class WalletConnectionController implements AutoCloseable {
                                     android.R.string.ok,
                                     (dialog, which) -> {
                                         if (editingAllowed()) {
-                                            Toast.makeText(
-                                                            activity,
-                                                            wallet.changeCurrency(currency)
-                                                                    ? R.string
-                                                                            .wallet_currency_changed
-                                                                    : R.string
-                                                                            .wallet_currency_blocked,
-                                                            Toast.LENGTH_LONG)
-                                                    .show();
+                                            showMessage(
+                                                    wallet.changeCurrency(currency)
+                                                            ? R.string.wallet_currency_changed
+                                                            : R.string.wallet_currency_blocked,
+                                                    Snackbar.LENGTH_LONG);
                                         }
                                         refreshPayPalSandboxState();
                                     })
@@ -108,6 +108,14 @@ public final class WalletConnectionController implements AutoCloseable {
 
     private boolean editingAllowed() {
         return binding != null && ControllerPinManager.canEditConfiguration();
+    }
+
+    private void showMessage(@StringRes int resource, int duration) {
+        showMessage(activity.getText(resource), duration);
+    }
+
+    private void showMessage(CharSequence message, int duration) {
+        feedback.accept(message, duration);
     }
 
     private String getString(int id, Object... arguments) {
@@ -151,11 +159,11 @@ public final class WalletConnectionController implements AutoCloseable {
                         : binding.paypalLink.getText().toString().trim();
         if (!link.isEmpty() && (!validPayPalLink(link)
                 || link.length() > 2048 && !link.equals(new PenanceManager(activity).getPayPalLink()))) {
-            Toast.makeText(activity, R.string.paypal_settings_invalid, Toast.LENGTH_SHORT).show();
+            showMessage(R.string.paypal_settings_invalid, Snackbar.LENGTH_SHORT);
             return;
         }
         new PenanceManager(activity).savePayPalLink(link);
-        Toast.makeText(activity, R.string.paypal_settings_saved, Toast.LENGTH_SHORT).show();
+        showMessage(R.string.paypal_settings_saved, Snackbar.LENGTH_SHORT);
     }
 
     private void savePayPalSandbox() {
@@ -178,7 +186,7 @@ public final class WalletConnectionController implements AutoCloseable {
                     && (selected != existing.environment() || !clientId.equals(existing.clientId()))
                 || secret.length() > com.subhub.app.util.InputBounds.CREDENTIAL
                     && (selected != existing.environment() || !secret.equals(existing.secret()))) {
-            Toast.makeText(activity, R.string.paypal_sandbox_invalid, Toast.LENGTH_SHORT).show();
+            showMessage(R.string.paypal_sandbox_invalid, Snackbar.LENGTH_SHORT);
             return;
         }
         final String verifiedSecret = secret;
@@ -197,22 +205,15 @@ public final class WalletConnectionController implements AutoCloseable {
                     binding.buttonSavePaypalSandbox.setText(R.string.paypal_sandbox_save);
                     binding.buttonSavePaypalSandbox.setEnabled(editingAllowed());
                     if (!result.isSuccess()) {
-                        Toast.makeText(
-                                        activity,
-                                        getString(
-                                                R.string.paypal_connection_failed, result.error()),
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(
+                                getString(R.string.paypal_connection_failed, result.error()),
+                                Snackbar.LENGTH_LONG);
                         refreshPayPalSandboxState();
                         return;
                     }
                     if (!paypalCredentials.save(selected, clientId, verifiedSecret)
                             || !paypalCredentials.markCredentialsVerified()) {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.paypal_sandbox_store_failed,
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(R.string.paypal_sandbox_store_failed, Snackbar.LENGTH_LONG);
                         refreshPayPalSandboxState();
                         return;
                     }
@@ -220,8 +221,7 @@ public final class WalletConnectionController implements AutoCloseable {
                     if (!oldBoundary.equals(paypalCredentials.load().boundaryId())) {
                         cancelActivePayPalCheckout();
                     }
-                    Toast.makeText(activity, R.string.paypal_sandbox_saved, Toast.LENGTH_LONG)
-                            .show();
+                    showMessage(R.string.paypal_sandbox_saved, Snackbar.LENGTH_LONG);
                     refreshPayPalSandboxState();
                     readWalletCurrency();
                 });
@@ -233,7 +233,7 @@ public final class WalletConnectionController implements AutoCloseable {
         cancelActivePayPalCheckout();
         binding.paypalClientId.setText("");
         binding.paypalClientSecret.setText("");
-        Toast.makeText(activity, R.string.paypal_sandbox_cleared, Toast.LENGTH_SHORT).show();
+        showMessage(R.string.paypal_sandbox_cleared, Snackbar.LENGTH_SHORT);
         refreshPayPalSandboxState();
     }
 
@@ -341,20 +341,14 @@ public final class WalletConnectionController implements AutoCloseable {
                     if (!primary.isEmpty() && editingAllowed()) {
                         PenanceManager wallet = new PenanceManager(activity);
                         if (!primary.equals(wallet.getCurrency())) {
-                            Toast.makeText(
-                                            activity,
-                                            wallet.changeCurrency(primary)
-                                                    ? R.string.wallet_currency_changed
-                                                    : R.string.wallet_currency_blocked,
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(
+                                    wallet.changeCurrency(primary)
+                                            ? R.string.wallet_currency_changed
+                                            : R.string.wallet_currency_blocked,
+                                    Snackbar.LENGTH_LONG);
                         }
                     } else if (primary.isEmpty()) {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.wallet_currency_unavailable,
-                                        Toast.LENGTH_SHORT)
-                                .show();
+                        showMessage(R.string.wallet_currency_unavailable, Snackbar.LENGTH_SHORT);
                     }
                     refreshPayPalSandboxState();
                 });
@@ -363,8 +357,7 @@ public final class WalletConnectionController implements AutoCloseable {
     private void linkPayPalWallet() {
         if (!editingAllowed() || paypalVaultBusy) return;
         if (!paypalCredentials.hasVerifiedCredentials()) {
-            Toast.makeText(activity, R.string.paypal_wallet_connect_first, Toast.LENGTH_SHORT)
-                    .show();
+            showMessage(R.string.paypal_wallet_connect_first, Snackbar.LENGTH_SHORT);
             return;
         }
         PayPalCredentialStore.PendingVaultSetup pending = paypalCredentials.pendingVaultSetup();
@@ -384,19 +377,11 @@ public final class WalletConnectionController implements AutoCloseable {
                     if (!result.isSuccess()) {
                         if (result.errorKind() == PayPalOrdersClient.ErrorKind.VAULT_UNAVAILABLE) {
                             paypalCredentials.markVaultUnavailable(credentials);
-                            Toast.makeText(
-                                            activity,
-                                            R.string.paypal_vault_not_enabled,
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(R.string.paypal_vault_not_enabled, Snackbar.LENGTH_LONG);
                         } else {
-                            Toast.makeText(
-                                            activity,
-                                            getString(
-                                                    R.string.paypal_vault_link_failed,
-                                                    result.error()),
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(
+                                    getString(R.string.paypal_vault_link_failed, result.error()),
+                                    Snackbar.LENGTH_LONG);
                         }
                         refreshPayPalSandboxState();
                         return;
@@ -408,21 +393,13 @@ public final class WalletConnectionController implements AutoCloseable {
                             setup.customerId(),
                             setup.clientMetadataId(),
                             setup.approvalUrl())) {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.paypal_sandbox_store_failed,
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(R.string.paypal_sandbox_store_failed, Snackbar.LENGTH_LONG);
                         refreshPayPalSandboxState();
                         return;
                     }
                     refreshPayPalSandboxState();
                     if (!openPayPalApproval(setup.approvalUrl())) {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.paypal_wallet_open_failed,
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(R.string.paypal_wallet_open_failed, Snackbar.LENGTH_LONG);
                     }
                 });
     }
@@ -461,13 +438,9 @@ public final class WalletConnectionController implements AutoCloseable {
                         }
                         refreshPayPalSandboxState();
                         if (showErrors)
-                            Toast.makeText(
-                                            activity,
-                                            getString(
-                                                    R.string.paypal_vault_link_failed,
-                                                    result.error()),
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(
+                                    getString(R.string.paypal_vault_link_failed, result.error()),
+                                    Snackbar.LENGTH_LONG);
                         return;
                     }
                     if (!result.value().isConfirmable()) {
@@ -475,18 +448,12 @@ public final class WalletConnectionController implements AutoCloseable {
                         refreshPayPalSandboxState();
                         if (reopenIfWaiting) {
                             if (!openPayPalApproval(pending.approvalUrl())) {
-                                Toast.makeText(
-                                                activity,
-                                                R.string.paypal_wallet_open_failed,
-                                                Toast.LENGTH_LONG)
-                                        .show();
+                                showMessage(
+                                        R.string.paypal_wallet_open_failed,
+                                        Snackbar.LENGTH_LONG);
                             }
                         } else if (showErrors) {
-                            Toast.makeText(
-                                            activity,
-                                            R.string.paypal_vault_still_pending,
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(R.string.paypal_vault_still_pending, Snackbar.LENGTH_LONG);
                         }
                         return;
                     }
@@ -511,13 +478,9 @@ public final class WalletConnectionController implements AutoCloseable {
                         }
                         refreshPayPalSandboxState();
                         if (showErrors)
-                            Toast.makeText(
-                                            activity,
-                                            getString(
-                                                    R.string.paypal_vault_link_failed,
-                                                    result.error()),
-                                            Toast.LENGTH_LONG)
-                                    .show();
+                            showMessage(
+                                    getString(R.string.paypal_vault_link_failed, result.error()),
+                                    Snackbar.LENGTH_LONG);
                         return;
                     }
                     PayPalOrdersClient.PaymentToken token = result.value();
@@ -530,17 +493,9 @@ public final class WalletConnectionController implements AutoCloseable {
                             token.payerAccountId());
                     refreshPayPalSandboxState();
                     if (paypalCredentials.vaultState().isReady()) {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.paypal_vault_link_success,
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(R.string.paypal_vault_link_success, Snackbar.LENGTH_LONG);
                     } else {
-                        Toast.makeText(
-                                        activity,
-                                        R.string.paypal_sandbox_store_failed,
-                                        Toast.LENGTH_LONG)
-                                .show();
+                        showMessage(R.string.paypal_sandbox_store_failed, Snackbar.LENGTH_LONG);
                     }
                 });
     }
@@ -565,7 +520,7 @@ public final class WalletConnectionController implements AutoCloseable {
         cancelActivePayPalCheckout();
         binding.paypalClientId.setText("");
         binding.paypalClientSecret.setText("");
-        Toast.makeText(activity, R.string.paypal_environment_changed, Toast.LENGTH_SHORT).show();
+        showMessage(R.string.paypal_environment_changed, Snackbar.LENGTH_SHORT);
         refreshPayPalSandboxState();
     }
 
@@ -592,8 +547,7 @@ public final class WalletConnectionController implements AutoCloseable {
             updatingAutoPay = true;
             binding.paypalAutoPayEnabled.setChecked(false);
             updatingAutoPay = false;
-            Toast.makeText(activity, R.string.paypal_auto_pay_link_first, Toast.LENGTH_SHORT)
-                    .show();
+            showMessage(R.string.paypal_auto_pay_link_first, Snackbar.LENGTH_SHORT);
             return;
         }
         com.subhub.app.util.ThemedDialogs.builder(activity)
@@ -616,11 +570,9 @@ public final class WalletConnectionController implements AutoCloseable {
                         R.string.paypal_auto_pay_allow,
                         (dialog, which) -> {
                             if (!autoPay.enable()) {
-                                Toast.makeText(
-                                                activity,
-                                                R.string.paypal_auto_pay_link_first,
-                                                Toast.LENGTH_SHORT)
-                                        .show();
+                                showMessage(
+                                        R.string.paypal_auto_pay_link_first,
+                                        Snackbar.LENGTH_SHORT);
                             }
                             refreshPayPalSandboxState();
                         })

@@ -152,7 +152,8 @@ public final class WalletCurrencyAndroidTest {
                 var summary = new TextView(activity);
                 var autoPay = new HardcoreAutoPayManager(context);
                 autoPay.pause("Fixture pause");
-                try (var connection = new WalletConnectionController(activity, binding, summary)) {
+                try (var connection = new WalletConnectionController(activity, binding, summary,
+                        (message, duration) -> fail("Refreshing Wallet labels must not show feedback"))) {
                     TextView[] labels = {summary, binding.paypalSandboxStatus, binding.paypalVaultStatus,
                             binding.buttonLinkPaypalWallet, binding.walletCurrencyStatus, binding.paypalAutoPayStatus};
                     int[] writes = new int[labels.length];
@@ -277,6 +278,15 @@ public final class WalletCurrencyAndroidTest {
             androidx.test.uiautomator.UiDevice device = androidx.test.uiautomator.UiDevice.getInstance(
                     androidx.test.platform.app.InstrumentationRegistry.getInstrumentation());
             device.waitForIdle();
+            androidx.test.uiautomator.UiObject2 message = device.findObject(
+                    androidx.test.uiautomator.By.res(context.getPackageName(), "snackbar_text"));
+            androidx.test.uiautomator.UiObject2 navigation = device.findObject(
+                    androidx.test.uiautomator.By.res(context.getPackageName(), "bottom_navigation"));
+            assertNotNull("Currency feedback belongs to the Wallet window", message);
+            assertNotNull(navigation);
+            assertEquals(context.getString(com.subhub.app.R.string.wallet_currency_changed), message.getText());
+            assertTrue("Currency feedback must stay above navigation",
+                    message.getVisibleBounds().bottom <= navigation.getVisibleBounds().top);
             assertTrue(device.takeScreenshot(new java.io.File(context.getExternalFilesDir(null),
                     "wallet-currency-preview.png")));
         }
