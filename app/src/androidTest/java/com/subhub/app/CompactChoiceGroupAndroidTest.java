@@ -6,12 +6,15 @@ import android.content.res.Configuration;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.util.CompactChoiceGroup;
+import com.subhub.app.util.SelectionGrid;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -60,6 +63,44 @@ public final class CompactChoiceGroupAndroidTest {
     }
     @Test public void choicesWrapWithoutClippingAtNarrowWideAndLargeTextSizes() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(this::checkChoiceScreens);
+    }
+
+    @Test public void reusedRowsShrinkAndReflowWhenChildrenChange() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Context context = ApplicationProvider.getApplicationContext();
+            CompactChoiceGroup radio = new CompactChoiceGroup(context, null);
+            radio.setPreferredColumns(2, 88);
+            SelectionGrid independent = new SelectionGrid(context, null);
+            int width = Math.round(900 * context.getResources().getDisplayMetrics().density);
+            for (LinearLayout group : new LinearLayout[]{radio, independent}) {
+                RadioButton tall = new RadioButton(context), second = new RadioButton(context);
+                RadioButton third = new RadioButton(context);
+                group.addView(tall, new RadioGroup.LayoutParams(0, 160));
+                group.addView(second, new RadioGroup.LayoutParams(0, 32));
+                group.addView(third, new RadioGroup.LayoutParams(0, 44));
+                assertEquals(204, measureAndLayout(group, width));
+                assertEquals(160, second.getHeight());
+                ViewGroup.LayoutParams params = tall.getLayoutParams();
+                params.height = 20;
+                tall.setLayoutParams(params);
+                assertEquals(76, measureAndLayout(group, width));
+                assertEquals(32, third.getTop());
+                second.setVisibility(View.GONE);
+                assertEquals(44, measureAndLayout(group, width));
+                assertEquals(0, third.getTop());
+                second.setVisibility(View.VISIBLE);
+                assertEquals(96, measureAndLayout(group, width / 10));
+                assertEquals(76, measureAndLayout(group, width));
+            }
+        });
+    }
+
+    private static int measureAndLayout(ViewGroup group, int width) {
+        group.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int height = group.getMeasuredHeight();
+        group.layout(0, 0, width, height);
+        return height;
     }
 
     private void checkChoiceScreens() {

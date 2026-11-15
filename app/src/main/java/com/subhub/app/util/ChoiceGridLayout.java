@@ -4,13 +4,41 @@ import android.view.View;
 import android.view.View.MeasureSpec;
 import android.view.ViewGroup;
 import android.view.ViewGroup.MarginLayoutParams;
+import java.util.Arrays;
 
 /** Equal-width cells and equal-height siblings for compact choice layouts. */
 final class ChoiceGridLayout {
-    private ChoiceGridLayout() {}
+    private int columns = 1;
+    private int[] rowHeights = new int[0];
 
-    static int[] measureRows(ViewGroup parent, int available, int count, int columns) {
-        int[] rowHeights = new int[(count + columns - 1) / columns];
+    static int width(ViewGroup parent, int widthSpec) {
+        return MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+                ? Math.round(320 * parent.getResources().getDisplayMetrics().density)
+                : MeasureSpec.getSize(widthSpec);
+    }
+
+    static int availableWidth(ViewGroup parent, int width) {
+        return Math.max(0, width - parent.getPaddingLeft() - parent.getPaddingRight());
+    }
+
+    static int visibleCount(ViewGroup parent) {
+        int count = 0;
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            if (parent.getChildAt(i).getVisibility() != View.GONE) count++;
+        }
+        return count;
+    }
+
+    static int minimumWidth(ViewGroup parent, int dp) {
+        return Math.round(dp * parent.getResources().getDisplayMetrics().density
+                * Math.max(1f, parent.getResources().getConfiguration().fontScale));
+    }
+
+    int measure(ViewGroup parent, int available, int count, int columns) {
+        this.columns = columns;
+        int rows = (count + columns - 1) / columns;
+        if (rowHeights.length == rows) Arrays.fill(rowHeights, 0);
+        else rowHeights = new int[rows];
         int cell = available / columns;
         int visible = 0;
         for (int i = 0; i < parent.getChildCount(); i++) {
@@ -36,11 +64,13 @@ final class ChoiceGridLayout {
                     MeasureSpec.makeMeasureSpec(Math.max(0, rowHeights[row]
                             - params.topMargin - params.bottomMargin), MeasureSpec.EXACTLY));
         }
-        return rowHeights;
+        int height = parent.getPaddingTop() + parent.getPaddingBottom();
+        for (int row : rowHeights) height += row;
+        return height;
     }
 
-    static void layout(ViewGroup parent, int width, int columns, int[] rowHeights) {
-        int cell = Math.max(0, width - parent.getPaddingLeft() - parent.getPaddingRight()) / columns;
+    void layout(ViewGroup parent, int width) {
+        int cell = availableWidth(parent, width) / columns;
         int y = parent.getPaddingTop();
         int visible = 0;
         for (int i = 0; i < parent.getChildCount(); i++) {

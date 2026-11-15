@@ -4,12 +4,13 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.RadioGroup;
+import java.util.regex.Pattern;
 
 /** Radio semantics with equal-width wrapping and equal-height cards within each row. */
 public final class CompactChoiceGroup extends RadioGroup {
-    private int columns = 1;
+    private static final Pattern WORD_SPACE = Pattern.compile("\\s+");
+    private final ChoiceGridLayout grid = new ChoiceGridLayout();
     private int preferredColumns, minimumCellWidthDp = 88;
-    private int[] rowHeights = new int[0];
 
     public CompactChoiceGroup(Context context, AttributeSet attributes) {
         super(context, attributes);
@@ -24,16 +25,10 @@ public final class CompactChoiceGroup extends RadioGroup {
     }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        int width = MeasureSpec.getSize(widthSpec);
-        if (MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED) {
-            width = Math.round(320 * getResources().getDisplayMetrics().density);
-        }
-        int available = Math.max(0, width - getPaddingLeft() - getPaddingRight());
-        int count = 0;
-        for (int i = 0; i < getChildCount(); i++) if (getChildAt(i).getVisibility() != GONE) count++;
-        float density = getResources().getDisplayMetrics().density;
-        float fontScale = getResources().getConfiguration().fontScale;
-        int minimum = Math.round(minimumCellWidthDp * density * Math.max(1f, fontScale));
+        int width = ChoiceGridLayout.width(this, widthSpec);
+        int available = ChoiceGridLayout.availableWidth(this, width);
+        int count = ChoiceGridLayout.visibleCount(this);
+        int minimum = ChoiceGridLayout.minimumWidth(this, minimumCellWidthDp);
         // Preserve whole words when labels need more width than the base cell size.
         for (int i = 0; i < getChildCount(); i++) {
             View child = getChildAt(i);
@@ -42,21 +37,19 @@ public final class CompactChoiceGroup extends RadioGroup {
             LayoutParams params = (LayoutParams) child.getLayoutParams();
             int insets = label.getCompoundPaddingLeft() + label.getCompoundPaddingRight()
                     + params.leftMargin + params.rightMargin;
-            for (String word : label.getText().toString().split("\\s+"))
+            for (String word : WORD_SPACE.split(label.getText().toString()))
                 minimum = Math.max(minimum, (int) Math.ceil(label.getPaint().measureText(word)) + insets);
         }
         int desired =
                 preferredColumns > 0
                         ? Math.min(preferredColumns, count)
                         : count == 4 ? 2 : Math.min(3, count);
-        columns = Math.max(1, Math.min(desired, available / Math.max(1, minimum)));
-        rowHeights = ChoiceGridLayout.measureRows(this, available, count, columns);
-        int height = getPaddingTop() + getPaddingBottom();
-        for (int row : rowHeights) height += row;
+        int columns = Math.max(1, Math.min(desired, available / Math.max(1, minimum)));
+        int height = grid.measure(this, available, count, columns);
         setMeasuredDimension(resolveSize(width, widthSpec), resolveSize(height, heightSpec));
     }
 
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        ChoiceGridLayout.layout(this, right - left, columns, rowHeights);
+        grid.layout(this, right - left);
     }
 }
