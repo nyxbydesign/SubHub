@@ -27,6 +27,7 @@ public final class PersonActivity extends RolePage {
     private long renderedInternalRevision = -1;
     private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
+    private boolean contractAppsExpanded;
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
     private final java.util.Map<String, LinearLayout> panels = new java.util.LinkedHashMap<>();
@@ -347,8 +348,11 @@ public final class PersonActivity extends RolePage {
         section = state == null ? getIntent().getStringExtra("person_section")
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
-        if (state != null) for (String key : java.util.List.of("profile", "contracts", "connection"))
-            positions.put(key, state.getInt("person_position:" + key));
+        if (state != null) {
+            contractAppsExpanded = state.getBoolean("person_contract_apps_expanded");
+            for (String key : java.util.List.of("profile", "contracts", "connection"))
+                positions.put(key, state.getInt("person_position:" + key));
+        }
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
         body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(android.view.View view) { observeRemoteChanges(); }
@@ -369,6 +373,7 @@ public final class PersonActivity extends RolePage {
         FeatureEditorSession.saveState(this, state);
         if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
         state.putString("person_section", section);
+        state.putBoolean("person_contract_apps_expanded", contractAppsExpanded);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
@@ -688,19 +693,19 @@ public final class PersonActivity extends RolePage {
                         : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
+        PersonSnapshot.Section apps = contractSection(person, "apps");
+        TextView appsTitle = PersonUi.text(scope, getString(R.string.person_apps_title), true);
+        androidx.core.view.ViewCompat.setAccessibilityHeading(appsTitle, true);
+        if (!editable) appsTitle.setTag("person_apps");
         if (!internal) {
-            PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
             if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
                     getString(R.string.role_changes_pending), false);
             freshness(scope, person.sync.contract);
         }
-        PersonSnapshot.Section apps = contractSection(person, "apps");
-        TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, internal || person.id.isLocal());
-        if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
+        if (editable) PersonUi.action(scope, R.string.limits_manage_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
+        if (apps != null) addContractApps(scope, apps, internal || person.id.isLocal());
         LinearLayout features = null;
         for (PersonSnapshot.Section value : person.sections) {
             if ("apps".equals(value.key) || "duration".equals(value.key)) continue;
@@ -711,6 +716,34 @@ public final class PersonActivity extends RolePage {
             }
             contractSection(features, person, value, editable);
         }
+    }
+
+    private void addContractApps(LinearLayout parent, PersonSnapshot.Section apps, boolean localIcons) {
+        int count = ContractAppList.count(apps);
+        int previewRows = 3;
+        if (count <= previewRows) {
+            ContractAppList.add(parent, apps, localIcons);
+            return;
+        }
+        LinearLayout rows = PersonUi.column(this);
+        parent.addView(rows, new LinearLayout.LayoutParams(-1, -2));
+        rows.setTag("person_contract_app_rows");
+        TextView disclosure = PersonUi.action(parent, R.string.overview_show_all, () -> {}, false);
+        disclosure.setTag("person_contract_apps_disclosure");
+        Runnable bind = () -> {
+            rows.removeAllViews();
+            ContractAppList.add(rows, apps, localIcons, contractAppsExpanded ? count : previewRows);
+            disclosure.setText(contractAppsExpanded ? getString(R.string.profile_show_less)
+                    : getString(R.string.home_composition_show_all, count));
+            androidx.core.view.ViewCompat.setStateDescription(disclosure, getString(contractAppsExpanded
+                    ? R.string.section_expanded : R.string.section_collapsed));
+        };
+        disclosure.setOnClickListener(view -> {
+            if (!guardTarget()) return;
+            contractAppsExpanded = !contractAppsExpanded;
+            bind.run();
+        });
+        bind.run();
     }
 
     private PersonSnapshot.Section contractSection(PersonSnapshot person, String key) {

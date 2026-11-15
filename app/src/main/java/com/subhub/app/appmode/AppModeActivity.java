@@ -445,12 +445,10 @@ public final class AppModeActivity extends AppCompatActivity {
 
     private void renderRemoteUsage() {
         com.subhub.app.people.PersonSnapshot person = FeatureEditorSession.scope(this).person();
-        String unknown = getString(R.string.role_unknown_data);
-        UiIdentity.setTextIfChanged(binding.limitsTodayAmount, unknown);
-        UiIdentity.setTextIfChanged(binding.timerUsageStatus, person == null ? unknown : person.serviceLabel);
-        UiIdentity.setTextIfChanged(binding.limitsTodayScope,
-                getString(R.string.limits_today_scope, manager.getIncludedPackages().size()));
-        UiIdentity.setTextIfChanged(binding.limitsCombinedUsage, unknown);
+        // Paired usage only provides per-app observations here. Keep the editable budgets
+        // in view without showing a second or third unavailable aggregate above them.
+        binding.timerCard.setVisibility(View.GONE);
+        binding.limitsCombinedUsage.setVisibility(View.GONE);
         binding.limitsCombinedProgress.setVisibility(View.GONE);
         java.util.Map<String,com.subhub.app.people.PersonSnapshot.Allowance> values = new java.util.HashMap<>();
         if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);

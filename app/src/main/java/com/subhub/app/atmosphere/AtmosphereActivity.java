@@ -70,7 +70,7 @@ public final class AtmosphereActivity extends FeatureEditorActivity {
         boolean gagVisible = FeatureEditorSession.canEditGag(this);
         binding.gagCard.setVisibility(gagVisible ? android.view.View.VISIBLE : android.view.View.GONE);
         if (gagVisible) showEffectStatus(binding.gagCard, binding.gagStatus,
-                R.string.gag_title, R.string.gag_dom_description);
+                R.string.gag_title, gagState());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
     }
@@ -86,6 +86,15 @@ public final class AtmosphereActivity extends FeatureEditorActivity {
         status.setText(statusRes);
         card.setContentDescription(getString(
                 R.string.atmosphere_card_description, getString(titleRes), status.getText()));
+    }
+
+    @StringRes private int gagState() {
+        try {
+            return FeatureEditorSession.gagRules(this).getBoolean("enabled")
+                    ? R.string.control_state_on : R.string.control_state_off;
+        } catch (Exception unavailable) {
+            return R.string.role_unknown_data;
+        }
     }
 
     private void openGag() {
