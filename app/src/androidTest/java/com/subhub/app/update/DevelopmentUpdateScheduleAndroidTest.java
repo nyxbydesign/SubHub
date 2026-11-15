@@ -30,6 +30,7 @@ import androidx.work.impl.WorkManagerImpl;
 import androidx.work.testing.SynchronousExecutor;
 import androidx.work.testing.WorkManagerTestInitHelper;
 
+import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.censor.android.ProductCensorQualification;
 import com.subhub.app.security.ControllerPinManager;
@@ -216,31 +217,46 @@ public final class DevelopmentUpdateScheduleAndroidTest {
         state.setReleaseHistory(Arrays.asList(
                 item("0.6.5-dev.42", "2026-10-18T08:31:42Z", true),
                 item("0.6.4", "2026-10-07T23:11:12Z", false),
-                item("0.6.5-dev.41", "2026-10-08", true)));
+                item("0.6.5-dev.41", "2026-10-08", true),
+                item(BuildConfig.VERSION_NAME, "2026-10-19T08:31:42Z", true)));
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
             scenario.onActivity(activity -> {
-                LinearLayout rows = activity.findViewById(R.id.release_history_list); assertEquals(3, rows.getChildCount());
+                LinearLayout rows = activity.findViewById(R.id.release_history_list); assertEquals(4, rows.getChildCount());
                 Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
-                String timestamp = ReleaseTimestampFormatter.preview("2026-10-18T08:31:42Z", locale, ZoneId.systemDefault());
-                assertEquals(activity.getString(R.string.update_history_preview_date, timestamp), meta(rows, 0).getText().toString());
-                assertTrue(meta(rows, 0).getText().toString().contains("UTC"));
-                assertEquals(activity.getString(R.string.update_history_preview_date, "2026-10-08"), meta(rows, 1).getText().toString());
-                assertEquals("2026-10-07", meta(rows, 2).getText().toString());
+                ZoneId zone = ZoneId.systemDefault();
+                String installedTime = ReleaseTimestampFormatter.format("2026-10-19T08:31:42Z", locale, zone);
+                String previewTime = ReleaseTimestampFormatter.format("2026-10-18T08:31:42Z", locale, zone);
+                String stableTime = ReleaseTimestampFormatter.format("2026-10-07T23:11:12Z", locale, zone);
+                assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_history_installed), installedTime), meta(rows, 0).getText());
+                assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_history_preview), previewTime), meta(rows, 1).getText());
+                assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_history_preview), "2026-10-08"), meta(rows, 2).getText());
+                assertEquals(stableTime, meta(rows, 3).getText());
+                TextView installed = activity.findViewById(R.id.installed_version);
+                assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_installed_version,
+                                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), installedTime), installed.getText());
+                for (int index = 0; index < rows.getChildCount(); index++) {
+                    assertFalse(meta(rows, index).getText().toString().contains("UTC"));
+                }
                 assertEquals(activity.getString(R.string.update_automatic_dev_toggle),
                         ((TextView) activity.findViewById(R.id.automatic_checks_title)).getText().toString());
-                assertReleaseDisclosure(activity, rows.getChildAt(0));
+                assertReleaseDisclosure(activity, rows.getChildAt(1));
             });
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             scenario.onActivity(activity -> {
                 LinearLayout rows = activity.findViewById(R.id.release_history_list);
-                assertFits(meta(rows, 0));
+                assertFits(meta(rows, 1));
                 Configuration large = new Configuration(activity.getResources().getConfiguration()); large.fontScale = 1.3f;
                 Context themed = new ContextThemeWrapper(activity.createConfigurationContext(large), activity.getTheme());
                 View row = LayoutInflater.from(themed).inflate(R.layout.item_release_history, null, false);
                 ((TextView) row.findViewById(R.id.release_version)).setText("SubHub 0.6.5-dev.152");
                 TextView caption = row.findViewById(R.id.release_meta);
-                caption.setText(activity.getString(R.string.update_history_preview_date,
-                        ReleaseTimestampFormatter.preview("2026-10-18T08:31:42Z", Locale.GERMANY, ZoneId.of("Europe/Berlin"))));
+                caption.setText(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_history_preview),
+                        ReleaseTimestampFormatter.format("2026-10-18T08:31:42Z", Locale.GERMANY, ZoneId.of("Europe/Berlin"))));
                 int width = Math.round(280 * themed.getResources().getDisplayMetrics().density);
                 row.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
@@ -266,8 +282,8 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 assertTrue(((android.widget.CompoundButton) activity.findViewById(R.id.automatic_checks)).isChecked());
             });
         }
-        write("result.json", new JSONObject().put("localizedPreviewTime", true).put("explicitUtcOffset", true)
-                .put("stableDateUnchanged", true).put("legacyDateDoesNotInventTime", true).put("narrowLargeTextFit", true)
+        write("result.json", new JSONObject().put("localizedReleaseTimeWithoutOffset", true)
+                .put("installedAndStableUseSameFormat", true).put("legacyDateDoesNotInventTime", true).put("narrowLargeTextFit", true)
                 .put("durableChannelAndAutomaticStateSurviveRecreation", true));
     }
 

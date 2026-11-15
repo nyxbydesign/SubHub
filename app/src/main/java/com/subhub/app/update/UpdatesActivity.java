@@ -164,8 +164,6 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (candidate == null && (state.downloadId() >= 0 || !state.verifiedPath().isEmpty())) {
             downloads.cancel();
         }
-        binding.installedVersion.setText(getString(R.string.update_installed_version,
-                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
         binding.updateCheckSummary.setText(checkSummary(candidate, last));
         int automaticTitle = devUpdates
                 ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle;
@@ -183,6 +181,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (history.isEmpty()) history = bundledHistory;
         else if (!devUpdates) history = ReleaseHistoryCatalog.merge(history, bundledHistory);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);
+        renderInstalledVersion(history);
         renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME), candidate);
         binding.downloadGuideCard.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
         if (candidate != null) {
@@ -313,23 +312,47 @@ public final class UpdatesActivity extends AppCompatActivity {
                 getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
     }
 
+    private void renderInstalledVersion(List<ReleaseHistoryItem> history) {
+        String label = getString(R.string.update_installed_version,
+                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
+        String timestamp = installedTimestamp(history);
+        if (timestamp.isEmpty()) {
+            timestamp = installedTimestamp(bundledHistory);
+        }
+        binding.installedVersion.setText(withTimestamp(label, timestamp));
+    }
+
+    private String installedTimestamp(List<ReleaseHistoryItem> history) {
+        for (ReleaseHistoryItem item : history) {
+            if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
+                return releaseTimestamp(item);
+            }
+        }
+        return "";
+    }
+
+    private String releaseTimestamp(ReleaseHistoryItem item) {
+        Locale locale = getResources().getConfiguration().getLocales().get(0);
+        return ReleaseTimestampFormatter.format(item.publishedAt,
+                locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
+    }
+
+    private String withTimestamp(String label, String timestamp) {
+        return timestamp.isEmpty() ? label : getString(R.string.update_release_with_timestamp, label, timestamp);
+    }
+
     private String historyMeta(ReleaseHistoryItem item, UpdateCandidate candidate) {
+        String timestamp = releaseTimestamp(item);
         if (candidate != null && item.tag.equals(candidate.manifest.tag)) {
-            return getString(R.string.update_history_available);
+            return withTimestamp(getString(R.string.update_history_available), timestamp);
         }
         if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
-            return getString(R.string.update_history_installed);
+            return withTimestamp(getString(R.string.update_history_installed), timestamp);
         }
         if (item.prerelease) {
-            Locale locale = getResources().getConfiguration().getLocales().get(0);
-            String timestamp = ReleaseTimestampFormatter.preview(item.publishedAt,
-                    locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
-            return timestamp.isEmpty() ? getString(R.string.update_history_preview)
-                    : getString(R.string.update_history_preview_date, timestamp);
+            return withTimestamp(getString(R.string.update_history_preview), timestamp);
         }
-        String date = item.publishedAt.length() >= 10
-                ? item.publishedAt.substring(0, 10) : "";
-        return date.isEmpty() ? getString(R.string.update_history_published) : date;
+        return timestamp.isEmpty() ? getString(R.string.update_history_published) : timestamp;
     }
 
     private void finalizeDownload() {

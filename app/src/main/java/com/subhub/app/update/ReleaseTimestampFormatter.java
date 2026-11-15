@@ -13,15 +13,12 @@ import java.util.Locale;
 final class ReleaseTimestampFormatter {
     private ReleaseTimestampFormatter() { }
 
-    static String preview(String publishedAt, Locale locale, ZoneId zone) {
+    static String format(String publishedAt, Locale locale, ZoneId zone) {
         if (publishedAt == null || publishedAt.isEmpty()) return "";
         try {
             Instant instant = OffsetDateTime.parse(publishedAt).toInstant();
-            String local = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.MEDIUM)
+            return DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.MEDIUM)
                     .withLocale(locale).withZone(zone).format(instant);
-            String offset = DateTimeFormatter.ofPattern("'UTC'xxx", Locale.ROOT)
-                    .withZone(zone).format(instant);
-            return local + " " + offset;
         } catch (DateTimeException invalidTimestamp) {
             // Bundled historical entries may genuinely contain only a date. Do not invent a time.
             if (publishedAt.length() == 10) {

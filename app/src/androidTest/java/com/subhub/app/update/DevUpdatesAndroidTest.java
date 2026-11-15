@@ -368,7 +368,8 @@ public final class DevUpdatesAndroidTest {
     }
 
     private static void assertHistoryMeta(UpdatesActivity activity, ReleaseHistoryItem item, int label) {
-        assertEquals(activity.getString(label), historyMeta(historyRow(activity, item)));
+        assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                activity.getString(label), item.publishedAt), historyMeta(historyRow(activity, item)));
     }
 
     @Test public void subModeCanChangeUpdaterPreferencesWithNativeTapsAndRecreation() throws Exception {

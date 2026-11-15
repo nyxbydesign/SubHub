@@ -954,7 +954,7 @@
     <string name="update_history_available">Available Now</string>
     <string name="update_history_installed">Installed</string>
     <string name="update_history_preview">Preview Build</string>
-    <string name="update_history_preview_date">Preview · %1$s</string>
+    <string name="update_release_with_timestamp">%1$s · %2$s</string>
     <string name="update_history_published">Published Release</string>
     <string name="update_history_heading">%1$s, %2$s</string>
     <string name="update_notes_unavailable">This release does not include a user-facing changelog.</string>
