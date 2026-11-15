@@ -35,26 +35,50 @@ final class GagLexicon {
     private final int highestCount;
 
     GagLexicon(Map<String, Integer> counts) {
+        this(counts, null, 0);
+    }
+
+    private GagLexicon(Map<String, Integer> counts, List<String> orderedWords, int highest) {
         this.counts = Map.copyOf(counts);
+        if (orderedWords != null) {
+            sorted = orderedWords.toArray(new String[0]);
+            highestCount = highest;
+            return;
+        }
         sorted = counts.keySet().toArray(new String[0]);
         Arrays.sort(sorted);
-        int highest = 0;
         for (int count : counts.values()) highest = Math.max(highest, count);
         highestCount = highest;
     }
 
     static GagLexicon read(InputStream source) throws IOException {
         Map<String, Integer> counts = new HashMap<>();
+        List<String> orderedWords = new ArrayList<>();
+        String previous = null;
+        int highest = 0;
         try (BufferedReader input = new BufferedReader(new InputStreamReader(
                 source, StandardCharsets.UTF_8))) {
             for (String line; (line = input.readLine()) != null; ) {
                 int split = line.indexOf('\t');
                 if (split < 2 || split > 32 || counts.size() >= MAX_WORDS)
                     throw new IOException("Invalid spelling dictionary");
-                counts.put(line.substring(0, split), Integer.parseInt(line.substring(split + 1)));
+                String word = line.substring(0, split);
+                int count = Integer.parseInt(line.substring(split + 1));
+                counts.put(word, count);
+                if (orderedWords != null) {
+                    // The bundled table is sorted and unique. Other inputs retain the map-based path.
+                    if (previous != null && previous.compareTo(word) >= 0) {
+                        orderedWords = null;
+                        highest = 0;
+                    } else {
+                        orderedWords.add(word);
+                        previous = word;
+                        highest = Math.max(highest, count);
+                    }
+                }
             }
         }
-        return new GagLexicon(counts);
+        return new GagLexicon(counts, orderedWords, highest);
     }
 
     static int cursorPrefixLimit() { return MAX_LOOKUP_LENGTH + 1; }

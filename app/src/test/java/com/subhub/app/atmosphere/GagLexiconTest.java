@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -18,6 +20,20 @@ public final class GagLexiconTest {
     private final GagLexicon words = new GagLexicon(Map.of("the", 200_000, "there", 90_000,
             "their", 50_000, "hallo", 80_000, "halloween", 4_000, "schon", 40_000,
             "schön", 20_000, "plan", 10_000, "play", 8_000));
+
+    @Test public void readerRanksOrderedUnsortedAndDuplicateRowsByTheirFinalCounts() throws Exception {
+        var highestCount = GagLexicon.class.getDeclaredField("highestCount");
+        highestCount.setAccessible(true);
+        for (String rows : List.of(
+                "hello\t80000\nhelp\t40000\nher\t30000\nhere\t10000\n",
+                "here\t10000\nher\t30000\nhelp\t40000\nhello\t80000\n",
+                "hello\t80000\nhelp\t40000\nher\t9000000\nher\t30000\nhere\t10000\n")) {
+            var read = GagLexicon.read(new ByteArrayInputStream(rows.getBytes(StandardCharsets.UTF_8)));
+            assertEquals(List.of("hello", "help", "her"), read.suggestions("he"));
+            // A replaced maximum may keep the typo search running when no alternative can qualify.
+            assertEquals(80_000, highestCount.getInt(read));
+        }
+    }
 
     @Test public void suggestsTranspositionsAndPreservesInitialCapitalization() {
         assertEquals(List.of("the"), words.suggestions("teh"));
