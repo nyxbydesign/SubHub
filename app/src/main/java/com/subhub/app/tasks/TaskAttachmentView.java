@@ -4,8 +4,10 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
@@ -90,14 +92,27 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setImageBitmap(result.bitmap);
                 addView(image, new LayoutParams(-1, -2));
             } else {
+                CharSequence label = TasksActivity.mediaLabel(getContext(), attachment);
                 player = new Player(getContext(), token);
                 player.setTag("task_inline_player");
-                player.setContentDescription(TasksActivity.mediaLabel(getContext(), attachment));
-                addView(player, new LayoutParams(-1, bound(attachment.mime.startsWith("audio/") ? 72 : 260)));
                 play = new Button(getContext()); play.setTag("task_inline_play");
                 play.setText(R.string.tasks_media_play); play.setEnabled(false);
                 play.setOnClickListener(v -> { if (player != null && player.isPlaying()) pause(); else if (player != null) player.start(); });
-                addView(play, new LayoutParams(-1, -2));
+                if (attachment.mime.startsWith("audio/")) {
+                    // VideoView needs an attached surface even when the stream only contains audio.
+                    FrameLayout audio = new FrameLayout(getContext());
+                    audio.setContentDescription(label);
+                    player.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+                    player.setFocusable(false);
+                    player.setFocusableInTouchMode(false);
+                    audio.addView(player, new FrameLayout.LayoutParams(1, 1, Gravity.CENTER));
+                    audio.addView(play, new FrameLayout.LayoutParams(-1, -2));
+                    addView(audio, new LayoutParams(-1, -2));
+                } else {
+                    player.setContentDescription(label);
+                    addView(player, new LayoutParams(-1, bound(260)));
+                    addView(play, new LayoutParams(-1, -2));
+                }
                 seek = new SeekBar(getContext()); seek.setTag("task_inline_seek");
                 seek.setContentDescription(getContext().getString(R.string.tasks_media_seek)); seek.setEnabled(false);
                 seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -107,7 +122,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
                 });
                 addView(seek, new LayoutParams(-1, -2));
                 position = PersonUi.text(this, "", false); position.setTag("task_inline_position");
-                PersonUi.text(this, TasksActivity.mediaLabel(getContext(), attachment), false).setTag("task_inline_loading");
+                PersonUi.text(this, label, false).setTag("task_inline_loading");
                 player.setOnErrorListener((mp, what, extra) -> { if (token == generation && !closed) failure(false); return true; });
                 player.setOnCompletionListener(mp -> { if (live() && token == generation) { play.setText(R.string.tasks_media_play); updateProgress(); } });
                 player.setOnPreparedListener(mp -> {
