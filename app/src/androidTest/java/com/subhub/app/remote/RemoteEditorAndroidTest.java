@@ -420,7 +420,20 @@ public class RemoteEditorAndroidTest {
                 device.findObject(tile).click();
                 assertTrue(device.wait(Until.gone(By.pkg("com.google.android.documentsui").depth(0)), 10_000));
                 page.onActivity(activity -> assertNotSame(original.get(), activity));
-                await(() -> latestArtworkCommand().length() == 2);
+                try {
+                    await(() -> latestArtworkCommand().length() == 2);
+                } catch (AssertionError pendingArtwork) {
+                    AtomicReference<String> viewState = new AtomicReference<>();
+                    page.onActivity(activity -> {
+                        TextView status = activity.findViewById(R.id.library_count);
+                        View add = activity.findViewById(R.id.button_add_folder);
+                        viewState.set("focus=" + activity.hasWindowFocus() + ", addEnabled=" + add.isEnabled()
+                                + ", library=" + status.getText());
+                    });
+                    throw new AssertionError("Popup artwork command has " + latestArtworkCommand().length()
+                            + " assets after picker return, " + viewState.get()
+                            + ", foreground=" + device.getCurrentPackageName(), pendingArtwork);
+                }
                 JSONArray saved = latestArtworkCommand();
                 assertEquals("assets/popup/fixture.png", saved.getJSONObject(0).getString("path"));
                 JSONObject added = saved.getJSONObject(1);
