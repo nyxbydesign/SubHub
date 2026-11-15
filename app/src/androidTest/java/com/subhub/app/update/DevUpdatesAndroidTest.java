@@ -8,6 +8,13 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.view.ContextThemeWrapper;
+import android.view.LayoutInflater;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CompoundButton;
 import android.widget.TextView;
@@ -17,6 +24,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.util.StateToggle;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -27,6 +35,7 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -147,10 +156,12 @@ public final class DevUpdatesAndroidTest {
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
             scenario.onActivity(activity -> {
                 CompoundButton toggle = activity.findViewById(R.id.dev_updates);
-                assertEquals("Development updates", toggle.getText().toString());
+                TextView title = activity.findViewById(R.id.dev_updates_title);
+                assertEquals("Development updates", title.getText().toString());
+                assertEquals(title.getText(), toggle.getContentDescription());
                 assertFalse(toggle.isChecked());
                 assertTrue(toggle.isEnabled());
-                toggle.performClick();
+                assertTrue(title.performClick());
                 assertTrue(toggle.isChecked());
                 assertTrue(state.devUpdates());
             });
@@ -162,6 +173,102 @@ public final class DevUpdatesAndroidTest {
                 assertTrue(toggle.getHeight() >= Math.round(48 * activity.getResources().getDisplayMetrics().density));
             });
         }
+    }
+
+    @Test public void automaticSettingsRowsFitNarrowLayoutAndEnlargedText() {
+        try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
+            scenario.onActivity(activity -> {
+                Configuration large = new Configuration(activity.getResources().getConfiguration());
+                large.fontScale = 2f;
+                Context themed = new ContextThemeWrapper(activity.createConfigurationContext(large), activity.getTheme());
+                View layout = LayoutInflater.from(themed).inflate(R.layout.activity_updates, null, false);
+                layout.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+                float density = themed.getResources().getDisplayMetrics().density;
+                int width = Math.round(280 * density);
+                layout.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                layout.layout(0, 0, width, layout.getMeasuredHeight());
+                assertSettingsRow(layout, R.id.automatic_checks_title, R.id.automatic_help, R.id.automatic_checks);
+                assertSettingsRow(layout, R.id.dev_updates_title, R.id.dev_updates_help, R.id.dev_updates);
+            });
+        }
+    }
+
+    private static void assertSettingsRow(View layout, int titleId, int helpId, int toggleId) {
+        TextView title = layout.findViewById(titleId);
+        TextView help = layout.findViewById(helpId);
+        StateToggle toggle = layout.findViewById(toggleId);
+        View column = (View) title.getParent();
+        assertSame(column, help.getParent());
+        assertSame(column.getParent(), toggle.getParent());
+        assertEquals(title.getLeft(), help.getLeft());
+        float density = layout.getResources().getDisplayMetrics().density;
+        assertEquals(Math.round(2 * density), help.getTop() - title.getBottom());
+        assertTrue(column.getRight() < toggle.getLeft());
+        assertTrue(toggle.getHeight() >= Math.round(48 * density));
+        assertEquals(title.getText(), toggle.createAccessibilityNodeInfo().getContentDescription());
+        for (TextView label : List.of(title, help)) {
+            assertNotNull(label.getLayout());
+            assertTrue(label.getLayout().getHeight() <= label.getHeight());
+            for (int line = 0; line < label.getLayout().getLineCount(); line++) {
+                assertEquals(0, label.getLayout().getEllipsisCount(line));
+                assertTrue(label.getLayout().getLineMax(line) <= label.getWidth() + 1);
+            }
+        }
+        int pillStart = toggle.getWidth() - toggle.getPaddingRight() - toggle.getSwitchMinWidth();
+        assertTrue(pillStart >= toggle.getPaddingLeft());
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setTextSize(12 * layout.getResources().getDisplayMetrics().scaledDensity);
+        for (CharSequence status : List.of(toggle.getTextOn(), toggle.getTextOff())) {
+            assertTrue(paint.measureText(status.toString()) + Math.round(24 * density)
+                    <= toggle.getSwitchMinWidth() + 1);
+        }
+        toggle.setChecked(true);
+        Bitmap pixels = Bitmap.createBitmap(toggle.getWidth(), toggle.getHeight(), Bitmap.Config.ARGB_8888);
+        try {
+            toggle.draw(new Canvas(pixels));
+            assertEquals(layout.getContext().getColor(R.color.control_checked_surface),
+                    pixels.getPixel(pillStart + Math.round(6 * density), toggle.getHeight() / 2));
+        } finally {
+            pixels.recycle();
+        }
+    }
+
+    @Test public void installedSummaryUsesCurrentChannelAndTimeOnly() throws Exception {
+        Method render = UpdatesActivity.class.getDeclaredMethod("render");
+        render.setAccessible(true);
+        long stamp = 1_700_000_000_000L;
+        try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
+            scenario.onActivity(activity -> {
+                TextView summary = activity.findViewById(R.id.update_check_summary);
+                assertEquals(activity.getString(R.string.update_not_checked), summary.getText());
+                assertEquals(View.GONE, activity.findViewById(R.id.update_status).getVisibility());
+            });
+            state.setLastCheck(stamp);
+            state.setCandidate(candidate("98.0.0", BuildConfig.VERSION_CODE));
+            scenario.onActivity(activity -> {
+                renderUpdates(activity, render);
+                assertCheckSummary(activity, R.string.update_status_current, stamp);
+            });
+            state.setCandidate(candidate("99.0.0", BuildConfig.VERSION_CODE + 1L));
+            scenario.onActivity(activity -> {
+                renderUpdates(activity, render);
+                assertCheckSummary(activity, R.string.update_status_available, stamp);
+            });
+            state.setDevUpdates(true);
+            scenario.onActivity(activity -> {
+                renderUpdates(activity, render);
+                TextView summary = activity.findViewById(R.id.update_check_summary);
+                assertEquals(activity.getString(R.string.update_not_checked), summary.getText());
+            });
+        }
+    }
+
+    private static void assertCheckSummary(UpdatesActivity activity, int status, long stamp) {
+        String clock = android.text.format.DateFormat.getTimeFormat(activity).format(new Date(stamp));
+        TextView summary = activity.findViewById(R.id.update_check_summary);
+        assertEquals(activity.getString(R.string.update_status_with_check, activity.getString(status),
+                activity.getString(R.string.update_last_checked, clock)), summary.getText());
     }
 
     @Test public void developmentSwitchFiltersCachedAndRefreshedHistoryImmediately() throws Exception {
@@ -181,6 +288,9 @@ public final class DevUpdatesAndroidTest {
                 toggle.performClick();
                 assertFalse(toggle.isChecked());
                 assertFalse("The refresh is still queued", toggle.isEnabled());
+                TextView feedback = activity.findViewById(R.id.update_status);
+                assertEquals(View.VISIBLE, feedback.getVisibility());
+                assertEquals(activity.getString(R.string.update_checking), feedback.getText());
                 assertNull("Cached development rows disappear before the refresh", historyRow(activity, development));
                 assertNotNull(historyRow(activity, stable));
                 assertHistoryMeta(activity, installed, R.string.update_history_installed);
@@ -188,14 +298,14 @@ public final class DevUpdatesAndroidTest {
             state.setReleaseHistory(List.of(stable, installed, newerDevelopment));
             state.setCandidate(candidate(stable.versionName, BuildConfig.VERSION_CODE + 1L));
             scenario.onActivity(activity -> {
-                renderHistory(activity, render);
+                renderUpdates(activity, render);
                 assertNull(historyRow(activity, newerDevelopment));
                 assertHistoryMeta(activity, stable, R.string.update_history_available);
                 assertHistoryMeta(activity, installed, R.string.update_history_installed);
             });
             state.clearCandidate();
             scenario.onActivity(activity -> {
-                renderHistory(activity, render);
+                renderUpdates(activity, render);
                 assertEquals(stable.publishedAt, historyMeta(historyRow(activity, stable)));
             });
             scenario.recreate();
@@ -226,7 +336,7 @@ public final class DevUpdatesAndroidTest {
         } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     }
 
-    private static void renderHistory(UpdatesActivity activity, Method render) {
+    private static void renderUpdates(UpdatesActivity activity, Method render) {
         try { render.invoke(activity); }
         catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     }

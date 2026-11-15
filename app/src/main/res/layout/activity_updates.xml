@@ -34,13 +34,8 @@
                 android:textSize="@dimen/ui_text_body"
                 android:textStyle="bold" />
             <TextView
-                android:id="@+id/available_version"
-                style="@style/Widget.SubHub.FieldHelp"
-                android:layout_marginTop="@dimen/ui_gap_inline" />
-            <TextView
-                android:id="@+id/last_checked"
-                style="@style/Widget.SubHub.FieldHelp"
-                android:layout_marginTop="@dimen/ui_gap_inline" />
+                android:id="@+id/update_check_summary"
+                style="@style/Widget.SubHub.FieldHelp" />
             <TextView
                 android:id="@+id/update_status"
                 android:layout_width="match_parent"
@@ -48,7 +43,8 @@
                 android:layout_marginTop="@dimen/ui_gap_control"
                 android:textColor="@color/accent_text"
                 android:textSize="@dimen/ui_text_caption"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:visibility="gone" />
             <ProgressBar
                 android:id="@+id/download_progress"
                 style="@style/Widget.SubHub.ProgressMeter"
@@ -86,26 +82,68 @@
             android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/update_automatic_title" />
-            <com.subhub.app.util.StateToggle
-                android:id="@+id/automatic_checks"
-                style="@style/Widget.SubHub.SettingsToggle"
+            <LinearLayout
                 android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/ui_gap_inline"
-                android:text="@string/update_automatic_toggle" />
-            <TextView
-                android:id="@+id/automatic_help"
-                style="@style/Widget.SubHub.FieldHelp"
-                android:text="@string/update_automatic_help" />
-            <com.subhub.app.util.StateToggle
-                android:id="@+id/dev_updates"
-                style="@style/Widget.SubHub.SettingsToggle"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="@dimen/ui_gap_control"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:id="@+id/automatic_checks_title"
+                        style="@style/Widget.SubHub.FieldLabel"
+                        android:layout_marginTop="0dp"
+                        android:importantForAccessibility="no"
+                        android:focusable="false"
+                        android:text="@string/update_automatic_toggle" />
+                    <TextView
+                        android:id="@+id/automatic_help"
+                        style="@style/Widget.SubHub.FieldHelp"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/update_automatic_help" />
+                </LinearLayout>
+                <com.subhub.app.util.StateToggle
+                    android:id="@+id/automatic_checks"
+                    style="@style/Widget.SubHub.SettingsToggle"
+                    android:layout_width="wrap_content"
+                    android:contentDescription="@string/update_automatic_toggle" />
+            </LinearLayout>
+            <LinearLayout
                 android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/ui_gap_control"
-                android:text="@string/update_dev_toggle" />
-            <TextView
-                android:id="@+id/dev_updates_help"
-                style="@style/Widget.SubHub.FieldHelp"
-                android:text="@string/update_dev_help" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="@dimen/ui_gap_control"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:id="@+id/dev_updates_title"
+                        style="@style/Widget.SubHub.FieldLabel"
+                        android:layout_marginTop="0dp"
+                        android:importantForAccessibility="no"
+                        android:focusable="false"
+                        android:text="@string/update_dev_toggle" />
+                    <TextView
+                        android:id="@+id/dev_updates_help"
+                        style="@style/Widget.SubHub.FieldHelp"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/update_dev_help" />
+                </LinearLayout>
+                <com.subhub.app.util.StateToggle
+                    android:id="@+id/dev_updates"
+                    style="@style/Widget.SubHub.SettingsToggle"
+                    android:layout_width="wrap_content"
+                    android:contentDescription="@string/update_dev_toggle" />
+            </LinearLayout>
         </LinearLayout>
 
         <LinearLayout

@@ -227,7 +227,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 assertEquals(activity.getString(R.string.update_history_preview_date, "2026-10-08"), meta(rows, 1).getText().toString());
                 assertEquals("2026-10-07", meta(rows, 2).getText().toString());
                 assertEquals(activity.getString(R.string.update_automatic_dev_toggle),
-                        ((TextView) activity.findViewById(R.id.automatic_checks)).getText().toString());
+                        ((TextView) activity.findViewById(R.id.automatic_checks_title)).getText().toString());
                 assertReleaseDisclosure(activity, rows.getChildAt(0));
             });
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -253,7 +253,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
             scenario.onActivity(activity -> {
                 assertFalse(state.devUpdates()); assertFalse(state.automaticChecks());
                 assertEquals(activity.getString(R.string.update_automatic_toggle),
-                        ((TextView) activity.findViewById(R.id.automatic_checks)).getText().toString());
+                        ((TextView) activity.findViewById(R.id.automatic_checks_title)).getText().toString());
                 assertFalse(((android.widget.CompoundButton) activity.findViewById(R.id.dev_updates)).isChecked());
                 assertFalse(((android.widget.CompoundButton) activity.findViewById(R.id.automatic_checks)).isChecked());
             });
@@ -261,7 +261,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
             scenario.onActivity(activity -> {
                 assertTrue(state.devUpdates()); assertTrue(state.automaticChecks());
                 assertEquals(activity.getString(R.string.update_automatic_dev_toggle),
-                        ((TextView) activity.findViewById(R.id.automatic_checks)).getText().toString());
+                        ((TextView) activity.findViewById(R.id.automatic_checks_title)).getText().toString());
                 assertTrue(((android.widget.CompoundButton) activity.findViewById(R.id.dev_updates)).isChecked());
                 assertTrue(((android.widget.CompoundButton) activity.findViewById(R.id.automatic_checks)).isChecked());
             });
