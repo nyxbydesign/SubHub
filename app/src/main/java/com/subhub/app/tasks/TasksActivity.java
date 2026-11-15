@@ -330,10 +330,26 @@ public final class TasksActivity extends RolePage {
             else { model.proofAttachments = false; detail(state, selected); }
             return;
         }
+        List<TaskEngine.Occurrence> active = new ArrayList<>(), pending = new ArrayList<>(),
+                scheduled = new ArrayList<>(), historyRows = new ArrayList<>();
+        Set<String> completed = new HashSet<>();
+        for (TaskEngine.Occurrence occurrence : state.rows) {
+            TaskEngine.Status status = occurrence.status;
+            if ((status == TaskEngine.Status.ACTIVE || status == TaskEngine.Status.SCHEDULED)
+                    && state.refused.contains(occurrence.task.id)) continue;
+            if (status == TaskEngine.Status.ACCEPTED) completed.add(occurrence.id);
+            switch (status) {
+                case ACTIVE -> active.add(occurrence);
+                case PENDING -> pending.add(occurrence);
+                case SCHEDULED -> scheduled.add(occurrence);
+                case ACCEPTED, DENIED, TIMED_OUT, REFUSED, SKIPPED, CANCELLED -> {
+                    if (model.history) historyRows.add(occurrence);
+                }
+            }
+        }
         LinearLayout summary = PersonUi.card(body);
         summary.setTag("tasks_summary");
-        TasksUi.counts(summary, TaskEngine.completedCount(state.rows), count(state, TaskEngine.Status.ACTIVE),
-                count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
+        TasksUi.counts(summary, completed.size(), active.size(), pending.size(), scheduled.size());
         if (state.canCreate && state.allowed && state.zone == null) {
             PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);
         }
@@ -347,40 +363,17 @@ public final class TasksActivity extends RolePage {
         }, true);
         CheckBox history = check(body, R.string.tasks_show_history, "tasks_history", model.history);
         history.setOnCheckedChangeListener((button, checked) -> { model.history = checked; render(); });
-        int shown = count(state, TaskEngine.Status.ACTIVE) + count(state, TaskEngine.Status.PENDING)
-                + count(state, TaskEngine.Status.SCHEDULED);
-        if (model.history) shown += count(state, TaskEngine.Status.ACCEPTED) + count(state, TaskEngine.Status.DENIED)
-                + count(state, TaskEngine.Status.TIMED_OUT) + count(state, TaskEngine.Status.REFUSED)
-                + count(state, TaskEngine.Status.SKIPPED) + count(state, TaskEngine.Status.CANCELLED);
-        if (shown == 0) TasksUi.empty(body, R.string.tasks_no_open);
+        if (active.isEmpty() && pending.isEmpty() && scheduled.isEmpty() && historyRows.isEmpty())
+            TasksUi.empty(body, R.string.tasks_no_open);
         else {
-            section(state, R.string.tasks_active, TaskEngine.Status.ACTIVE);
-            section(state, R.string.tasks_pending, TaskEngine.Status.PENDING);
-            section(state, R.string.tasks_scheduled, TaskEngine.Status.SCHEDULED);
-            if (model.history) section(state, R.string.tasks_history, TaskEngine.Status.ACCEPTED,
-                    TaskEngine.Status.DENIED, TaskEngine.Status.TIMED_OUT, TaskEngine.Status.REFUSED,
-                    TaskEngine.Status.SKIPPED, TaskEngine.Status.CANCELLED);
+            section(state, R.string.tasks_active, active);
+            section(state, R.string.tasks_pending, pending);
+            section(state, R.string.tasks_scheduled, scheduled);
+            section(state, R.string.tasks_history, historyRows);
         }
     }
 
-    private static int count(Snapshot state, TaskEngine.Status status) {
-        int count = 0;
-        for (TaskEngine.Occurrence task : state.rows) if (task.status == status
-                && !(state.refused.contains(task.task.id) && (status == TaskEngine.Status.ACTIVE
-                || status == TaskEngine.Status.SCHEDULED))) count++;
-        return count;
-    }
-
-    private void section(Snapshot state, int heading, TaskEngine.Status... statuses) {
-        Set<TaskEngine.Status> selected = EnumSet.noneOf(TaskEngine.Status.class);
-        java.util.Collections.addAll(selected, statuses);
-        List<TaskEngine.Occurrence> visible = new ArrayList<>();
-        for (TaskEngine.Occurrence occurrence : state.rows) {
-            if (!selected.contains(occurrence.status)) continue;
-            if (state.refused.contains(occurrence.task.id) && (occurrence.status == TaskEngine.Status.ACTIVE
-                    || occurrence.status == TaskEngine.Status.SCHEDULED)) continue;
-            visible.add(occurrence);
-        }
+    private void section(Snapshot state, int heading, List<TaskEngine.Occurrence> visible) {
         if (visible.isEmpty()) return;
         PersonUi.text(body, getString(R.string.tasks_section_count, getString(heading), visible.size()), true);
         DateTimeFormatter dateTime = TasksUi.shortDateTime(this);
