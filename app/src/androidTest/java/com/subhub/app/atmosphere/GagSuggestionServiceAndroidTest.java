@@ -75,6 +75,39 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("hellobworld ");
     }
 
+    @Test public void nextWordsRefreshAfterAnAcceptedSuggestionAndAppendOnlyOnTap() throws Exception {
+        acceptHello();
+        assertSuggestions("there", "everyone", "again");
+        assertText("hello ");
+        key("there");
+        assertText("hello there ");
+        assertSuggestions("how", "I", "again");
+        key(",");
+        assertText("hello there,");
+
+        openEditor(true);
+        correctHello(" next");
+        assertText("hello next");
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text("there")), TIMEOUT_MS));
+    }
+
+    @Test public void explicitSpaceShowsThreeWordsWhileTheEmptyEditorPrefersTheClipboard() throws Exception {
+        openEditor(false, true);
+        await(By.pkg("com.subhub.app").text(GagEditorFixtureActivity.CLIPBOARD_TEXT));
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text("You")), TIMEOUT_MS));
+        assertText("");
+
+        for (char letter : "thanks".toCharArray()) key(String.valueOf(letter));
+        keyDescription(R.string.gag_keyboard_space);
+        assertSuggestions("for", "again", "and");
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text(GagEditorFixtureActivity.CLIPBOARD_TEXT)),
+                TIMEOUT_MS));
+        assertText("thanks ");
+        key("again");
+        assertText("thanks again ");
+        assertSuggestions("and", "but", "or");
+    }
+
     @Test public void apostropheReturnsTheRenderedSymbolPageToLetters() throws Exception {
         openEditor(false);
         keyDescription(R.string.gag_keyboard_symbols);
@@ -160,13 +193,22 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void openEditor(boolean middle) throws Exception {
+        openEditor(middle, false);
+    }
+
+    private static void openEditor(boolean middle, boolean seedClipboard) throws Exception {
         assertEquals(IME, shell("settings get secure default_input_method").strip());
         String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
-                + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle);
+                + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle
+                + " --ez gag_seed_clipboard " + seedClipboard);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         await(By.pkg("com.subhub.app").text("q"));
         assertText(middle ? " next" : "");
+    }
+
+    private static void assertSuggestions(String first, String second, String third) {
+        for (String candidate : new String[]{first, second, third}) await(By.pkg("com.subhub.app").text(candidate));
     }
 
     private static String shell(String command) throws Exception {

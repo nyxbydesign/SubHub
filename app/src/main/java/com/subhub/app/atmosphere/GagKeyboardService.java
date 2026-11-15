@@ -1364,7 +1364,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private List<String> nextWords(GagSuggestionContext context) {
         String language = getResources().getConfiguration().getLocales().get(0).getLanguage();
-        if (!context.before().isEmpty()) return GagNextWords.after(context.before(), language);
+        if (!context.before().isEmpty()) return GagNextWords.predict(context.before(), language);
         List<String> candidates = new ArrayList<>(3);
         GagPersonalDictionary personal = personalDictionary();
         if (personal.isLearningEnabled()) candidates.addAll(personal.suggestions("", List.of(), 3));

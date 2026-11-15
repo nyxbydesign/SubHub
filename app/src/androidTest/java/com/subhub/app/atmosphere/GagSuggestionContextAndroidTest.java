@@ -77,6 +77,29 @@ public final class GagSuggestionContextAndroidTest {
         }
     }
 
+    @Test public void nextWordPreservesPriorComposingTextAndRejectsExternalEditsAtTheSameCursor() {
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                BaseInputConnection input = new BaseInputConnection(new View(activity), true);
+                Editable editor = input.getEditable();
+                editor.append("hello ");
+                Selection.setSelection(editor, 6);
+                assertTrue(input.setComposingRegion(0, 5));
+                GagSuggestionContext hello = GagSuggestionContext.read(input);
+                assertNotNull(hello);
+                assertTrue(commit(input, hello, "there", word -> word));
+                assertEquals("hello there ", editor.toString());
+
+                GagSuggestionContext there = GagSuggestionContext.read(input);
+                assertNotNull(there);
+                editor.replace(6, 11, "again");
+                assertEquals(12, Selection.getSelectionEnd(editor));
+                assertFalse(commit(input, there, "how", word -> word));
+                assertEquals("hello again ", editor.toString());
+            });
+        }
+    }
+
     private static boolean commit(BaseInputConnection input, GagSuggestionContext expected,
             String candidate, java.util.function.UnaryOperator<String> replace) {
         return expected.commit(input, candidate, replace, completed -> input.commitText(completed + " ", 1));

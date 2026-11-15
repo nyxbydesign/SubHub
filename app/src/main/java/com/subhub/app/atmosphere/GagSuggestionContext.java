@@ -41,6 +41,8 @@ record GagSuggestionContext(String before, int cursor) {
     boolean commit(InputConnection input, String candidate, UnaryOperator<String> replace,
             Predicate<String> insert) {
         if (!equals(read(input))) return false;
+        // Insertion must preserve even composing text an editor left behind at this cursor.
+        if (!input.finishComposingText()) return false;
         StringBuilder completed = new StringBuilder();
         for (String word : candidate.split(" ")) {
             if (completed.length() != 0) completed.append(' ');

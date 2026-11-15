@@ -28,4 +28,28 @@ public final class GagNextWordsTest {
         assertEquals(List.of(), GagNextWords.after("x'ich ", "de"));
         assertEquals(List.of(), GagNextWords.after(" ".repeat(GagNextWords.CONTEXT_LIMIT), "en"));
     }
+
+    @Test public void predictsThreeFromTheLatestWordOrPhraseWithoutChangingRepairEvidence() {
+        assertEquals(List.of("there", "everyone", "again"), GagNextWords.predict("hello ", "en"));
+        assertEquals(List.of("how", "I", "again"), GagNextWords.predict("hello there ", "en"));
+        assertEquals(List.of("you", "we", "they"), GagNextWords.predict("How are ", "en"));
+        assertEquals(List.of("for", "again", "and"), GagNextWords.predict("Thanks ", "en"));
+        assertEquals(List.of("what", "I", "that"), GagNextWords.predict("yeah so like ", "en"));
+        assertEquals(List.of("wait", "believe", "find"), GagNextWords.predict("I can’t ", "en"));
+        assertEquals(List.of("es", "das", "nicht"), GagNextWords.predict("Wie geht ", "en"));
+        assertEquals(List.of("für", "und", "nochmal"), GagNextWords.predict("Vielen Dank ", "en"));
+        assertEquals(List.of("and", "but", "or"), GagNextWords.predict("pomegranate ", "en"));
+        assertEquals(List.of("und", "aber", "oder"), GagNextWords.predict("Danke nochmal ", "en"));
+        assertEquals(List.of(), GagNextWords.after("hello ", "en"));
+        assertEquals(List.of("you"), GagNextWords.after("How are ", "en"));
+    }
+
+    @Test public void predictionRequiresACompleteBoundaryAndRetainsSentenceStarters() {
+        assertEquals(List.of(), GagNextWords.predict("hello", "en"));
+        assertEquals(List.of(), GagNextWords.predict("hello_world ", "en"));
+        assertEquals(List.of(), GagNextWords.predict("a".repeat(GagNextWords.CONTEXT_LIMIT - 1) + " ", "en"));
+        assertEquals(GagNextWords.starters("en"), GagNextWords.predict("Hello. ", "en"));
+        assertEquals(GagNextWords.starters("de"), GagNextWords.predict("Hallo\n", "de"));
+        assertEquals(List.of("and", "but", "or"), GagNextWords.predict("Well, ", "en"));
+    }
 }
