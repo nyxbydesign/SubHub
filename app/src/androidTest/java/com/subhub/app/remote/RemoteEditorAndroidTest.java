@@ -382,6 +382,9 @@ public class RemoteEditorAndroidTest {
 
     @androidx.annotation.RequiresApi(29)
     private void importPopupArtworkAcrossRecreation() throws Exception {
+        RemoteStore.Command pending = feature.store.latestCommand(peer.identity, generation);
+        assertNotNull(pending);
+        assertTrue(pending.pending());
         byte[] bytes = artworkFixture(0xff20304b);
         String hash = RemoteProtocol.sha256(bytes);
         String name = database + ".png";
@@ -428,7 +431,7 @@ public class RemoteEditorAndroidTest {
                         device.wait(Until.hasObject(By.res("com.subhub.app", "button_add_folder")), 10_000));
                 page.onActivity(activity -> assertNotSame(original.get(), activity));
                 try {
-                    await(() -> latestArtworkCommand().length() == 2);
+                    await(() -> artworkAssets(feature.contracts.editing(peer)).length() == 2);
                 } catch (AssertionError pendingArtwork) {
                     AtomicReference<String> viewState = new AtomicReference<>();
                     page.onActivity(activity -> {
@@ -437,10 +440,19 @@ public class RemoteEditorAndroidTest {
                         viewState.set("focus=" + activity.hasWindowFocus() + ", addEnabled=" + add.isEnabled()
                                 + ", library=" + status.getText());
                     });
-                    throw new AssertionError("Popup artwork command has " + latestArtworkCommand().length()
+                    throw new AssertionError("Popup artwork draft has " + artworkAssets(feature.contracts.editing(peer)).length()
                             + " assets after picker return, " + viewState.get()
                             + ", foreground=" + device.getCurrentPackageName(), pendingArtwork);
                 }
+                assertEquals(pending.id, feature.store.latestCommand(peer.identity, generation).id);
+                assertEquals(1, latestArtworkCommand().length());
+                JSONObject receipt = new JSONObject().put("schema", 1).put("id", pending.id)
+                        .put("revision", pending.revision).put("state", "APPLIED")
+                        .put("appliedRevision", pending.revision).put("reason", "");
+                feature.store.acceptResult(peer.identity, generation, receipt);
+                feature.contracts.process(peer);
+                await(() -> latestArtworkCommand().length() == 2);
+                assertEquals(pending.revision + 1, feature.store.latestCommand(peer.identity, generation).revision);
                 JSONArray saved = latestArtworkCommand();
                 assertEquals("assets/popup/fixture.png", saved.getJSONObject(0).getString("path"));
                 JSONObject added = saved.getJSONObject(1);
@@ -451,8 +463,12 @@ public class RemoteEditorAndroidTest {
     }
 
     private JSONArray latestArtworkCommand() throws JSONException {
-        return new JSONObject(feature.store.latestCommand(peer.identity, generation).body)
-                .getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");
+        JSONObject body = new JSONObject(feature.store.latestCommand(peer.identity, generation).body);
+        return artworkAssets(body.getJSONObject("configuration"));
+    }
+
+    private static JSONArray artworkAssets(JSONObject configuration) throws JSONException {
+        return configuration.getJSONObject("contract").getJSONArray("assets");
     }
 
     private static byte[] artworkFixture(int color) {
