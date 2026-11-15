@@ -31,15 +31,16 @@ public final class GagEditorFixtureActivity extends Activity {
             return;
         }
 
+        boolean longClipboard = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false);
         EditText editor = new EditText(this);
-        editor.setSingleLine(true);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT);
+        editor.setSingleLine(!longClipboard);
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | (longClipboard ? InputType.TYPE_TEXT_FLAG_MULTI_LINE : 0));
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
         editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
-        if (getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)) {
+        if (longClipboard) {
             editor.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
                 @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
