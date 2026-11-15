@@ -13,6 +13,7 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String ACTION = "com.subhub.app.test.GAG_EDITOR_FIXTURE";
     static final String EDITOR = "Gag spacing test editor";
     static final String CLIPBOARD_TEXT = "Synthetic clipboard fixture";
+    static final String DELETION_TEXT = "keep über café tail";
     private boolean seedClipboard;
 
     @Override protected void onCreate(Bundle state) {
@@ -27,12 +28,14 @@ public final class GagEditorFixtureActivity extends Activity {
         editor.setInputType(InputType.TYPE_CLASS_TEXT);
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
+        boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
-        editor.setText(middle ? " next" : "");
+        editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
         setContentView(editor);
         editor.requestFocus();
         editor.post(() -> {
-            editor.setSelection(0);
+            if (selected) editor.setSelection(5, 14);
+            else editor.setSelection(0);
             getSystemService(InputMethodManager.class).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
         });
     }

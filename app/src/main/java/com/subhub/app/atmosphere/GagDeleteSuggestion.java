@@ -58,6 +58,34 @@ final class GagDeleteSuggestion {
         }
     }
 
+    static GagDeletionHistory.Snapshot historySnapshot(InputConnection connection) {
+        if (connection == null) return null;
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                SurroundingText text = connection.getSurroundingText(GagDeletionHistory.BEFORE,
+                        GagDeletionHistory.CONTEXT, 0);
+                if (text != null && text.getOffset() >= 0)
+                    return historySlice(text.getText(), text.getOffset(), text.getSelectionStart(), text.getSelectionEnd());
+            }
+            ExtractedTextRequest request = new ExtractedTextRequest();
+            request.hintMaxChars = GagDeletionHistory.BEFORE + GagDeletionHistory.MAX_DELETED
+                    + GagDeletionHistory.CONTEXT;
+            ExtractedText text = connection.getExtractedText(request, 0);
+            return text == null ? null : historySlice(text.text, text.startOffset, text.selectionStart, text.selectionEnd);
+        } catch (RuntimeException unavailable) {
+            return null;
+        }
+    }
+
+    private static GagDeletionHistory.Snapshot historySlice(CharSequence text, int offset, int start, int end) {
+        if (text == null || offset < 0 || start < 0 || end < start || end > text.length()
+                || offset > Integer.MAX_VALUE - end || end - start > GagDeletionHistory.MAX_DELETED) return null;
+        int left = Math.max(0, start - GagDeletionHistory.BEFORE);
+        int right = end + Math.min(GagDeletionHistory.CONTEXT, text.length() - end);
+        return new GagDeletionHistory.Snapshot(offset + start, offset + end, text.subSequence(left, start).toString(),
+                text.subSequence(start, end).toString(), text.subSequence(end, right).toString());
+    }
+
     private static Snapshot snapshot(CharSequence text, int offset, int start, int end) {
         if (text == null || offset < 0 || start < 0 || start != end || start > text.length()
                 || offset > Integer.MAX_VALUE - start) return null;

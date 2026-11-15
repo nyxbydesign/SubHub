@@ -63,6 +63,8 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GagKeyboardService extends InputMethodService {
     private static final int MAX_WORD_LENGTH = 128;
     private static final int DELETE_CONFIRMATION_MS = 80;
+    private static final int DELETION_BURST_IDLE_MS = 320;
+    private static final int DELETION_HISTORY_LIFETIME_MS = 60_000;
     private static final String[] LETTER_ROWS = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
     private static final String[] ALTERNATE_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
     private static final String[] SYMBOL_ROWS = {"1234567890", "@#$_&-+()/", "*\"':;!?"};
@@ -87,6 +89,14 @@ public final class GagKeyboardService extends InputMethodService {
     private long suggestionGeneration;
     private GagDeleteSuggestion pendingDelete;
     private final Runnable checkDeleteSuggestions = this::checkDeleteSuggestions;
+    private final GagDeletionHistory deletionHistory = new GagDeletionHistory();
+    private final Runnable finishDeletionBurst = this::finishDeletionBurst;
+    private final Runnable expireDeletionHistory = this::expireDeletionHistory;
+    private GagDeletionHistory.Snapshot deletionStart;
+    private InputConnection deletionConnection;
+    private long deletionRulesRevision;
+    private boolean deletionIncludesComposition;
+    private int observedComposingStart = -1;
     private int committedCursor = -1;
     private GagSuggestionSpace suggestionSpace;
     private char pendingPunctuation;
@@ -157,6 +167,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onDestroy() {
+        clearDeletionHistory();
         dismissKeyboardPicker();
         dismissKeyPopups();
         stopClipboard();
@@ -174,6 +185,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onStartInput(EditorInfo editor, boolean restarting) {
+        clearDeletionHistory();
+        observedComposingStart = -1;
         dismissKeyboardPicker();
         dismissKeyPopups();
         suggestionSpace = null;
@@ -220,6 +233,7 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public boolean onEvaluateFullscreenMode() { return false; }
 
     @Override public void onFinishInputView(boolean finishingInput) {
+        clearDeletionHistory();
         dismissKeyboardPicker();
         dismissKeyPopups();
         suggestionSpace = null;
@@ -233,6 +247,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public void onFinishInput() {
+        clearDeletionHistory();
+        observedComposingStart = -1;
         dismissKeyboardPicker();
         dismissKeyPopups();
         suggestionSpace = null;
@@ -254,6 +270,9 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onUpdateSelection(int oldStart, int oldEnd, int newStart, int newEnd,
             int composingStart, int composingEnd) {
         super.onUpdateSelection(oldStart, oldEnd, newStart, newEnd, composingStart, composingEnd);
+        observedComposingStart = composingStart;
+        if (deletionStart != null && (newStart != newEnd || newEnd > deletionStart.end()
+                || newEnd < deletionStart.start() - GagDeletionHistory.MAX_DELETED)) clearDeletionHistory();
         if (suggestionSpace != null
                 && !suggestionSpace.atSelection(getCurrentInputConnection(), newStart, newEnd))
             suggestionSpace = null;
@@ -274,6 +293,8 @@ public final class GagKeyboardService extends InputMethodService {
         if (pendingDelete != null) {
             InputConnection input = getCurrentInputConnection();
             showDeleteSuggestions(input, pendingDelete.selectionCursor(input, newStart, newEnd, composingStart));
+        } else if (deletionStart == null && deletionHistory.hasEntries()) {
+            scheduleSuggestions();
         } else if (committedCursor != -1 && (newStart != committedCursor || newEnd != committedCursor)) {
             clearSuggestions();
         } else if (word.length() == 0 && committedCursor < 0) {
@@ -337,6 +358,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void type(String text) {
+        clearDeletionHistory();
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
@@ -479,6 +501,7 @@ public final class GagKeyboardService extends InputMethodService {
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
+        trackDeletion(input);
         if (word.length() > 0) {
             int length = word.length();
             word.delete(word.offsetByCodePoints(length, -1), length);
@@ -509,7 +532,159 @@ public final class GagKeyboardService extends InputMethodService {
         scheduleSuggestions(cursor);
     }
 
+    private long currentDeletionRulesRevision() {
+        return backend == null ? -1 : backend.gagRevision();
+    }
+
+    private boolean mayUseDeletionHistory(InputConnection input) {
+        return editorAllowed && input != null && input == deletionConnection
+                && deletionRulesRevision == currentDeletionRulesRevision()
+                && (!deletionIncludesComposition || phraseRepairAllowed());
+    }
+
+    private void trackDeletion(InputConnection input) {
+        boolean composing = word.length() != 0 || observedComposingStart >= 0;
+        if (!editorAllowed || (composing && !phraseRepairAllowed())) {
+            clearDeletionHistory();
+            return;
+        }
+        if (!mayUseDeletionHistory(input)) clearDeletionHistory();
+        if (deletionStart == null) {
+            deletionStart = GagDeleteSuggestion.historySnapshot(input);
+            if (deletionStart == null) {
+                clearDeletionHistory();
+                return;
+            }
+            deletionConnection = input;
+            deletionRulesRevision = currentDeletionRulesRevision();
+        }
+        deletionIncludesComposition |= composing;
+        main.removeCallbacks(finishDeletionBurst);
+        main.postDelayed(finishDeletionBurst, DELETION_BURST_IDLE_MS);
+    }
+
+    private void finishDeletionBurst() {
+        GagDeletionHistory.Snapshot start = deletionStart;
+        deletionStart = null;
+        InputConnection input = getCurrentInputConnection();
+        if (start == null || !mayUseDeletionHistory(input)) {
+            clearDeletionHistory();
+            return;
+        }
+        boolean hadHistory = deletionHistory.hasEntries();
+        GagDeletionHistory.Snapshot current = GagDeleteSuggestion.historySnapshot(input);
+        deletionHistory.record(start, current);
+        if (!deletionHistory.hasEntries()) clearDeletionHistory();
+        else if (!start.equals(current)) renewDeletionHistory();
+        if (hadHistory || deletionHistory.hasEntries()) scheduleSuggestions();
+    }
+
+    private void renewDeletionHistory() {
+        main.removeCallbacks(expireDeletionHistory);
+        main.postDelayed(expireDeletionHistory, DELETION_HISTORY_LIFETIME_MS);
+    }
+
+    private void expireDeletionHistory() {
+        if (deletionStart != null) {
+            // Let the active burst finish without carrying forward expired steps.
+            deletionHistory.clear();
+            return;
+        }
+        clearDeletionHistory();
+        scheduleSuggestions();
+    }
+
+    private void clearDeletionHistory() {
+        main.removeCallbacks(finishDeletionBurst);
+        main.removeCallbacks(expireDeletionHistory);
+        deletionStart = null;
+        deletionConnection = null;
+        deletionIncludesComposition = false;
+        deletionHistory.clear();
+    }
+
+    private boolean canShowDeletionActions() {
+        return editorAllowed && isInputViewShown() && suggestionStrip != null && clipboardPanel == null
+                && page != Page.EMOJI && deletionStart == null && deletionHistory.hasEntries();
+    }
+
+    private boolean showDeletionActions(InputConnection input) {
+        if (!canShowDeletionActions()) return false;
+        if (!mayUseDeletionHistory(input)) {
+            clearDeletionHistory();
+            return false;
+        }
+        GagDeletionHistory.Snapshot current = GagDeleteSuggestion.historySnapshot(input);
+        boolean undo = deletionHistory.edit(GagDeletionHistory.Action.UNDO, current) != null;
+        boolean redo = deletionHistory.edit(GagDeletionHistory.Action.REDO, current) != null;
+        if (!undo && !redo) {
+            clearDeletionHistory();
+            return false;
+        }
+        long generation = suggestionGeneration;
+        bindDeletionAction(input, 0, GagDeletionHistory.Action.UNDO, R.string.gag_keyboard_undo, undo, generation);
+        bindDeletionAction(input, 1, GagDeletionHistory.Action.REDO, R.string.gag_keyboard_redo, redo, generation);
+        return true;
+    }
+
+    private void bindDeletionAction(InputConnection input, int slot, GagDeletionHistory.Action action,
+            int label, boolean enabled, long generation) {
+        TextView view = (TextView) suggestionStrip.getChildAt(slot);
+        view.setText(label);
+        view.setVisibility(View.VISIBLE);
+        view.setEnabled(enabled);
+        view.setAlpha(enabled ? 1f : .45f);
+        view.setOnClickListener(enabled ? ignored -> applyDeletionAction(input, action, generation) : null);
+    }
+
+    private void applyDeletionAction(InputConnection input, GagDeletionHistory.Action action, long generation) {
+        refreshReplacementAuthority();
+        if (suggestionGeneration != generation || input != getCurrentInputConnection()
+                || !canShowDeletionActions()) return;
+        GagDeletionHistory.Edit edit = mayUseDeletionHistory(input)
+                ? deletionHistory.edit(action, GagDeleteSuggestion.historySnapshot(input)) : null;
+        if (edit == null || ((word.length() != 0 || observedComposingStart >= 0) && !phraseRepairAllowed())) {
+            clearDeletionHistory();
+            scheduleSuggestions();
+            return;
+        }
+        clearPendingSpace();
+        suggestionSpace = null;
+        resetOpening(false);
+        word.setLength(0);
+        GagDeletionHistory.Snapshot expected = edit.destination(action);
+        boolean applied = false;
+        try {
+            input.beginBatchEdit();
+            try {
+                if (input.finishComposingText()) {
+                    if (action == GagDeletionHistory.Action.UNDO) {
+                        applied = input.commitText(edit.deleted(), 1)
+                                && (expected.start() == expected.end() || input.setSelection(expected.start(), expected.end()));
+                    } else if (edit.before().selected().isEmpty()) {
+                        applied = input.deleteSurroundingText(edit.deleted().length(), 0);
+                    } else {
+                        applied = (edit.before().start() == edit.after().start()
+                                || input.setSelection(edit.after().start(), edit.before().end()))
+                                && input.commitText("", 1);
+                    }
+                }
+            } finally {
+                input.endBatchEdit();
+            }
+        } catch (RuntimeException unavailable) {
+            // The receiving editor can disappear while a tap is being dispatched.
+        }
+        GagDeletionHistory.Snapshot current = applied ? GagDeleteSuggestion.historySnapshot(input) : null;
+        if (!deletionHistory.confirm(action, edit, current)) clearDeletionHistory();
+        else renewDeletionHistory();
+        literalWord = current != null && current.selected().isEmpty() && !current.left().isEmpty()
+                && GagRules.wordCharacter(current.left().codePointBefore(current.left().length()));
+        scheduleSuggestions();
+    }
+
     private void enter() {
+        clearDeletionHistory();
         suggestionSpace = null;
         clearPendingSpace();
         refreshReplacementAuthority();
@@ -687,6 +862,7 @@ public final class GagKeyboardService extends InputMethodService {
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return false;
+        clearDeletionHistory();
         clearPendingSpace();
         suggestionSpace = null;
         boolean committed = completeWord(input, emoji, null);
@@ -858,6 +1034,8 @@ public final class GagKeyboardService extends InputMethodService {
             int rank = slot == 0 ? 1 : slot == 1 ? 0 : 2;
             String candidate = rank < ranked.size() ? ranked.get(rank) : "";
             view.setVisibility(candidate.isEmpty() ? View.INVISIBLE : View.VISIBLE);
+            view.setEnabled(true);
+            view.setAlpha(1f);
             view.setText(candidate);
             view.setOnClickListener(candidate.isEmpty() ? null : ignored -> accept.accept(candidate));
         }
@@ -1167,6 +1345,7 @@ public final class GagKeyboardService extends InputMethodService {
             return;
         }
         refreshReplacementAuthority();
+        clearDeletionHistory();
         clearPendingSpace();
         clearSuggestions();
         resetOpening(false);
@@ -1211,6 +1390,7 @@ public final class GagKeyboardService extends InputMethodService {
                         if (epoch != editorEpoch || !clipboardAllowed() || !clipboardRetention() || !clipboard.allows(input)
                                 || !image.supports(editor) || !clipboard.entries(now).contains(entry)) return;
                         leaveWordLiteral();
+                        clearDeletionHistory();
                         clearPendingSpace();
                         clearSuggestions();
                         resetOpening(false);
@@ -1283,7 +1463,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void scheduleSuggestions(int cursor) {
         clearSuggestions();
-        if (!canSuggest()) return;
+        if (!canSuggest() && !canShowDeletionActions()) return;
         committedCursor = cursor;
         main.postDelayed(requestSuggestions, 45);
     }
@@ -1303,9 +1483,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void requestSuggestions() {
-        if (!canSuggest()) return;
         InputConnection input = getCurrentInputConnection();
-        if (input == null) return;
+        if (input == null || showDeletionActions(input) || !canSuggest()) return;
         int cursor = committedCursor;
         String token = cursor < 0 ? word.toString() : readCommittedPrefix(input, cursor);
         long generation = suggestionGeneration;
@@ -1379,6 +1558,7 @@ public final class GagKeyboardService extends InputMethodService {
             GagSuggestionContext context, String candidate) {
         refreshReplacementAuthority();
         if (!isCurrentSuggestion(generation, epoch, input) || word.length() != 0) return;
+        clearDeletionHistory();
         clearSuggestions();
         clearPendingSpace();
         if (!context.commit(input, candidate, token -> applyGag(token, token),
@@ -1433,6 +1613,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (!isCurrentSuggestion(generation, epoch, input)) return;
         boolean phrase = candidate.indexOf(' ') >= 0;
         if (phrase && !phraseRepairAllowed()) return;
+        clearDeletionHistory();
         clearPendingSpace();
         if (cursor < 0) {
             if (!token.contentEquals(word) || (phrase && !token.equals(readCommittedPrefix(input, cursor)))) return;

@@ -179,6 +179,41 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("@");
     }
 
+    @Test public void heldBackspaceShowsUndoAfterTwoWordsAndRedoOnlyAfterRestoring() throws Exception {
+        openEditor(false);
+        shell("input text one%stwo");
+        assertText("one two");
+        var delete = await(By.pkg("com.subhub.app").desc(label(R.string.gag_keyboard_delete))).getVisibleCenter();
+        shell("input swipe " + delete.x + " " + delete.y + " " + delete.x + " " + delete.y + " 1550");
+        assertText("");
+        deletionAction(R.string.gag_keyboard_redo, false);
+        deletionAction(R.string.gag_keyboard_undo, true).click();
+        assertText("one two");
+        deletionAction(R.string.gag_keyboard_redo, true).click();
+        assertText("");
+        deletionAction(R.string.gag_keyboard_undo, true).click();
+        assertText("one two");
+
+        shell("input keyevent KEYCODE_DPAD_LEFT");
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text(label(R.string.gag_keyboard_redo))),
+                TIMEOUT_MS));
+        assertText("one two");
+    }
+
+    @Test public void selectedTwoWordBackspacePreservesUnicodeSpacesAndSelectionThroughUndoAndRedo() throws Exception {
+        openEditor(false, false, true);
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText("keep  tail");
+        deletionAction(R.string.gag_keyboard_undo, true).click();
+        assertText(GagEditorFixtureActivity.DELETION_TEXT);
+        deletionAction(R.string.gag_keyboard_redo, true).click();
+        assertText("keep  tail");
+    }
+
+    private static UiObject2 deletionAction(int resource, boolean enabled) {
+        return await(By.pkg("com.subhub.app").text(label(resource)).enabled(enabled));
+    }
+
     private static void acceptHello() throws Exception {
         openEditor(false);
         correctHello("");
@@ -197,14 +232,19 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void openEditor(boolean middle, boolean seedClipboard) throws Exception {
+        openEditor(middle, seedClipboard, false);
+    }
+
+    private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText) throws Exception {
         assertEquals(IME, shell("settings get secure default_input_method").strip());
         String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle
-                + " --ez gag_seed_clipboard " + seedClipboard);
+                + " --ez gag_seed_clipboard " + seedClipboard
+                + " --ez gag_deletion_selection " + selectDeletionText);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         await(By.pkg("com.subhub.app").text("q"));
-        assertText(middle ? " next" : "");
+        assertText(selectDeletionText ? GagEditorFixtureActivity.DELETION_TEXT : middle ? " next" : "");
     }
 
     private static void assertSuggestions(String first, String second, String third) {
@@ -227,8 +267,11 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void keyDescription(int stringResource) {
-        String label = InstrumentationRegistry.getInstrumentation().getTargetContext().getString(stringResource);
-        await(By.pkg("com.subhub.app").desc(label)).click();
+        await(By.pkg("com.subhub.app").desc(label(stringResource))).click();
+    }
+
+    private static String label(int resource) {
+        return InstrumentationRegistry.getInstrumentation().getTargetContext().getString(resource);
     }
 
     private static UiObject2 await(BySelector selector) {

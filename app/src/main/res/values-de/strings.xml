@@ -9,4 +9,6 @@
     <string name="help_getting_started">Erste Schritte</string><string name="help_permissions">Berechtigungen</string><string name="help_app_protection">Dienstsperre</string><string name="help_censored_downloads">Export &amp; Downloads</string><string name="help_customisation">Anpassung</string><string name="help_popup_storm">Popup-Storm-Sicherheit</string><string name="help_troubleshooting">Fehlerbehebung</string><string name="help_privacy">Datenschutz &amp; Daten</string><string name="help_updates">Builds &amp; Updates</string>
     <string name="onboarding_title">Willkommen bei SubHub</string><string name="onboarding_body">Der Dom legt die Regeln fest. Der Sub folgt ihnen. Starte mit Enter Service auf Home, wenn eure Vereinbarung bereit ist.</string><string name="onboarding_help">Anleitung öffnen</string><string name="onboarding_dismiss">Weiter</string>
     <string name="shortcut_start_protection">Enter Service</string><string name="shortcut_start_protection_long">Enter SubHub service</string>
+    <string name="gag_keyboard_undo">Rückgängig</string>
+    <string name="gag_keyboard_redo">Wiederholen</string>
 </resources>

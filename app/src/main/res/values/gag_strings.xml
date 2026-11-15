@@ -21,6 +21,8 @@
     <string name="gag_keyboard_change">Change keyboard</string>
     <string name="gag_keyboard_shift">Shift</string>
     <string name="gag_keyboard_delete">Delete</string>
+    <string name="gag_keyboard_undo">Undo</string>
+    <string name="gag_keyboard_redo">Redo</string>
     <string name="gag_keyboard_space">Space, hold to switch keyboards</string>
     <string name="gag_keyboard_enter">Enter</string>
     <string name="gag_keyboard_caps_lock">Caps lock on</string>

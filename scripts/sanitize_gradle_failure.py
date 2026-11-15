@@ -181,6 +181,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/atmosphere/AtmosphereActivity.java": "main_atmosphere_atmosphere_activity",
     b"app/src/main/java/com/subhub/app/atmosphere/GagActivity.java": "main_atmosphere_gag_activity",
     b"app/src/main/java/com/subhub/app/atmosphere/GagDeleteSuggestion.java": "main_atmosphere_gag_delete_suggestion",
+    b"app/src/main/java/com/subhub/app/atmosphere/GagDeletionHistory.java": "main_atmosphere_gag_deletion_history",
     b"app/src/main/java/com/subhub/app/atmosphere/GagEditorPolicy.java": "main_atmosphere_gag_editor_policy",
     b"app/src/main/java/com/subhub/app/atmosphere/GagEmojiCatalog.java": "main_atmosphere_gag_emoji_catalog",
     b"app/src/main/java/com/subhub/app/atmosphere/GagEmojiPicker.java": "main_atmosphere_gag_emoji_picker",
@@ -896,6 +897,7 @@ JAVAC_MAIN_SOURCES = {
 
 JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/remote/DummyPreviewConfiguration.java": "unit_remote_dummy_preview_configuration",
+    b"app/src/test/java/com/subhub/app/atmosphere/GagDeletionHistoryTest.java": "unit_gag_deletion_history_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagKeyAlternativesTest.java": "unit_gag_key_alternatives_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagLexiconTest.java": "unit_gag_lexicon_test",
     b"app/src/test/java/com/subhub/app/atmosphere/GagNextWordsTest.java": "unit_gag_next_words_test",
