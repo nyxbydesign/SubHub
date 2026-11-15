@@ -181,7 +181,8 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
                 .putInt("weekly_cap_cents", 5000).putInt("mercy_minutes", 10).commit());
         assertTrue(context.getSharedPreferences(ExtraTimeStore.PREFS, 0).edit().clear().commit());
         assertTrue(context.getSharedPreferences("subhub_app_timer_usage", 0).edit().clear()
-                .putString("day", LocalDate.now().toString()).putString("history_epoch", prefix)
+                .putString("day", LocalDate.now().toString())
+                .putString("history_epoch", UUID.randomUUID().toString())
                 .putString("history_zone", java.time.ZoneId.systemDefault().getId())
                 .putLong("package_used_ms:" + firstPackage, 5 * 60_000L)
                 .putLong("package_used_ms:" + secondPackage, 10 * 60_000L)
