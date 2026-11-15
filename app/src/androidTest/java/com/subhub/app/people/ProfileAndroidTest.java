@@ -846,7 +846,7 @@ public final class ProfileAndroidTest {
         assertFalse(SubFeaturePolicy.chosen(context, "censor"));
     }
 
-    @Test @SdkSuppress(minSdkVersion = 29) public void compactReadOnlyAllowancesKeepUnknownAndHardcoreContextWithoutEditControls() throws Exception {
+    @Test @SdkSuppress(minSdkVersion = 29) public void compactReadOnlyAllowancesKeepUnknownAndDeniedChoicesWithoutEditControls() throws Exception {
         ControllerPinManager.enterDomMode();
         PersonId id = new PersonId("remote_" + String.join("", Collections.nCopies(64, "a")) + "_" + String.join("", Collections.nCopies(32, "b")));
         AtomicReference<PersonSnapshot> current = new AtomicReference<>();
@@ -867,10 +867,10 @@ public final class ProfileAndroidTest {
             capture(scenario, "compact-readonly-unknown").recycle();
             scenario.onActivity(a -> { View root = a.findViewById(android.R.id.content); assertReadOnly(root.findViewWithTag("person_allowed_features")); textFits(root); });
             Map<String, Boolean> consent = new LinkedHashMap<>(); for (String key : SubFeaturePolicy.FEATURES) consent.put(key, !"censor".equals(key));
-            current.set(base.withProfile(ProfileData.empty("Paired Sub"), consent, true)); scenario.recreate();
+            current.set(base.withProfile(ProfileData.empty("Paired Sub"), consent)); scenario.recreate();
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
             onView(tag("person_allowance:popup")).perform(revealAboveNavigation());
-            capture(scenario, "compact-readonly-hardcore").recycle();
+            capture(scenario, "compact-readonly-denied").recycle();
             scenario.onActivity(a -> { View root = a.findViewById(android.R.id.content); assertReadOnly(root.findViewWithTag("person_allowed_features")); textFits(root); });
             onView(tag("person_allowance:censor")).perform(revealAboveNavigation(), click());
             assertEquals(beforeChoices, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
@@ -893,7 +893,7 @@ public final class ProfileAndroidTest {
         PersonSnapshot paired = new PersonSnapshot(id, "Paired Sub", "Fixture device", "Contract", "Inactive",
                 PersonSnapshot.Connection.OFFLINE, PersonSnapshot.Freshness.STALE, System.currentTimeMillis() - 86400000L,
                 EnumSet.noneOf(PersonSnapshot.Capability.class), Collections.emptyList(), Collections.emptyList(),
-                "EUR", 0, 0, 0, 0, false).withProfile(ProfileData.empty("Paired Sub"), consent, true);
+                "EUR", 0, 0, 0, 0, false).withProfile(ProfileData.empty("Paired Sub"), consent);
         People.installRemoteRepository(new PersonRepository() {
             public java.util.List<PersonId> people() { return Collections.singletonList(id); }
             public PersonSnapshot load(PersonId requested) { assertEquals(id, requested); return paired; }
@@ -902,9 +902,9 @@ public final class ProfileAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()).putExtra("person_section", "contracts"))) {
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
             settleNativeFrame(scenario); alignCardTop(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features"));
-            capture(scenario, "large-readonly-hardcore-context").recycle();
+            capture(scenario, "large-readonly-denied-context").recycle();
             onView(tag("person_allowance:popup")).perform(revealAboveNavigation()); settleNativeFrame(scenario);
-            capture(scenario, "large-readonly-hardcore-end").recycle();
+            capture(scenario, "large-readonly-denied-end").recycle();
             scenario.onActivity(a -> assertAboveNavigation(a, a.findViewById(android.R.id.content).findViewWithTag("person_allowance:popup"), true));
         }
         ControllerPinManager.enterSubMode();

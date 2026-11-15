@@ -25,10 +25,6 @@ public final class SubFeaturePolicy {
         requireFeature(feature);
         return preferences(context).getBoolean(feature, true);
     }
-    /** Compatibility observation: Hardcore never overrides locally selected features. */
-    public static boolean hardcoreOverride(Context context) {
-        return false;
-    }
     public static boolean allowed(Context context, String feature) {
         return chosen(context, feature);
     }

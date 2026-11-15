@@ -438,7 +438,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "renderedRoleProfilesRetainReadableNavigationStatisticsAndOriginalAchievements",
         "contractDomPreviewKeepsItsOwnIdentityBioAndRoundedAvatar",
         "compactAllowancesRetainNativeTargetsExplicitStatesAndPersistence",
-        "compactReadOnlyAllowancesKeepUnknownAndHardcoreContextWithoutEditControls",
+        "compactReadOnlyAllowancesKeepUnknownAndDeniedChoicesWithoutEditControls",
         "largeTextCaptureCoverageShowsWholeControlsAndExpandedBioEnd",
         "bothRoleProfileCardsUseSwitchAndSingleRolesKeepTheirIdentity",
         "profileSelectorsUseEqualHalvesOrAReadableStack",

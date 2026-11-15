@@ -383,7 +383,6 @@ public class RemoteSessionControlsAndroidTest {
             assertEquals(0, gateway.confirms.get());
             gateway.reviewWitness = WITNESS; gateway.stopAvailable = true; dirty.set(true);
             await(() -> enabled(page, "remote_session_stop"));
-            assertFalse(SubFeaturePolicy.hardcoreOverride(context));
             tap("remote_session_stop"); await(() -> gateway.confirms.get() == 1);
             assertEquals(RemoteSessionCommands.Action.STOP, gateway.confirmed.request.action);
             assertEquals(repeat('e'), gateway.confirmed.request.sessionIdentity);

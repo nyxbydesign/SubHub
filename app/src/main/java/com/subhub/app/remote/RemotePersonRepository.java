@@ -68,7 +68,7 @@ public final class RemotePersonRepository implements PersonRepository {
                 read==Read.FULL ? allowances(peer,configuration) : List.of(),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
-                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
+                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime)).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
     }
 
     static boolean canViewBlackmail(RemoteStore.State pairing, PersonSnapshot.Freshness freshness, JSONObject runtime) {
@@ -103,7 +103,7 @@ public final class RemotePersonRepository implements PersonRepository {
             EnumSet<PersonSnapshot.Capability> caps=local.capabilities.isEmpty()?EnumSet.noneOf(PersonSnapshot.Capability.class):EnumSet.copyOf(local.capabilities);caps.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
                     local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                    .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                    .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent)
                     .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }
         try {
@@ -111,7 +111,7 @@ public final class RemotePersonRepository implements PersonRepository {
             String name=applied==null?context.getString(R.string.role_local_configuration):applied.getJSONObject("contract").getString("name");
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
                 return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                        .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                        .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent)
                         .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;

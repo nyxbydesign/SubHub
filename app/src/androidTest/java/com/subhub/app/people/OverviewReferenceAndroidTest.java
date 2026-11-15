@@ -704,7 +704,7 @@ public final class OverviewReferenceAndroidTest {
         PersonSnapshot result = new PersonSnapshot(p.id, p.name, p.device, p.contractName, p.serviceLabel, p.connection,
                 p.freshness, p.lastSyncedAt, p.capabilities, p.sections, allowances, p.currency, p.protectedSeconds,
                 p.activityEvents, p.tributeCents, p.sessions, p.serviceActive, sync, p.sessionIdentity, p.additionOrder)
-                .withProfile(p.profile, p.featureConsent, p.consentHardcoreOverride);
+                .withProfile(p.profile, p.featureConsent);
         return p.contractDom == null ? result : result.withContractDom(p.contractDom, p.contractDomId);
     }
     private PersonSnapshot remote(char key, String name, String gender, int age, long order) {

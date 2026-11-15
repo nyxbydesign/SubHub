@@ -251,7 +251,6 @@ public class RemoteConfigurationAndroidTest {
         assertFalse(new com.subhub.app.penance.PenanceManager(context).isEnabled());
         assertFalse(com.subhub.app.popup.PopupStormSettings.load(context).isEnabled());
         assertTrue(main().getBoolean("module_censor_enabled",false));assertTrue(main().getBoolean("popup_storm_enabled",false));
-        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
     }
     /** Persisted Hardcore state must not even be consulted to decide feature participation. */
     @Test public void hardcoreStateCannotOverrideAnySavedFeatureChoice() throws Exception {
@@ -263,7 +262,6 @@ public class RemoteConfigurationAndroidTest {
             assertFalse(feature,com.subhub.app.security.SubFeaturePolicy.allowed(policy,feature));
             assertFalse(feature,com.subhub.app.security.SubFeaturePolicy.chosen(policy,feature));
         }
-        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(policy));
         assertEquals(saved,context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
         assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"wallet",true));
         assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"tasks",true));
@@ -304,7 +302,6 @@ public class RemoteConfigurationAndroidTest {
         JSONObject doc=configuration();
         doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("hardcore_locally_consented",true);
         assertThrows(IllegalArgumentException.class,()->RemoteConfiguration.active(doc));
-        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
     }
 
     @Test public void optingOutOfOneFeatureStillAllowsAnUnrelatedDurationChange() throws Exception {
