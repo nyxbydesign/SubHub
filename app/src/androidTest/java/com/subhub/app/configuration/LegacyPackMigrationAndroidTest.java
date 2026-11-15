@@ -223,12 +223,17 @@ public final class LegacyPackMigrationAndroidTest {
     }
 
     @Test public void malformedJournalEnvelopeAndSectionsAreRetained() throws Exception {
+        String missingSections = new JSONObject().put("pending", true).put("backup",
+                new JSONObject().put(SettingsRepository.PREFERENCES_NAME,
+                        new JSONObject().put("show_border", typed("boolean", false)))).toString();
         for (String raw : new String[] {"not-json", "{}", "{\"pending\":\"true\",\"backup\":{}}",
                 "{\"pending\":true,\"sections\":[\"unknown\"],\"backup\":{}}",
-                "{\"pending\":true,\"sections\":[],\"backup\":{}}"}) {
+                "{\"pending\":true,\"sections\":[],\"backup\":{}}", missingSections}) {
+            Map<String, ?> before = new HashMap<>(main().getAll());
             assertTrue(legacy().edit().putString("activation_journal", raw).commit());
             assertFalse(LegacyPackMigration.recoverAndMigrate(context));
             assertFalse(LegacyPackMigration.isReady(context));
+            assertEquals(before, main().getAll());
             assertEquals(raw, legacy().getString("activation_journal", ""));
             assertFalse(main().contains(LegacyPackMigration.MIGRATION_KEY));
         }

@@ -143,15 +143,13 @@ public final class LegacyPackMigration {
         if (raw == null) return false;
         JSONObject journal = new JSONObject(raw);
         if (!Boolean.TRUE.equals(journal.opt("pending"))) return false;
-        if (journal.has("sections")) {
-            JSONArray sections = journal.getJSONArray("sections");
-            if (sections.length() == 0) return false;
-            Set<String> seen = new HashSet<>();
-            for (int i = 0; i < sections.length(); i++) {
-                Object section = sections.get(i);
-                if (!(section instanceof String) || !ConfigurationSchema.SECTIONS.contains(section)
-                        || !seen.add((String) section)) return false;
-            }
+        JSONArray sections = journal.getJSONArray("sections");
+        if (sections.length() == 0) return false;
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < sections.length(); i++) {
+            Object section = sections.get(i);
+            if (!(section instanceof String) || !ConfigurationSchema.SECTIONS.contains(section)
+                    || !seen.add((String) section)) return false;
         }
         JSONObject backup = journal.getJSONObject("backup");
         if (backup.length() == 0) return false;

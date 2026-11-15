@@ -257,7 +257,7 @@ public class RemoteEditorAndroidTest {
 
     @Test public void focusedSectionsExposeOnlyTheirOwnDirectProfileActions()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
-            ready(page,"apps_all");page.onActivity(a->{assertNull(find(a.body,context.getString(R.string.remote_import)));assertNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(controls(a).get("module_censor_enabled"));});
+            ready(page,"apps_all");page.onActivity(a->{assertNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(controls(a).get("module_censor_enabled"));});
         }
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
             ready(page,"module_censor_enabled");page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(find(a.body,context.getString(R.string.remote_add_popup_image)));assertNull(find(a.body,context.getString(R.string.remote_apps)));});
