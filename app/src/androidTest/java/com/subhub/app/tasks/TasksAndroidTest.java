@@ -847,9 +847,16 @@ public final class TasksAndroidTest {
         Locale resourceLocale = context.getResources().getConfiguration().getLocales().get(0);
         Locale processLocale = "en".equals(resourceLocale.getLanguage()) ? Locale.GERMANY : Locale.US;
         Locale savedFormat = Locale.getDefault(Locale.Category.FORMAT);
-        Locale.setDefault(Locale.Category.FORMAT, processLocale);
         try (ActivityScenario<TasksActivity> page = launch()) {
             awaitTag(page, "task_preview_timing:" + occurrenceId(scheduled));
+            page.onActivity(activity -> {
+                // Android adopts the activity locale during launch. Set the divergent FORMAT
+                // locale after launch and ask the regular history control to rerender the list.
+                Locale.setDefault(Locale.Category.FORMAT, processLocale);
+                View history = activity.findViewById(android.R.id.content).findViewWithTag("tasks_history");
+                assertNotNull(history);
+                assertTrue(history.performClick());
+            });
             capture("tasks-locale-list");
             page.onActivity(activity -> {
                 assertEquals(resourceLocale, activity.getResources().getConfiguration().getLocales().get(0));
@@ -859,8 +866,9 @@ public final class TasksAndroidTest {
                 assertRenderedTimestamp(activity, "task_preview_timing:" + occurrenceId(scheduled),
                         R.string.tasks_starts, taskTime(start, zone, resourceLocale));
             });
-            tap("tasks_history");
-            awaitTag(page, "task_completion_time:" + occurrenceId(approved));
+            String submitted = "task_completion_time:" + occurrenceId(approved);
+            awaitTag(page, submitted);
+            onView(withTagValue(is(submitted))).perform(NativeUiActions.revealAboveNavigation());
             capture("tasks-locale-history");
             page.onActivity(activity -> {
                 Instant end = approved.end(approved.firstStart.toLocalDate());
