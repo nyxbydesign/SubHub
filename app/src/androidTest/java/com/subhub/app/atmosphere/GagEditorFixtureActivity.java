@@ -5,7 +5,10 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.os.Bundle;
 import android.os.PersistableBundle;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 
@@ -36,6 +39,15 @@ public final class GagEditorFixtureActivity extends Activity {
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
         editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
+        if (getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)) {
+            editor.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+                @Override public void afterTextChanged(Editable text) {
+                    editor.setContentDescription(longClipboardResult(text));
+                }
+            });
+        }
         setContentView(editor);
         editor.requestFocus();
         editor.post(() -> {
@@ -43,6 +55,10 @@ public final class GagEditorFixtureActivity extends Activity {
             else editor.setSelection(0);
             getSystemService(InputMethodManager.class).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
         });
+    }
+
+    static String longClipboardResult(CharSequence text) {
+        return EDITOR + " length=" + text.length() + " exact=" + TextUtils.equals(LONG_CLIPBOARD_TEXT, text);
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {

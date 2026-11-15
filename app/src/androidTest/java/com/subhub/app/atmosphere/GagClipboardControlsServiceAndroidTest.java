@@ -87,8 +87,12 @@ public final class GagClipboardControlsServiceAndroidTest {
         UiObject2 card = await(By.pkg(APP).textStartsWith(GagEditorFixtureActivity.LONG_CLIPBOARD_PREFIX));
         assertTrue(card.getText().length() <= 257);
         card.click();
-        await(editor().text(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT));
-        assertEditor(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT);
+        String expected = GagEditorFixtureActivity.longClipboardResult(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT);
+        UiObject2 result = device().wait(Until.findObject(By.pkg(FIXTURE).desc(expected)), TIMEOUT);
+        if (result == null) {
+            UiObject2 editor = await(By.pkg(FIXTURE).descStartsWith(GagEditorFixtureActivity.EDITOR));
+            assertEquals(expected, editor.getContentDescription());
+        }
     }
 
     private static void openFixture(boolean seed) throws Exception {
