@@ -42,7 +42,12 @@ public final class ControllerAuthenticator {
         }
     }
     public Result verify(String code) {
+        return verify(code, null, 0);
+    }
+
+    Result verify(String code, KeyholderProvider sessionProvider, long sessionRevision) {
         if (ControllerPinManager.remoteKeyholderState() != KeyholderProvider.State.NONE) {
+            if (sessionProvider != null) return Result.UNAVAILABLE;
             try { return com.subhub.app.people.People.keyholder().verifyCode(code); }
             catch (RuntimeException unavailable) { return Result.UNAVAILABLE; }
         }
@@ -51,11 +56,16 @@ public final class ControllerAuthenticator {
             if (!isPaired()) return Result.UNAVAILABLE;
             if (remainingCooldownMillis() > 0) return Result.THROTTLED;
             try {
-                long step = Totp.verify(decrypt(), code, System.currentTimeMillis(), prefs.getLong("last_step", -1));
-                if (step < 0) return failAttempt() ? Result.INVALID : Result.UNAVAILABLE;
+                String encrypted = prefs.getString("encrypted_secret", "");
+                long step = Totp.verify(decrypt(encrypted), code, System.currentTimeMillis(), prefs.getLong("last_step", -1));
+                if (step < 0) return failAttempt(sessionProvider, sessionRevision) ? Result.INVALID : Result.UNAVAILABLE;
+                if (sessionProvider != null) {
+                    return ControllerPinManager.withLocalDomSession(sessionProvider, sessionRevision, () ->
+                            encrypted.equals(prefs.getString("encrypted_secret", "")) && recordSuccess(step))
+                            ? Result.SUCCESS : Result.UNAVAILABLE;
+                }
                 return ControllerPinManager.withLocalAuthority(() -> {
-                    if (!prefs.edit().putLong("last_step", step).putInt("attempts", 0)
-                            .remove("blocked_wall").remove("blocked_elapsed").commit()) return false;
+                    if (!recordSuccess(step)) return false;
                     ControllerPinManager.enterDomMode();
                     return true;
                 }) ? Result.SUCCESS : Result.UNAVAILABLE;
@@ -81,8 +91,15 @@ public final class ControllerAuthenticator {
                 : deadline - System.currentTimeMillis();
         return Math.max(0, Math.min(15 * 60_000L, remaining));
     }
-    private boolean failAttempt() {
-        return ControllerPinManager.withLocalAuthority(() -> {
+    private boolean recordSuccess(long step) {
+        return prefs.edit().putLong("last_step", step).putInt("attempts", 0)
+                .remove("blocked_wall").remove("blocked_elapsed").commit();
+    }
+
+    private boolean failAttempt() { return failAttempt(null, 0); }
+
+    private boolean failAttempt(KeyholderProvider sessionProvider, long sessionRevision) {
+        java.util.function.BooleanSupplier failure = () -> {
             int attempts = Math.min(20, prefs.getInt("attempts", 0) + 1);
             SharedPreferences.Editor edit = prefs.edit().putInt("attempts", attempts);
             if (attempts >= 5) {
@@ -92,7 +109,9 @@ public final class ControllerAuthenticator {
                         .putInt("blocked_boot", Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, -1));
             }
             return edit.commit();
-        });
+        };
+        return sessionProvider == null ? ControllerPinManager.withLocalAuthority(failure)
+                : ControllerPinManager.withLocalDomSession(sessionProvider, sessionRevision, failure);
     }
     private static SecretKey key() throws GeneralSecurityException {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
@@ -111,8 +130,8 @@ public final class ControllerAuthenticator {
         byte[] encrypted = cipher.doFinal(secret.getBytes(StandardCharsets.US_ASCII));
         return Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "." + Base64.encodeToString(encrypted, Base64.NO_WRAP);
     }
-    private String decrypt() throws GeneralSecurityException {
-        String[] parts = prefs.getString("encrypted_secret", "").split("\\.");
+    private static String decrypt(String encrypted) throws GeneralSecurityException {
+        String[] parts = encrypted.split("\\.");
         if (parts.length != 2) throw new GeneralSecurityException("Authenticator unavailable");
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)));

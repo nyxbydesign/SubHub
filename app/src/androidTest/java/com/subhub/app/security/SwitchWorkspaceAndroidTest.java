@@ -196,6 +196,40 @@ public final class SwitchWorkspaceAndroidTest {
         }
     }
 
+    @Test public void localReauthenticationCannotCarryAReviewAcrossLockOrProviderReplacement() {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertTrue(ControllerPinManager.verify(activity, "5729"));
+                long reviewed = ControllerPinManager.domWorkspaceRevision();
+                KeyholderProvider provider = People.keyholder();
+                EditText input = new EditText(activity);
+                ControllerCredentialChoice choice = new ControllerCredentialChoice(activity, new LinearLayout(activity), input);
+                assertFalse(ControllerPinManager.verify(activity, "0000", provider, reviewed));
+                input.setText("5729");
+                assertTrue(choice.verify(reviewed));
+                assertEquals(reviewed, ControllerPinManager.domWorkspaceRevision());
+
+                ControllerPinManager.enterSubMode();
+                assertFalse(choice.verify(reviewed));
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertTrue(ControllerPinManager.verify(activity, "5729"));
+                assertFalse(choice.verify(reviewed));
+                long nextReview = ControllerPinManager.domWorkspaceRevision();
+                assertFalse(ControllerPinManager.verify(activity, "5729", provider, reviewed));
+
+                People.installKeyholder(new KeyholderProvider() {
+                    public State state() { return State.NONE; }
+                    public String assignedDomName() { return ""; }
+                    public ControllerAuthenticator.Result verifyCode(String code) {
+                        throw new AssertionError("A local review must never use a substituted provider's code");
+                    }
+                });
+                assertFalse(choice.verify(nextReview));
+                assertFalse(ControllerPinManager.verify(activity, "5729", provider, nextReview));
+            });
+        }
+    }
+
     @Test public void protectedCredentialChoiceStillRequiresAssignedRemoteCode() {
         People.installKeyholder(new KeyholderProvider() {
             public State state() { return State.READY; }

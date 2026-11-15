@@ -1,5 +1,14 @@
 package com.subhub.app.remote;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
+import static androidx.test.espresso.action.ViewActions.replaceText;
+import static androidx.test.espresso.matcher.ViewMatchers.withHint;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
+import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
 import android.content.Context;
@@ -12,11 +21,15 @@ import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import com.subhub.app.R;
 import com.subhub.app.activity.*;
+import androidx.test.filters.SdkSuppress;
+import com.subhub.app.people.PeopleActivity;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.relationships.DomSubjectScope;
 import com.subhub.app.relationships.RelationshipUi;
 import com.subhub.app.relationships.RelationshipPreparationKey;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
+import com.subhub.app.settings.SettingsRepository;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,6 +42,7 @@ import org.junit.Test;
 public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
     @Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final com.subhub.app.UiAutomationStateRule uiAutomation = new com.subhub.app.UiAutomationStateRule();
     private RelationshipUi.Provider previousProvider;
     private ActivityRepository previousActivity;
     private FormalRelationshipProvider formal;
@@ -112,6 +126,72 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
         assertTrue(activity.load(null, 20).entries.isEmpty());
         assertEquals(1, activity.load("local:MAX", 20).entries.size());
         assertEquals(before, history());
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void peopleConfirmsAndUnlinksWithCurrentLocalPinAndProductionProvider() throws Exception {
+        assertTrue(target.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit());
+        // The activity uses the app preferences; the real provider uses the owned fixture's store.
+        assertTrue(ControllerPinManager.setPin(target, "624871"));
+        try (ActivityScenario<PeopleActivity> page = ActivityScenario.launch(PeopleActivity.class)) {
+            awaitAction(page, "relationship_prepare");
+            tapAction("relationship_prepare");
+            awaitPreparedReview(page);
+            // Bind confirmation to the prepared journal entry recovered in the normal People UI.
+            page.recreate();
+            awaitAction(page, "relationship_resume");
+            tapAction("relationship_resume");
+            awaitAction(page, "relationship_confirm");
+
+            long reviewed = ControllerPinManager.domWorkspaceRevision();
+            tapAction("relationship_confirm");
+            submitLocalPin();
+            awaitAction(page, "relationship_unlink");
+            assertEquals(reviewed, ControllerPinManager.domWorkspaceRevision());
+            RelationshipUi.Edge edge = await(formal.snapshot()).governingDom;
+            assertNotNull("The real provider must commit the selected local relationship", edge);
+            assertEquals(RelationshipUi.Delivery.LOCAL, edge.delivery);
+            assertEquals("ACTIVE", edge.state);
+
+            tapAction("relationship_unlink");
+            submitLocalPin();
+            awaitAction(page, "relationship_prepare");
+            assertEquals(reviewed, ControllerPinManager.domWorkspaceRevision());
+            assertNull(await(formal.snapshot()).governingDom);
+        }
+    }
+
+    private static void submitLocalPin() {
+        onView(withHint(R.string.controller_pin_label)).perform(replaceText("624871"), closeSoftKeyboard());
+        onView(withText(R.string.controller_pin_unlock)).perform(click());
+    }
+
+    private static void tapAction(String tag) {
+        onView(withTagValue(is(tag))).perform(revealAboveNavigation(), click());
+    }
+
+    private static void awaitPreparedReview(ActivityScenario<PeopleActivity> page) throws InterruptedException {
+        awaitAnyAction(page, "relationship_confirm", "relationship_resume");
+    }
+
+    private static void awaitAction(ActivityScenario<PeopleActivity> page, String tag) throws InterruptedException {
+        awaitAnyAction(page, tag);
+    }
+
+    private static void awaitAnyAction(ActivityScenario<PeopleActivity> page, String... tags) throws InterruptedException {
+        AtomicBoolean available = new AtomicBoolean();
+        long deadline = android.os.SystemClock.uptimeMillis() + 8000;
+        do {
+            page.onActivity(host -> {
+                for (String tag : tags) {
+                    View action = host.findViewById(android.R.id.content).findViewWithTag(tag);
+                    if (action != null && action.isEnabled()) available.set(true);
+                }
+            });
+            if (!available.get()) Thread.sleep(25);
+        } while (!available.get() && android.os.SystemClock.uptimeMillis() < deadline);
+        assertTrue("Expected an enabled People action " + java.util.Arrays.toString(tags), available.get());
     }
 
     @Test public void providerReadsAreOutsideStoreAndAuthorityLocksAndFailureNeverFallsBack() throws Exception {

@@ -181,7 +181,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             long reviewEpoch = model.reviewEpoch();
             action(R.string.relationships_link, "relationship_confirm", () -> {
                 if (!mayLink() || model.review() != review || model.busy()) return;
-                ControllerPinGate.authenticate(activity, () -> model.confirm(review, reviewEpoch), false);
+                ControllerPinGate.reauthenticateLocalDom(activity, () -> model.confirm(review, reviewEpoch));
             }, model.canConfirm());
             action(android.R.string.cancel, "relationship_cancel", () -> model.cancel(saved), !model.busy());
             return;
@@ -272,7 +272,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             long expectedEpoch = model.reviewEpoch();
             action("Unlink", local.size() == 1 ? "relationship_unlink" : "relationship_unlink:" + edge.relationshipId + ":" + edge.generation, () -> {
                 if (!model.canUnlink(edge)) return;
-                ControllerPinGate.authenticate(activity, () -> model.unlink(edge, expectedEpoch), false);
+                ControllerPinGate.reauthenticateLocalDom(activity, () -> model.unlink(edge, expectedEpoch));
             }, model.canUnlink(edge));
         }
         if (model.unlinkUnavailable()) text(R.string.relationships_unavailable, "relationship_unlink_status");

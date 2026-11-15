@@ -191,7 +191,7 @@ public final class ControllerPinGate {
         if (finishIfLocked) activity.finish();
     }
 
-    /** Sensitive actions obtain a fresh credential without resetting the surrounding role session. */
+    /** Request a fresh controller credential for a sensitive action. */
     public static void authenticate(Activity activity, Runnable authorized, boolean finishOnCancel) {
         KeyholderProvider.State keyholder = keyholderState();
         if (keyholder == KeyholderProvider.State.PENDING || keyholder == KeyholderProvider.State.UNAVAILABLE
@@ -203,6 +203,17 @@ public final class ControllerPinGate {
         showCredentialPrompt(activity, authorized, finishOnCancel, true);
     }
 
+    /** A local relationship action authenticates within the exact Dom workspace that opened its review. */
+    public static void reauthenticateLocalDom(Activity activity, Runnable authorized) {
+        long revision = ControllerPinManager.domWorkspaceRevision();
+        if (!ControllerPinManager.isDomModeActive() || keyholderState() != KeyholderProvider.State.NONE
+                || !ControllerPinManager.hasCredentials(activity)) {
+            notifyLocked(activity);
+            return;
+        }
+        showCredentialPrompt(activity, authorized, false, true, false, revision);
+    }
+
     private static void showCredentialPrompt(Activity activity, Runnable authorized,
             boolean finishOnCancel, boolean force) {
         showCredentialPrompt(activity, authorized, finishOnCancel, force, false);
@@ -210,6 +221,11 @@ public final class ControllerPinGate {
 
     private static void showCredentialPrompt(Activity activity, Runnable authorized,
             boolean finishOnCancel, boolean force, boolean workspaceOnly) {
+        showCredentialPrompt(activity, authorized, finishOnCancel, force, workspaceOnly, null);
+    }
+
+    private static void showCredentialPrompt(Activity activity, Runnable authorized,
+            boolean finishOnCancel, boolean force, boolean workspaceOnly, Long localDomRevision) {
         KeyholderProvider.State keyholder = workspaceOnly ? KeyholderProvider.State.NONE : keyholderState();
         LinearLayout panel = panel(activity);
         boolean remote = keyholder != KeyholderProvider.State.NONE;
@@ -235,15 +251,16 @@ public final class ControllerPinGate {
             bindSubmit(dialog, pin);
             com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                    if (credential.verify()) {
+                    if (credential.verify(localDomRevision)) {
                         dialog.dismiss();
-                        authorized.run();
+                        if (localDomRevision == null || credential.isCurrentAuthority(localDomRevision)) authorized.run();
                     }
                 });
         });
         dialog.show();
-        watchAuthority(activity, dialog, credential::isCurrentAuthority,
+        watchAuthority(activity, dialog, () -> credential.isCurrentAuthority(localDomRevision),
                 () -> {
+                    if (localDomRevision != null) { notifyLocked(activity); return; }
                     if (force && workspaceOnly) authenticateDomWorkspace(activity, authorized, finishOnCancel);
                     else if (force) authenticate(activity, authorized, finishOnCancel);
                     else if (workspaceOnly) unlockDomWorkspace(activity, authorized, finishOnCancel);

@@ -39,6 +39,35 @@ public class ControllerAuthenticatorAndroidTest {
         assertEquals(ControllerAuthenticator.Result.INVALID, new ControllerAuthenticator(context).verify(code));
         assertFalse(ControllerPinManager.isDomModeActive());
     }
+    @Test public void localReauthenticationConsumesFreshCodeWithoutRotatingSession() throws Exception {
+        ControllerAuthenticator auth = new ControllerAuthenticator(context);
+        String secret = Totp.newSecret();
+        long currentStep = System.currentTimeMillis() / Totp.STEP_MILLIS;
+        assertEquals(ControllerAuthenticator.Result.SUCCESS, auth.pair(secret, Totp.code(secret, currentStep)));
+        android.content.SharedPreferences replay = context.getSharedPreferences("subhub_controller_auth", 0);
+        long pairedStep = replay.getLong("last_step", -1);
+        // The next code is already in the verifier's clock-skew window and survives a step rollover.
+        String freshCode = Totp.code(secret, pairedStep + 1);
+        KeyholderProvider provider = com.subhub.app.people.People.keyholder();
+        long staleRevision = ControllerPinManager.domWorkspaceRevision();
+
+        ControllerPinManager.enterSubMode();
+        assertEquals(ControllerAuthenticator.Result.UNAVAILABLE, auth.verify(freshCode, provider, staleRevision));
+        assertFalse(ControllerPinManager.isDomModeActive());
+        ControllerPinManager.enterDomMode();
+        assertEquals(ControllerAuthenticator.Result.UNAVAILABLE, auth.verify(freshCode, provider, staleRevision));
+        assertEquals(pairedStep, replay.getLong("last_step", -1));
+
+        long revision = ControllerPinManager.domWorkspaceRevision();
+        assertEquals(ControllerAuthenticator.Result.SUCCESS, auth.verify(freshCode, provider, revision));
+        assertEquals(revision, ControllerPinManager.domWorkspaceRevision());
+        assertEquals(pairedStep + 1, replay.getLong("last_step", -1));
+        assertEquals(ControllerAuthenticator.Result.INVALID,
+                new ControllerAuthenticator(context).verify(freshCode, provider, revision));
+        assertEquals(pairedStep + 1, replay.getLong("last_step", -1));
+        assertEquals(revision, ControllerPinManager.domWorkspaceRevision());
+    }
+
     @Test public void invalidAttemptsThrottlePersistentlyWithoutGrantingDom() throws Exception {
         ControllerAuthenticator auth = new ControllerAuthenticator(context); String secret = Totp.newSecret();
         assertEquals(ControllerAuthenticator.Result.SUCCESS, auth.pair(secret, Totp.code(secret, System.currentTimeMillis() / 30000)));
