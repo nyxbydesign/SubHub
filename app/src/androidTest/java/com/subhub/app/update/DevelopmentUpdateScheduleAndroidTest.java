@@ -233,7 +233,8 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                         activity.getString(R.string.update_history_preview), previewTime), meta(rows, 1).getText());
                 assertEquals(activity.getString(R.string.update_release_with_timestamp,
                         activity.getString(R.string.update_history_preview), "2026-10-08"), meta(rows, 2).getText());
-                assertEquals(stableTime, meta(rows, 3).getText());
+                assertEquals(activity.getString(R.string.update_release_with_timestamp,
+                        activity.getString(R.string.update_history_stable), stableTime), meta(rows, 3).getText());
                 TextView installed = activity.findViewById(R.id.installed_version);
                 assertEquals(activity.getString(R.string.update_release_with_timestamp,
                         activity.getString(R.string.update_installed_version,

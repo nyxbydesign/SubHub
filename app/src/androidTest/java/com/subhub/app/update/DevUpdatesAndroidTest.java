@@ -312,7 +312,7 @@ public final class DevUpdatesAndroidTest {
             state.clearCandidate();
             scenario.onActivity(activity -> {
                 renderUpdates(activity, render);
-                assertEquals(stable.publishedAt, historyMeta(historyRow(activity, stable)));
+                assertHistoryMeta(activity, stable, R.string.update_history_stable);
             });
             scenario.recreate();
             scenario.onActivity(activity -> {

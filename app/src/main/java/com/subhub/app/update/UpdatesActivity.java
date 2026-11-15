@@ -349,10 +349,8 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
             return withTimestamp(getString(R.string.update_history_installed), timestamp);
         }
-        if (item.prerelease) {
-            return withTimestamp(getString(R.string.update_history_preview), timestamp);
-        }
-        return timestamp.isEmpty() ? getString(R.string.update_history_published) : timestamp;
+        int releaseType = item.prerelease ? R.string.update_history_preview : R.string.update_history_stable;
+        return withTimestamp(getString(releaseType), timestamp);
     }
 
     private void finalizeDownload() {
