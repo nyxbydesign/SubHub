@@ -357,6 +357,7 @@ DEVICE_PASS_SOURCE_ONLY = {
     ],
     "com.subhub.app.appmode.LimitsUiAndroidTest": [
         "recordedUsageAndDistinctAllowancesHaveReadableGeometry",
+        "unchangedUsageRefreshesLeaveLabelsAloneAndNewUsageStillAppears",
         "invalidDraftSurvivesTicksAndRecreationThenPersistsWhenValid",
         "scopeRefreshRetainsFocusedDraftAndInactiveAllowance",
         "delayedSaveRechecksDomAccess",
