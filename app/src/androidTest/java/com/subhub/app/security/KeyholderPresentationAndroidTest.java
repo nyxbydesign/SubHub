@@ -1,5 +1,6 @@
 package com.subhub.app.security;
 
+import static com.subhub.app.NativeUiActions.assertNoViewWithResourceId;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -54,7 +55,7 @@ public class KeyholderPresentationAndroidTest {
             scenario.onActivity(a -> {
                 assertNotNull(a.findViewById(R.id.keyholder_setup_local));
                 assertNotNull(a.findViewById(R.id.keyholder_pair_device));
-                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertNoViewWithResourceId(a, "authenticator_pairing_qr");
                 assertEquals(0, a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             });
             scenario.recreate();
@@ -129,7 +130,7 @@ public class KeyholderPresentationAndroidTest {
         assertNull(activity.findViewById(R.id.keyholder_remove_pin));
         assertNull(activity.findViewById(R.id.keyholder_remove_authenticator));
         assertNull(activity.findViewById(R.id.keyholder_pair_device));
-        assertNull(activity.findViewById(R.id.authenticator_pairing_qr));
+        assertNoViewWithResourceId(activity, "authenticator_pairing_qr");
         assertFalse(activity.findViewById(R.id.button_edit_lock).isShown());
         assertTrue(activity.findViewById(R.id.settings_connection).isShown());
     }

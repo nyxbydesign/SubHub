@@ -1,5 +1,6 @@
 package com.subhub.app.security;
 
+import static com.subhub.app.NativeUiActions.assertNoViewWithResourceId;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
 import static androidx.test.espresso.assertion.ViewAssertions.*;
@@ -66,7 +67,7 @@ public class KeyholderDiscoveryAndroidTest {
             page.onActivity(a -> {
                 assertNotNull(a.findViewById(R.id.keyholder_pin_change_button));
                 assertNotNull(a.findViewById(R.id.keyholder_pair_device));
-                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertNoViewWithResourceId(a, "authenticator_pairing_qr");
                 assertFalse(a.findViewById(R.id.button_edit_lock).isShown());
             });
             assertFalse(ControllerPinManager.isDomModeActive());

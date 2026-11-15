@@ -1,5 +1,6 @@
 package com.subhub.app.people;
 
+import static com.subhub.app.NativeUiActions.assertNoViewWithResourceId;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
@@ -587,7 +588,7 @@ public final class RoleExperienceAndroidTest {
                 assertNull(keyholder.findViewById(R.id.keyholder_pin_change_button));
                 assertNull(keyholder.findViewById(R.id.keyholder_remove_pin));
                 assertNull(keyholder.findViewById(R.id.keyholder_pair_device));
-                assertNull(keyholder.findViewById(R.id.authenticator_pairing_qr));
+                assertNoViewWithResourceId(keyholder, "authenticator_pairing_qr");
                 assertEquals("Synthetic Dom", ((TextView) keyholder.findViewById(R.id.keyholder_assigned_dom)).getText().toString());
                 assertEquals(context.getString(R.string.keyholder_home_title),
                         ((TextView) keyholder.findViewById(R.id.primary_header_title)).getText().toString());
@@ -615,7 +616,7 @@ public final class RoleExperienceAndroidTest {
             onMain(() -> {
                 assertNotNull(local.findViewById(R.id.keyholder_pin_change_button));
                 assertNotNull(local.findViewById(R.id.keyholder_pair_device));
-                assertNull(local.findViewById(R.id.authenticator_pairing_qr));
+                assertNoViewWithResourceId(local, "authenticator_pairing_qr");
                 assertHeaderTextClearsControls(local);
             });
         }
