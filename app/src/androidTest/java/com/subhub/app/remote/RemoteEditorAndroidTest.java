@@ -158,7 +158,12 @@ public class RemoteEditorAndroidTest {
             View root = a.findViewById(android.R.id.content);
             LinearLayout scope = root.findViewWithTag("person_contract_scope");
             LinearLayout rows = root.findViewWithTag("person_contract_app_rows");
+            View allowedFeatures = root.findViewWithTag("person_allowed_features");
             View manage = scope.findViewWithTag("person_apps");
+            LinearLayout contract = (LinearLayout) scope.getParent();
+            assertNotNull(allowedFeatures);
+            assertSame(contract, allowedFeatures.getParent());
+            assertTrue(contract.indexOfChild(scope) < contract.indexOfChild(allowedFeatures));
             assertTrue(manage.isClickable());
             assertTrue(scope.indexOfChild(manage) < scope.indexOfChild(rows));
             for (int index = 1; index <= 6; index++) {
