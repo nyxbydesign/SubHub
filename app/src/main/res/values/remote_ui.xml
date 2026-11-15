@@ -34,7 +34,6 @@
     <string name="remote_remove_images">Remove artwork</string>
     <string name="remote_settings">Keyholder settings</string>
     <string name="remote_expired">Invitation expired</string>
-    <string name="remote_allowance_minutes">Daily allowance (minutes)</string>
     <string name="remote_unknown_zone">Timezone not recorded</string>
     <string name="remote_reload">Configuration changed or could not be saved. Reload and check the values.</string>
     <string name="remote_all_apps">All selectable apps</string>

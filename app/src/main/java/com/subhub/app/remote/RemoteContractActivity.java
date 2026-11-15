@@ -17,59 +17,17 @@ public final class RemoteContractActivity extends RemotePage {
     private final Map<String,android.view.View> controls=new LinkedHashMap<>();
     private Bundle restoreControls;
     private int fileAction;
-    private final Map<String,ImageView> iconViews=new LinkedHashMap<>();
-    private AutoCloseable appIconObserver;
-    private long appIconEpoch;
-    private boolean iconsResumed,rendering;
+    private boolean rendering;
     private RemoteConfigurationAutosave autosave;
     @Override protected void onCreate(Bundle state){super.onCreate(state);
-        String requested=getIntent().getStringExtra("section");if("atmosphere".equals(requested))requested="subliminal";
-        if(ConfigurationSchema.SECTIONS.contains(requested)||"apps".equals(requested))section=requested;
-        if(state!=null)section=state.getString("section",section);
+        String requested=state==null?getIntent().getStringExtra("section"):state.getString("section",section);
+        if("atmosphere".equals(requested))requested="subliminal";
+        if(requested!=null&&ConfigurationSchema.SECTIONS.contains(requested))section=requested;
         page(sectionTitle(section));if(!selectPeer())return;
-        body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener(){
-            @Override public void onViewAttachedToWindow(android.view.View view){observeAppIcons();}
-            @Override public void onViewDetachedFromWindow(android.view.View view){stopAppIcons();}
-        });
-        if(state!=null && state.containsKey("draft"))try{draft=new JSONObject(state.getString("draft"));editBase=new JSONObject(state.getString("editBase",draft.toString()));desired=state.getLong("desired");applied=state.getLong("applied");section=state.getString("section",section);artGroup=state.getString("artGroup","censor");fileAction=state.getInt("fileAction");restoreControls=state.getBundle("controls");render();if(autosave!=null)autosave.changed();return;}catch(JSONException invalid){notice(R.string.remote_reload);}
+        if(state!=null && state.containsKey("draft"))try{draft=new JSONObject(state.getString("draft"));editBase=new JSONObject(state.getString("editBase",draft.toString()));desired=state.getLong("desired");applied=state.getLong("applied");artGroup=state.getString("artGroup","censor");fileAction=state.getInt("fileAction");restoreControls=state.getBundle("controls");render();if(autosave!=null)autosave.changed();return;}catch(JSONException invalid){notice(R.string.remote_reload);}
         load();
     }
-    @Override protected void onResume(){super.onResume();iconsResumed=true;observeAppIcons();rebindAppIcons();}
-    @Override protected void onPause(){iconsResumed=false;stopAppIcons();super.onPause();}
-    @Override protected void onDestroy(){if(autosave!=null)autosave.close();stopAppIcons();iconViews.clear();super.onDestroy();}
-    private void observeAppIcons(){
-        if(appIconObserver!=null||!iconsResumed||peer==null||body==null||!body.isAttachedToWindow()||isFinishing())return;
-        long request=++appIconEpoch;String identity=peer.identity,generation=peer.generation;
-        long revision=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
-        String route=getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
-        com.subhub.app.security.DeviceRolePreferences.Mode role=com.subhub.app.security.DeviceRolePreferences.get(this);
-        com.subhub.app.security.KeyholderProvider authority=com.subhub.app.people.People.keyholder();
-        com.subhub.app.relationships.RelationshipUi.Provider provider=com.subhub.app.relationships.RelationshipUi.provider();
-        appIconObserver=RemoteUi.observeAppIcons(()->{
-            if(revision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||request!=appIconEpoch||!iconsResumed||isFinishing()||isDestroyed()||peer==null
-                    ||!identity.equals(peer.identity)||!generation.equals(peer.generation)||!body.isAttachedToWindow()
-                    ||!getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                    ||!Objects.equals(route,getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
-                    ||role!=com.subhub.app.security.DeviceRolePreferences.get(this)
-                    ||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
-                    ||authority!=com.subhub.app.people.People.keyholder()
-                    ||provider!=com.subhub.app.relationships.RelationshipUi.provider())return;
-            rebindAppIcons();
-        });
-    }
-    private void stopAppIcons(){
-        ++appIconEpoch;AutoCloseable old=appIconObserver;appIconObserver=null;
-        if(old!=null)try{old.close();}catch(Exception ignored){/* Queued callbacks are fenced above. */}
-    }
-    private void rebindAppIcons(){
-        if(!iconsResumed||peer==null||isFinishing()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked())return;
-        for(Map.Entry<String,ImageView> entry:iconViews.entrySet())if(entry.getValue().isAttachedToWindow())bindAppIcon(entry.getValue(),entry.getKey());
-    }
-    private void bindAppIcon(ImageView icon,String id){
-        com.subhub.app.util.RemoteAppIcon remoteIcon=peer!=null&&id!=null&&id.length()<=255
-                &&id.matches("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")?RemoteUi.appIcon(this,peer.identity,peer.generation,id):null;
-        RemoteUi.bindAppIcon(icon,remoteIcon,R.drawable.ic_settings_apps);
-    }
+    @Override protected void onDestroy(){if(autosave!=null)autosave.close();super.onDestroy();}
     @Override protected void onSaveInstanceState(Bundle state){
         Bundle raw=new Bundle();for(Map.Entry<String,android.view.View> control:controls.entrySet()){android.view.View value=control.getValue();if(value instanceof EditText)raw.putString(control.getKey(),((EditText)value).getText().toString());else if(value instanceof CompoundButton)raw.putBoolean(control.getKey(),((CompoundButton)value).isChecked());else if(value instanceof Spinner)raw.putInt(control.getKey(),((Spinner)value).getSelectedItemPosition());}
         try{for(Runnable item:collect)item.run();}catch(RuntimeException incomplete){/* Preserve raw input as well as the last structured values. */}
@@ -85,7 +43,7 @@ public final class RemoteContractActivity extends RemotePage {
 
     private void load() {
         if(autosave!=null){autosave.close();autosave=null;}
-        body.removeAllViews();collect.clear();controls.clear();iconViews.clear();text(body,getString(R.string.role_data_unknown),false);
+        body.removeAllViews();collect.clear();controls.clear();text(body,getString(R.string.role_data_unknown),false);
         work(()->{JSONObject doc=feature.contracts.editing(peer);if(doc==null)throw new IOException("No baseline");
             long want=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"desired_revision","0"));
             long done=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"applied_revision","0"));
@@ -96,34 +54,28 @@ public final class RemoteContractActivity extends RemotePage {
     private void render() {
         if(draft==null)return;rendering=true;
         if(autosave!=null)try{autosave.flush();editBase=autosave.base();autosave.close();autosave=null;}catch(Exception invalid){notice(R.string.remote_reload);}
-        body.removeAllViews();collect.clear();controls.clear();iconViews.clear();
+        body.removeAllViews();collect.clear();controls.clear();
         target();text(body,observed(RemoteProtocol.Stream.BASELINE),false);
         if(!mayEdit()){rendering=false;return;}
         try {
-            if("apps".equals(section))text(body,draft.getJSONObject("contract").getString("name"),false);
-            else {
-                EditText name=input(body,R.string.remote_name,draft.getJSONObject("contract").getString("name"));
-                controls.put("name",name);name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(160)});
-                collect.add(()->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError(getString(R.string.remote_invalid_value));throw new IllegalArgumentException();}name.setError(null);put(draft.optJSONObject("contract"),"name",value);});
-            }
+            EditText name=input(body,R.string.remote_name,draft.getJSONObject("contract").getString("name"));
+            controls.put("name",name);name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(160)});
+            collect.add(()->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError(getString(R.string.remote_invalid_value));throw new IllegalArgumentException();}name.setError(null);put(draft.optJSONObject("contract"),"name",value);});
             if("subliminal".equals(section)||"popup".equals(section)) {
                 button(body,R.string.subliminal_title,()->switchAtmosphere("subliminal"));
                 button(body,R.string.popup_title,()->switchAtmosphere("popup"));
             }
             LinearLayout values=PersonUi.card(body);
-            if("apps".equals(section))apps(values);
-            else {
-                JSONObject sections=draft.getJSONObject("contract").getJSONObject("sections"),config=sections.getJSONObject(section);
-                if("censor".equals(section)||"subliminal".equals(section)) {
-                    String module="censor".equals(section)?"module_censor_enabled":"module_subliminal_enabled";
-                    for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields("modules"))if(field.key.equals(module))field(values,sections.getJSONObject("modules"),field);
-                }
-                Map<Integer,LinearLayout> groups=new LinkedHashMap<>();
-                for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)){
-                    LinearLayout group=groups.get(field.group);
-                    if(group==null){group=PersonUi.card(body);text(group,getString(field.group),true);groups.put(field.group,group);}
-                    field(group,config,field);
-                }
+            JSONObject sections=draft.getJSONObject("contract").getJSONObject("sections"),config=sections.getJSONObject(section);
+            if("censor".equals(section)||"subliminal".equals(section)) {
+                String module="censor".equals(section)?"module_censor_enabled":"module_subliminal_enabled";
+                for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields("modules"))if(field.key.equals(module))field(values,sections.getJSONObject("modules"),field);
+            }
+            Map<Integer,LinearLayout> groups=new LinkedHashMap<>();
+            for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)){
+                LinearLayout group=groups.get(field.group);
+                if(group==null){group=PersonUi.card(body);text(group,getString(field.group),true);groups.put(field.group,group);}
+                field(group,config,field);
             }
             if("censor".equals(section)||"popup".equals(section)) {
                 String group="popup".equals(section)?"popup":"censor";
@@ -169,7 +121,7 @@ public final class RemoteContractActivity extends RemotePage {
     private void changed(){if(!rendering&&autosave!=null)autosave.changed();}
     private void switchAtmosphere(String target){if(gather()){section=target;pageTitle();render();}}
     private void pageTitle(){com.subhub.app.util.PrimaryHeader.bindSecondary(findViewById(android.R.id.content),sectionTitle(section),false);}
-    private int sectionTitle(String key){switch(key){case "apps":return R.string.remote_apps;case "modules":return R.string.pack_group_features;case "censor":return R.string.sub_censor_title;case "limits":return R.string.sub_limits_title;case "wallet":return R.string.sub_wallet_title;case "subliminal":return R.string.subliminal_title;default:return R.string.popup_title;}}
+    private int sectionTitle(String key){switch(key){case "modules":return R.string.pack_group_features;case "censor":return R.string.sub_censor_title;case "limits":return R.string.sub_limits_title;case "wallet":return R.string.sub_wallet_title;case "subliminal":return R.string.subliminal_title;default:return R.string.popup_title;}}
     private void field(LinearLayout target,JSONObject config,ConfigurationSettingCatalog.Field field)throws Exception {
         Object value=config.get(field.key);
         if(field.kind==ConfigurationSettingCatalog.Kind.BOOLEAN){Switch toggle=new Switch(this);toggle.setText(field.label);toggle.setChecked((Boolean)value);target.addView(toggle);controls.put(field.key,toggle);collect.add(()->put(config,field.key,toggle.isChecked()));toggle.setOnCheckedChangeListener((button,on)->changed());return;}
@@ -187,29 +139,6 @@ public final class RemoteContractActivity extends RemotePage {
         editor.setText(field.kind==ConfigurationSettingCatalog.Kind.SELECTION?join((JSONArray)value):field.displayText(value));target.addView(editor);controls.put(field.key,editor);
         if(field.kind!=ConfigurationSettingCatalog.Kind.TEXT && field.kind!=ConfigurationSettingCatalog.Kind.COLOR && field.kind!=ConfigurationSettingCatalog.Kind.SELECTION)editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
         collect.add(()->{try{Object parsed=field.kind==ConfigurationSettingCatalog.Kind.SELECTION?field.normalize(new JSONArray(Arrays.asList(editor.getText().toString().split("\n")))):field.parseText(editor.getText().toString());editor.setError(null);put(config,field.key,parsed);}catch(RuntimeException invalid){editor.setError(getString(R.string.remote_invalid_value));throw invalid;}});
-    }
-    private void apps(LinearLayout target)throws Exception {
-        JSONObject apps=draft.getJSONObject("apps"),budgets=apps.getJSONObject("allowances");Set<String> selected=RemoteConfiguration.selected(draft);
-        Switch all=new Switch(this);all.setText(R.string.remote_all_apps);all.setChecked(apps.getBoolean("all"));target.addView(all);controls.put("apps_all",all);collect.add(()->put(apps,"all",all.isChecked()));
-        List<RemoteProtocol.Change> catalog=feature.store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG);
-        if(catalog.isEmpty())text(target,getString(R.string.remote_unknown),false);
-        all.setOnCheckedChangeListener((button,on)->{for(Map.Entry<String,android.view.View> control:controls.entrySet())if(control.getKey().startsWith("budget:")){CheckBox box=(CheckBox)controls.get("app:"+control.getKey().substring(7));boolean enabled=on||box!=null&&box.isChecked();control.getValue().setEnabled(enabled);((android.view.View)control.getValue().getParent()).setVisibility(enabled?android.view.View.VISIBLE:android.view.View.GONE);}changed();});
-        Set<String> shown=new HashSet<>();
-        for(RemoteProtocol.Change entry:catalog)if(!entry.deleted){JSONObject data=new JSONObject(entry.body);String id=entry.key;shown.add(id);app(target,selected,budgets,id,data.getString("label"));}
-        for(String id:new TreeSet<>(selected))if(!shown.contains(id))app(target,selected,budgets,id,id);
-        collect.add(()->{put(apps,"packages",new JSONArray(new TreeSet<>(selected)));Iterator<String> names=budgets.keys();List<String> remove=new ArrayList<>();while(names.hasNext()){String key=names.next();if(!selected.contains(key)&&!all.isChecked())remove.add(key);}for(String key:remove)budgets.remove(key);});
-    }
-    private void app(LinearLayout target,Set<String> selected,JSONObject budgets,String id,String label){
-        LinearLayout row=new LinearLayout(this);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        android.widget.ImageView icon=new android.widget.ImageView(this);icon.setTag("app_icon:"+id);
-        iconViews.put(id,icon);bindAppIcon(icon,id);
-        LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(PersonUi.dp(this,28),PersonUi.dp(this,28));size.setMarginEnd(PersonUi.dp(this,8));row.addView(icon,size);
-        CheckBox box=new CheckBox(this);box.setText(label);box.setMinHeight(PersonUi.dp(this,48));box.setChecked(selected.contains(id));row.addView(box,new LinearLayout.LayoutParams(0,-2,1));target.addView(row);controls.put("app:"+id,box);box.setOnCheckedChangeListener((b,on)->{if(on)selected.add(id);else selected.remove(id);});
-        int inherited=draft.optJSONObject("contract").optJSONObject("sections").optJSONObject("limits").optInt("app_timer_per_app_minutes",30);boolean custom=budgets.has(id);
-        LinearLayout allowance=PersonUi.column(this);target.addView(allowance);allowance.setVisibility(selected.contains(id)||draft.optJSONObject("apps").optBoolean("all")?android.view.View.VISIBLE:android.view.View.GONE);
-        EditText minutes=input(allowance,R.string.remote_allowance_minutes,Integer.toString(budgets.optInt(id,inherited)));minutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);controls.put("budget:"+id,minutes);
-        minutes.setEnabled(selected.contains(id)||draft.optJSONObject("apps").optBoolean("all"));box.setOnCheckedChangeListener((b,on)->{if(on)selected.add(id);else selected.remove(id);boolean enabled=on||((Switch)controls.get("apps_all")).isChecked();minutes.setEnabled(enabled);allowance.setVisibility(enabled?android.view.View.VISIBLE:android.view.View.GONE);changed();});
-        collect.add(()->{if(!selected.contains(id)&&!draft.optJSONObject("apps").optBoolean("all"))return;try{int amount=Integer.parseInt(minutes.getText().toString());if(amount<1||amount>1440)throw new IllegalArgumentException();minutes.setError(null);if(custom||amount!=inherited)put(budgets,id,amount);else budgets.remove(id);}catch(IllegalArgumentException invalid){minutes.setError(getString(R.string.remote_invalid_value));throw invalid;}});
     }
     private ArrayAdapter<String> choices(List<String> labels) {
         return new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,labels) {

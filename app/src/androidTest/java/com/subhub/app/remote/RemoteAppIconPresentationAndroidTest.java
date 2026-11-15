@@ -42,6 +42,7 @@ import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.people.ContractAppList;
 import com.subhub.app.people.FavoriteSubStore;
+import com.subhub.app.people.LocalAppsActivity;
 import com.subhub.app.people.PersonActivity;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
@@ -289,40 +290,56 @@ public final class RemoteAppIconPresentationAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft() throws Exception {
+    public void pairedAppsRebindsIconsWithoutChangingSelectionAndClearsOnRevocation() throws Exception {
         try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
             fixture.enablePages();
-            page(route(RemoteContractActivity.class, fixture).putExtra("section", "apps"), (scenario, host) -> {
-                String name = "app_icon:" + fixture.packageName();
-                await(() -> tagged(host.get(), name) instanceof ImageView);
-                AtomicReference<ImageView> originalIcon = new AtomicReference<>();
-                AtomicReference<EditText> minutes = new AtomicReference<>(); AtomicReference<CheckBox> selected = new AtomicReference<>();
-                AtomicReference<Object> draft = new AtomicReference<>(); AtomicReference<String> encoded = new AtomicReference<>();
-                main(() -> {
-                    originalIcon.set((ImageView) tagged(host.get(), name)); assertGeneric(originalIcon.get());
-                    Map<String, View> controls = controls(host.get());
-                    minutes.set((EditText) controls.get("budget:" + fixture.packageName()));
-                    selected.set((CheckBox) controls.get("app:" + fixture.packageName()));
-                    assertEquals("47", minutes.get().getText().toString()); assertTrue(selected.get().isChecked());
-                    draft.set(field(host.get(), "draft")); encoded.set(draft.get().toString());
-                });
-                onView(is((View) minutes.get())).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
-                onView(is((View) selected.get())).perform(revealAboveNavigation(), click());
-                fixture.offer();
-                await(() -> magenta((ImageView) tagged(host.get(), name)));
-                main(() -> {
-                    assertSame(originalIcon.get(), tagged(host.get(), name));
-                    assertSame(minutes.get(), controls(host.get()).get("budget:" + fixture.packageName()));
-                    assertSame(selected.get(), controls(host.get()).get("app:" + fixture.packageName()));
-                    assertEquals("", minutes.get().getText().toString()); assertFalse(selected.get().isChecked());
-                    assertSame(draft.get(), field(host.get(), "draft")); assertEquals(encoded.get(), field(host.get(), "draft").toString());
-                });
-                assertComposedPixel(host.get(), originalIcon.get(), "remote-editor-unsaved-arrival");
-                fixture.retire(); await(() -> originalIcon.get().getImageTintList() != null);
-                main(() -> {
-                    assertGeneric(originalIcon.get()); assertEquals("", minutes.get().getText().toString());
-                    assertFalse(selected.get().isChecked()); assertSame(draft.get(), field(host.get(), "draft"));
-                });
+            page(route(PersonActivity.class, fixture), (scenario, profile) -> {
+                String iconTag = "app_icon:" + fixture.packageName();
+                String selectionTag = "included:" + fixture.packageName();
+                AtomicReference<LocalAppsActivity> editor = new AtomicReference<>();
+                try {
+                    tapProfileAction(profile.get(), "person_tab:contracts");
+                    tapProfileAction(profile.get(), "person_apps");
+                    await(() -> {
+                        LocalAppsActivity apps = resumed(LocalAppsActivity.class);
+                        if (apps == null || !apps.hasWindowFocus()
+                                || !(tagged(apps, selectionTag) instanceof CheckBox choice)
+                                || !choice.isEnabled() || !(tagged(apps, iconTag) instanceof ImageView)) return false;
+                        editor.set(apps);
+                        return true;
+                    });
+                    LocalAppsActivity apps = editor.get();
+                    assertEquals(fixture.personId(), PersonRoutes.requireId(apps.getIntent()));
+                    main(() -> {
+                        assertTrue(((CheckBox) tagged(apps, selectionTag)).isChecked());
+                        assertGeneric((ImageView) tagged(apps, iconTag));
+                    });
+
+                    fixture.offer();
+                    AtomicReference<ImageView> rendered = new AtomicReference<>();
+                    await(() -> {
+                        ImageView icon = (ImageView) tagged(apps, iconTag);
+                        if (!magenta(icon)) return false;
+                        rendered.set(icon);
+                        return true;
+                    });
+                    assertComposedPixel(apps, rendered.get(), "paired-apps-icon-arrival");
+                    main(() -> assertTrue(((CheckBox) tagged(apps, selectionTag)).isChecked()));
+                    RemoteStore.Peer peer = fixture.peer();
+                    assertNull(fixture.store().latestCommand(peer.identity, peer.generation));
+
+                    fixture.retire();
+                    await(() -> !rendered.get().isAttachedToWindow() || !rendered.get().isShown()
+                            || rendered.get().getImageTintList() != null);
+                    main(() -> {
+                        if (apps.isFinishing() || apps.isDestroyed()) return;
+                        View current = tagged(apps, iconTag);
+                        if (current instanceof ImageView image && image.isAttachedToWindow() && image.isShown())
+                            assertGeneric(image);
+                    });
+                } finally {
+                    if (editor.get() != null) main(editor.get()::finish);
+                }
             });
         }
     }
@@ -541,7 +558,6 @@ public final class RemoteAppIconPresentationAndroidTest {
         try { Field field = object.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(object); }
         catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
     }
-    @SuppressWarnings("unchecked") private static Map<String, View> controls(Activity activity) { return (Map<String, View>) field(activity, "controls"); }
     private static <T extends Activity> T resumed(Class<T> type) {
         for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED))
             if (type.isInstance(activity)) return type.cast(activity);
