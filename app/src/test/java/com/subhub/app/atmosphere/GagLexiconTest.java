@@ -100,6 +100,15 @@ public final class GagLexiconTest {
                 GagLexicon.prioritizePhrase("hellobworld", false, List.of("hellobworld", "hello"), "hello world"));
     }
 
+    @Test public void commonNonNeighborSubstitutionsFillAnOtherwiseEmptySuggestionList() throws Exception {
+        GagLexicon bundled = shippedLexicon();
+        assertEquals(List.of("definitely"), bundled.suggestions("definately"));
+        assertEquals(List.of("Vielleicht"), bundled.suggestions("Vielleacht"));
+        assertEquals(List.of("wahrscheinlich"), bundled.suggestions("wahrscpeinlich"));
+        assertTrue(bundled.suggestions("xqzw").isEmpty());
+        assertTrue(bundled.suggestions("vielleicht").isEmpty());
+    }
+
     private static GagLexicon shippedLexicon() throws Exception {
         Path source = Path.of("src/main/assets/gag_words/words.tsv.gz");
         return GagLexicon.read(new GZIPInputStream(Files.newInputStream(source)));

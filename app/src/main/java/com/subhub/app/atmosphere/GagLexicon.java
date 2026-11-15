@@ -136,6 +136,8 @@ final class GagLexicon {
         }
         for (int rank = 0; rank < MAX_SUGGESTIONS && prefixes[rank] != null; rank++)
             matches.putIfAbsent(prefixes[rank], (long) frequencies[rank]);
+        if (matches.isEmpty() && word.length() >= 4 && !counts.containsKey(word))
+            addCommonSubstitutions(matches, word);
         List<String> ranked = ranked(matches);
         for (String candidate : ranked) {
             if (result.size() == MAX_SUGGESTIONS) break;
@@ -266,6 +268,21 @@ final class GagLexicon {
         List<String> ranked = new ArrayList<>(matches.keySet());
         ranked.sort(Comparator.<String>comparingLong(matches::get).reversed().thenComparing(word -> word));
         return ranked;
+    }
+
+    private void addCommonSubstitutions(Map<String, Long> matches, String word) {
+        // A single non-neighbor typo can leave no candidates even when a common word fits.
+        char[] letters = word.toCharArray();
+        for (int index = 0; index < letters.length; index++) {
+            char original = letters[index];
+            for (int key = 0; key < ALPHABET.length(); key++) {
+                char replacement = ALPHABET.charAt(key);
+                if (replacement == original) continue;
+                letters[index] = replacement;
+                add(matches, new String(letters), 1, KNOWN_WORD_ALTERNATIVE_MIN_COUNT);
+            }
+            letters[index] = original;
+        }
     }
 
     private Map<String, Long> typos(String word) {

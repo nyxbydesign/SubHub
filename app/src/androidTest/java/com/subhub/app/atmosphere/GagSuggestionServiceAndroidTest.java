@@ -96,6 +96,25 @@ public final class GagSuggestionServiceAndroidTest {
         }
     }
 
+    @Test public void emptyBackspaceRestoresTheIdleSuggestionStrip() throws Exception {
+        openEditor(false);
+        assertSuggestions("I", "You", "Ich");
+        keyDescription(R.string.gag_keyboard_delete);
+        device().waitForIdle();
+        assertText("");
+        assertSuggestions("I", "You", "Ich");
+    }
+
+    @Test public void committedBackspaceShowsTheCorrectionWithoutApplyingIt() throws Exception {
+        openEditor(false);
+        shell("input text definatelyx");
+        assertText("definatelyx");
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText("definately");
+        key("definitely");
+        assertText("definitely");
+    }
+
     @Test public void multipleMissedSpacesRequireSuggestionTapAndPreserveTheFollowingText() throws Exception {
         openEditor(true);
         for (char letter : "yeahbsoblike".toCharArray()) key(String.valueOf(letter));

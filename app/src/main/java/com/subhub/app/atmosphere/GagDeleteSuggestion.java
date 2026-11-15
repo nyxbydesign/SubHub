@@ -23,6 +23,8 @@ final class GagDeleteSuggestion {
         return new GagDeleteSuggestion(connection);
     }
 
+    boolean isFor(InputConnection current) { return current == connection; }
+
     int deletedCursor(InputConnection current) {
         if (current != connection || before == null || before.left().isEmpty()) return -1;
         Snapshot after = editorSnapshot(current);
