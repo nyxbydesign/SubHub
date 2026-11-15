@@ -2,6 +2,8 @@ package com.subhub.app.remote;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.scrollTo;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.hamcrest.Matchers.is;
@@ -11,19 +13,25 @@ import android.app.Instrumentation;
 import android.content.*;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.Until;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.people.*;
+import com.subhub.app.popup.PopupStormActivity;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.SettingsActivity;
 import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import org.json.*;
 import org.junit.*;
@@ -94,7 +102,7 @@ public class RemoteEditorAndroidTest {
                     assertTrue(choice.get().isEnabled());
                     View body = editor.findViewById(R.id.role_page_body);
                     assertNull(find(body, context.getString(R.string.remote_import)));
-                    assertNull(find(body, context.getString(R.string.remote_add_censor_image)));
+                    assertNull(body.findViewById(R.id.button_add_censor_images));
                     assertNull(find(body, context.getString(
                             com.subhub.app.configuration.ConfigurationSettingCatalog.field("modules", "module_censor_enabled").label)));
                 });
@@ -326,25 +334,114 @@ public class RemoteEditorAndroidTest {
         }
     }
 
-    @Test public void legacyCensorSectionOmitsPeerAppsAndPopupActions()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(find(a.body,context.getString(R.string.remote_add_popup_image)));assertNull(find(a.body,context.getString(R.string.remote_apps)));});
+    @Test public void pairedCensorSettingsOmitPeerAppsAndPopupActions() {
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            page.onActivity(activity -> {
+                assertTrue(FeatureEditorSession.remote(activity));
+                assertNotNull(activity.findViewById(R.id.button_add_censor_images));
+                assertNull(activity.findViewById(R.id.button_add_folder));
+                assertNull(activity.findViewById(R.id.person_apps_panel));
+            });
         }
     }
-    @Test public void removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup()throws Exception {
-        ByteArrayOutputStream image=new ByteArrayOutputStream();android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(2,2,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xffd19bff);assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,image));bitmap.recycle();
-        byte[] bytes=image.toByteArray();String hash=RemoteProtocol.sha256(bytes);RemoteContracts.ingest(feature.contracts.assets(peer),hash,bytes.length,new ByteArrayInputStream(bytes));
-        JSONObject document=feature.contracts.current(peer);document.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/censor/fixture.png").put("hash",hash).put("length",bytes.length)).put(new JSONObject().put("path","assets/popup/fixture.png").put("hash",hash).put("length",bytes.length));
-        String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",document,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            JSONArray kept=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");assertEquals(1,kept.length());assertEquals("assets/popup/fixture.png",kept.getJSONObject(0).getString("path"));
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup() throws Exception {
+        byte[] bytes = artworkFixture(0xffd19bff);
+        String hash = RemoteProtocol.sha256(bytes);
+        RemoteContracts.ingest(feature.contracts.assets(peer), hash, bytes.length, new ByteArrayInputStream(bytes));
+        JSONObject document = feature.contracts.current(peer);
+        JSONObject contract = document.getJSONObject("contract");
+        contract.getJSONObject("sections").getJSONObject("censor").put("censor_type", "custom");
+        JSONArray assets = contract.getJSONArray("assets");
+        for (String group : List.of("censor", "popup")) {
+            assets.put(new JSONObject().put("path", "assets/" + group + "/fixture.png")
+                    .put("hash", hash).put("length", bytes.length));
         }
-        try(ActivityScenario<RemoteContractActivity> page=open("popup")) {
-            ready(page,"name");AtomicReference<RemoteContractActivity> current=new AtomicReference<>();page.onActivity(current::set);tap(page,R.string.remote_add_popup_image);
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->current.get().recreate());
-            UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack();ready(page,"name");
-            page.onActivity(a->{try{java.lang.reflect.Field group=RemoteContractActivity.class.getDeclaredField("artGroup");group.setAccessible(true);assertEquals("popup",group.get(a));java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("popup",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
+        String dom = source.peers(false).get(0).identity;
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", document, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            onView(withId(R.id.button_appearance_details)).perform(scrollTo(), click());
+            AtomicReference<View> delete = new AtomicReference<>();
+            await(() -> {
+                page.onActivity(activity -> {
+                    View row = activity.findViewById(R.id.censor_images_list)
+                            .findViewWithTag("censor-image:assets/censor/fixture.png");
+                    delete.set(row == null ? null : find(row, context.getString(R.string.delete)));
+                });
+                return delete.get() != null && delete.get().isEnabled();
+            });
+            tapView(delete.get());
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            JSONArray kept = latestArtworkCommand();
+            assertEquals(1, kept.length());
+            assertEquals("assets/popup/fixture.png", kept.getJSONObject(0).getString("path"));
+        }
+        importPopupArtworkAcrossRecreation();
+    }
+
+    @androidx.annotation.RequiresApi(29)
+    private void importPopupArtworkAcrossRecreation() throws Exception {
+        byte[] bytes = artworkFixture(0xff20304b);
+        String hash = RemoteProtocol.sha256(bytes);
+        String name = database + ".png";
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+        values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/");
+        Uri image = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        assertNotNull(image);
+        try {
+            try (OutputStream output = context.getContentResolver().openOutputStream(image)) {
+                assertNotNull(output);
+                output.write(bytes);
+            }
+            Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
+            UiDevice device = UiDevice.getInstance(instrument);
+            try (ActivityScenario<PopupStormActivity> page = ActivityScenario.launch(pairedIntent(PopupStormActivity.class))) {
+                AtomicReference<PopupStormActivity> original = new AtomicReference<>();
+                page.onActivity(original::set);
+                onView(withId(R.id.button_add_folder)).perform(scrollTo(), click());
+                assertTrue(device.wait(Until.hasObject(By.desc("Show roots")), 10_000));
+                instrument.runOnMainSync(() -> original.get().recreate());
+                instrument.waitForIdleSync();
+                device.findObject(By.desc("Show roots")).click();
+                BySelector recent = By.res("android:id/title").text("Recent");
+                assertTrue(device.wait(Until.hasObject(recent), 10_000));
+                device.findObject(recent).click();
+                assertTrue(device.wait(Until.gone(By.text("Open from")), 10_000));
+                BySelector tile = By.descStartsWith(name + ", ");
+                assertTrue(device.wait(Until.hasObject(tile), 15_000));
+                device.findObject(tile).click();
+                assertTrue(device.wait(Until.gone(By.pkg("com.google.android.documentsui").depth(0)), 10_000));
+                page.onActivity(activity -> assertNotSame(original.get(), activity));
+                await(() -> latestArtworkCommand().length() == 2);
+                JSONArray saved = latestArtworkCommand();
+                assertEquals("assets/popup/fixture.png", saved.getJSONObject(0).getString("path"));
+                JSONObject added = saved.getJSONObject(1);
+                assertTrue(added.getString("path").startsWith("assets/popup/"));
+                assertEquals(hash, added.getString("hash"));
+            }
+        } finally {
+            context.getContentResolver().delete(image, null, null);
+        }
+    }
+
+    private JSONArray latestArtworkCommand() throws JSONException {
+        return new JSONObject(feature.store.latestCommand(peer.identity, generation).body)
+                .getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");
+    }
+
+    private static byte[] artworkFixture(int color) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(48, 48,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            bitmap.eraseColor(color);
+            assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+            return output.toByteArray();
+        } finally {
+            bitmap.recycle();
         }
     }
 
@@ -363,8 +460,9 @@ public class RemoteEditorAndroidTest {
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");inspectLayout(page,"contract-censor");
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            onView(withId(R.id.button_appearance_details)).perform(scrollTo(), click());
+            inspectLayout(page, "contract-censor");
         }
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
@@ -599,11 +697,7 @@ public class RemoteEditorAndroidTest {
         assertEquals(generation,feature.store.peer(peer.identity,generation).generation);
     }
 
-    private ActivityScenario<RemoteContractActivity> open(String section){return ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()).putExtra("section",section));}
-    @SuppressWarnings("unchecked") private static Map<String,View> controls(RemoteContractActivity activity){try{java.lang.reflect.Field field=RemoteContractActivity.class.getDeclaredField("controls");field.setAccessible(true);return (Map<String,View>)field.get(activity);}catch(Exception e){throw new AssertionError(e);}}
-    private void ready(ActivityScenario<RemoteContractActivity> page,String key)throws Exception {await(()->{AtomicReference<Boolean> value=new AtomicReference<>(false);page.onActivity(a->value.set(controls(a).containsKey(key)));return value.get();});}
     private static android.widget.ScrollView statsScroll(RemoteStatsActivity activity){View view=activity.body;while(view.getParent() instanceof View){view=(View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}throw new AssertionError("Statistics scroll unavailable");}
-    private <T extends Activity> void tap(ActivityScenario<T> page,int label)throws Exception {AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(find(a.findViewById(R.id.role_page_body),context.getString(label))));assertNotNull(view.get());tapView(view.get());}
     private void tapView(View view)throws Exception {
         assertNotNull("Native tap target is missing",view);
         android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();
