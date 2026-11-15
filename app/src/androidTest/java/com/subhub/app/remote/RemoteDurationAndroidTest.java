@@ -51,12 +51,16 @@ public class RemoteDurationAndroidTest {
             page.recreate();ready(page);page.onActivity(a->assertEquals(3_600_000L,((com.subhub.app.commitment.DurationChoicesView)a.findViewById(android.R.id.content).findViewWithTag("remote_duration_choice")).duration()));
             await(()->feature.store.latestCommand(peer.identity,peer.generation)!=null);
             RemoteStore.Command command=feature.store.latestCommand(peer.identity,peer.generation);JSONObject queued=new JSONObject(command.body).getJSONObject("configuration");
-            assertEquals(3_600_000,queued.getJSONObject("service").getLong("duration"));
-            assertEquals(RemoteProtocol.canonical(original.getJSONObject("apps")),RemoteProtocol.canonical(queued.getJSONObject("apps")));
-            JSONObject compatible = com.subhub.app.tasks.TaskContractFields.forPeer(original, false, false);
-            assertEquals(RemoteProtocol.canonical(compatible.getJSONObject("contract")), RemoteProtocol.canonical(queued.getJSONObject("contract")));
-            assertEquals(RemoteProtocol.canonical(original.getJSONObject("contract")),
-                    RemoteProtocol.canonical(RemoteConfiguration.active(queued).getJSONObject("contract")));
+            JSONObject expected = new JSONObject(original.toString());
+            expected.getJSONObject("service").put("duration", 3_600_000L);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(RemoteConfiguration.active(queued)));
+            // The fixture has not negotiated Tasks or Extra Time. Older peers receive neither rule.
+            JSONObject wallet = expected.getJSONObject("contract").getJSONObject("sections").getJSONObject("wallet");
+            wallet.remove(com.subhub.app.tasks.TaskContractFields.ENABLED);
+            wallet.remove(com.subhub.app.tasks.TaskContractFields.CENTS);
+            wallet.remove(ExtraTimeContractFields.ENABLED);
+            wallet.remove(ExtraTimeContractFields.CENTS);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(queued));
             assertEquals(RemoteStore.CommandState.QUEUED,command.state);
         }
     }

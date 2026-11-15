@@ -1,5 +1,10 @@
 package com.subhub.app.remote;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
+import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 import android.app.Activity;
 import android.app.Instrumentation;
@@ -68,24 +73,12 @@ public class RemoteEditorAndroidTest {
         Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
         Intent profile = new Intent(context, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, person);
         try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(profile)) {
-            AtomicReference<View> contract = new AtomicReference<>();
-            await(() -> {
-                page.onActivity(activity -> contract.set(activity.getWindow().getDecorView()
-                        .findViewWithTag("person_tab:contracts")));
-                return contract.get() != null;
-            });
-            tapView(contract.get());
-            AtomicReference<View> addApps = new AtomicReference<>();
-            await(() -> {
-                page.onActivity(activity -> addApps.set(activity.getWindow().getDecorView()
-                        .findViewWithTag("person_apps")));
-                return addApps.get() != null && addApps.get().isClickable();
-            });
+            tapPairedProfileAction(page, "person_tab:contracts");
             Instrumentation.ActivityMonitor monitor =
                     instrument.addMonitor(LocalAppsActivity.class.getName(), null, false);
             LocalAppsActivity apps = null;
             try {
-                tapView(addApps.get());
+                tapPairedProfileAction(page, "person_apps");
                 apps = (LocalAppsActivity) monitor.waitForActivityWithTimeout(5_000);
                 assertNotNull("Paired Contract must open the shared Apps editor", apps);
                 assertEquals(person, PersonRoutes.requireId(apps.getIntent()).value());
@@ -105,7 +98,7 @@ public class RemoteEditorAndroidTest {
                 });
                 inspectLayout(editor, "paired-apps");
                 assertNull(feature.store.latestCommand(peer.identity, generation));
-                tapView(choice.get());
+                onView(withTagValue(is("included:" + addedPackage))).perform(revealAboveNavigation(), click());
                 await(() -> feature.store.latestCommand(peer.identity, generation) != null);
             } finally {
                 instrument.removeMonitor(monitor);
@@ -120,6 +113,35 @@ public class RemoteEditorAndroidTest {
         assertEquals(37, savedApps.getJSONObject("allowances").getInt("com.android.settings"));
         assertFalse(savedApps.getBoolean("all"));
         assertEquals(before, local.getAll());
+    }
+
+    private void tapPairedProfileAction(ActivityScenario<PersonActivity> page, String tag) throws Exception {
+        try {
+            await(() -> {
+                AtomicReference<Boolean> ready = new AtomicReference<>(false);
+                page.onActivity(activity -> {
+                    View root = activity.getWindow().getDecorView();
+                    View action = root.findViewWithTag(tag);
+                    ready.set(activity.hasWindowFocus() && action != null && action.isShown()
+                            && action.isEnabled() && action.isClickable()
+                            && action.isLaidOut() && !root.isLayoutRequested());
+                });
+                return ready.get();
+            });
+            onView(withTagValue(is(tag))).perform(revealAboveNavigation(), click());
+        } catch (Exception | AssertionError failure) {
+            try {
+                File directory = new File(context.getFilesDir(), "remote-editor-failures");
+                assertTrue(directory.isDirectory() || directory.mkdirs());
+                String name = tag.replace(':', '-');
+                UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+                assertTrue(device.takeScreenshot(new File(directory, name + ".png")));
+                device.dumpWindowHierarchy(new File(directory, name + ".xml"));
+            } catch (Exception | AssertionError captureFailure) {
+                failure.addSuppressed(captureFailure);
+            }
+            throw new AssertionError("Could not tap paired profile action " + tag, failure);
+        }
     }
     @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
