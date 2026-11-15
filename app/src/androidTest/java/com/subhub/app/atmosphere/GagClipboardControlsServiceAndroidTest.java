@@ -117,22 +117,46 @@ public final class GagClipboardControlsServiceAndroidTest {
         return await(popupInput());
     }
 
-    private static void assertPopupAboveKeyboard(UiObject2 input) {
-        await(By.pkg(APP).text("q"));
-        device().waitForIdle();
-        Rect panel = input.getParent().getVisibleBounds();
+    private static void assertPopupAboveKeyboard(UiObject2 input) throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
-        var keyboard = instrumentation.getUiAutomation().getWindows().stream()
-                .filter(window -> window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD)
-                .findFirst().orElseThrow(() -> new AssertionError("Keyboard window missing"));
-        Rect keyboardBounds = new Rect();
-        keyboard.getBoundsInScreen(keyboardBounds);
         float density = instrumentation.getTargetContext().getResources().getDisplayMetrics().density;
-        assertTrue("Edit must have bounded floating dimensions: " + panel,
-                panel.width() <= Math.round(300 * density) && panel.height() <= Math.round(240 * density));
-        int gap = keyboardBounds.top - panel.bottom;
-        assertTrue("Edit must sit immediately above the keyboard: " + panel + " vs " + keyboardBounds,
-                gap >= 0 && gap <= Math.round(24 * density));
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT;
+        Rect panel;
+        Rect keyboardBounds;
+        do {
+            panel = input.getParent().getVisibleBounds();
+            keyboardBounds = inputMethodBounds();
+            int gap = keyboardBounds.top - panel.bottom;
+            if (!panel.isEmpty() && panel.width() <= Math.round(300 * density)
+                    && panel.height() <= Math.round(240 * density) && !keyboardBounds.isEmpty()
+                    && gap >= 0 && gap <= Math.round(24 * density)) return;
+            SystemClock.sleep(100);
+        } while (SystemClock.uptimeMillis() < deadline);
+        throw new AssertionError("Edit must be a bounded popup immediately above a shown input method"
+                + " [panel=" + panel + ", inputMethod=" + keyboardBounds + ", inputFocused=" + input.isFocused()
+                + ", inputMethodState=" + inputMethodState() + "]");
+    }
+
+    private static Rect inputMethodBounds() {
+        var automation = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        Rect bounds = new Rect();
+        for (var window : automation.getWindows()) {
+            if (window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                window.getBoundsInScreen(bounds);
+                if (!bounds.isEmpty()) break;
+            }
+        }
+        return bounds;
+    }
+
+    private static String inputMethodState() throws Exception {
+        var state = java.util.regex.Pattern.compile(
+                "\\b(mInputShown|mShowRequested|mShowExplicitlyRequested|mShowForced|mImeWindowVis)"
+                        + "=(true|false|0x[0-9a-fA-F]+|-?\\d+)(?=\\s|$)").matcher(shell("dumpsys input_method"));
+        var selected = new java.util.StringJoiner(", ");
+        for (int index = 0; index < 8 && state.find(); index++)
+            selected.add(state.group());
+        return selected.toString();
     }
 
     private static void assertPopupClosed() {
