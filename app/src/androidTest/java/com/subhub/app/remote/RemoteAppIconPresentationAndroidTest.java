@@ -335,16 +335,10 @@ public final class RemoteAppIconPresentationAndroidTest {
             String packageName = fixture.packageName();
             String inputTag = "limit:" + packageName;
             String iconTag = "app_icon:" + packageName;
-            Intent contract = route(PersonActivity.class, fixture).putExtra("person_section", "contracts");
-            page(contract, (scenario, profile) -> {
+            page(route(PersonActivity.class, fixture), (scenario, profile) -> {
                 try {
-                    String limitsTag = "person_section:limits";
-                    await(() -> {
-                        View limits = tagged(profile.get(), limitsTag);
-                        return profile.get().hasWindowFocus() && limits != null
-                                && limits.isClickable() && limits.isLaidOut();
-                    });
-                    onView(withTagValue(is(limitsTag))).perform(revealAboveNavigation(), click());
+                    tapProfileAction(profile.get(), "person_tab:contracts");
+                    tapProfileAction(profile.get(), "person_section:limits");
                     AppModeActivity editor = awaitLimitsEditor(null, inputTag);
                     assertEquals(fixture.personId(), PersonRoutes.requireId(editor.getIntent()));
                     ImageView originalIcon = image(editor, iconTag);
@@ -402,6 +396,17 @@ public final class RemoteAppIconPresentationAndroidTest {
                 }
             });
         }
+    }
+
+    private static void tapProfileAction(Activity profile, String tag) throws Exception {
+        await(() -> {
+            View root = profile.getWindow().getDecorView();
+            View action = tagged(profile, tag);
+            return profile.hasWindowFocus() && action != null && action.isShown()
+                    && action.isEnabled() && action.isClickable() && action.isLaidOut()
+                    && !root.isLayoutRequested();
+        });
+        onView(withTagValue(is(tag))).perform(revealAboveNavigation(), click());
     }
 
     private static AppModeActivity awaitLimitsEditor(AppModeActivity previous, String inputTag) throws Exception {
