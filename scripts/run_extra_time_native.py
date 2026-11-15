@@ -197,6 +197,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "draftAndInvalidRawBudgetSurviveRecreation",
+        "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
@@ -732,6 +733,7 @@ DUMMY_PREVIEW_NATIVE = {
 DUMMY_PREVIEW_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
+        "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor",

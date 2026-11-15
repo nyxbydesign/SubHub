@@ -115,6 +115,59 @@ public class RemoteEditorAndroidTest {
         assertEquals(before, local.getAll());
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void pairedContractKeepsManageAppsAboveAnExpandablePreview() throws Exception {
+        String dom = source.peers(false).get(0).identity;
+        JSONObject doc = RemoteConfigurationAndroidTest.configuration();
+        JSONArray apps = doc.getJSONObject("apps").getJSONArray("packages");
+        for (int index = 1; index <= 6; index++) apps.put("com.example.fixture.app" + index);
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", doc, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        People.installRemoteRepository(new RemotePersonRepository(context, feature));
+        People.installRemoteAuthority(feature::controlsLocal);
+        People.installConnectionUi(new RemoteUi());
+        Intent route = new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, RemotePersonRepository.id(peer).value())
+                .putExtra("person_section", "contracts");
+        try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(route)) {
+            await(() -> {
+                AtomicReference<Boolean> ready = new AtomicReference<>();
+                page.onActivity(a -> ready.set(a.hasWindowFocus() && a.findViewById(android.R.id.content)
+                        .findViewWithTag("person_contract_apps_disclosure") != null));
+                return ready.get();
+            });
+            checkContractAppPreview(page, 3);
+            tapPairedProfileAction(page, "person_contract_apps_disclosure");
+            checkContractAppPreview(page, 6);
+            page.recreate();
+            await(() -> {
+                AtomicReference<Boolean> ready = new AtomicReference<>();
+                page.onActivity(a -> ready.set(a.hasWindowFocus() && a.findViewById(android.R.id.content)
+                        .findViewWithTag("person_contract_apps_disclosure") != null));
+                return ready.get();
+            });
+            checkContractAppPreview(page, 6);
+            tapPairedProfileAction(page, "person_contract_apps_disclosure");
+            checkContractAppPreview(page, 3);
+            assertNull(feature.store.latestCommand(peer.identity, generation));
+        }
+    }
+
+    private void checkContractAppPreview(ActivityScenario<PersonActivity> page, int visible) {
+        page.onActivity(a -> {
+            View root = a.findViewById(android.R.id.content);
+            LinearLayout scope = root.findViewWithTag("person_contract_scope");
+            LinearLayout rows = root.findViewWithTag("person_contract_app_rows");
+            View manage = scope.findViewWithTag("person_apps");
+            assertTrue(manage.isClickable());
+            assertTrue(scope.indexOfChild(manage) < scope.indexOfChild(rows));
+            for (int index = 1; index <= 6; index++) {
+                View icon = rows.findViewWithTag("contract_app_icon:com.example.fixture.app" + index);
+                if (index <= visible) assertNotNull(icon); else assertNull(icon);
+            }
+        });
+    }
+
     private void tapPairedProfileAction(ActivityScenario<PersonActivity> page, String tag) throws Exception {
         try {
             await(() -> {
@@ -324,6 +377,15 @@ public class RemoteEditorAndroidTest {
                 assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("remote_configuration_save_status"));
                 View navigation=a.findViewById(R.id.bottom_navigation);
                 assertTrue(navigation==null || navigation.getVisibility()==View.GONE);
+                if (a instanceof com.subhub.app.appmode.AppModeActivity) {
+                    assertEquals(View.GONE, a.findViewById(R.id.timer_card).getVisibility());
+                    assertEquals(View.GONE, a.findViewById(R.id.limits_combined_usage).getVisibility());
+                    View manage = a.findViewById(R.id.limits_manage_apps);
+                    View rows = a.findViewById(R.id.per_app_allowances_list);
+                    assertSame(manage.getParent(), rows.getParent());
+                    ViewGroup parent = (ViewGroup) rows.getParent();
+                    assertTrue(parent.indexOfChild(manage) < parent.indexOfChild(rows));
+                }
                 android.content.Context draft=com.subhub.app.configuration.FeatureEditorSession.context(a);
                 assertNotSame(local,draft.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0));
                 draft.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).edit().putString("local_only_witness","remote draft").commit();
@@ -341,7 +403,11 @@ public class RemoteEditorAndroidTest {
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
         try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> page = ActivityScenario.launch(route)) {
             AtomicReference<View> button = new AtomicReference<>();
-            page.onActivity(activity -> button.set(activity.findViewById(R.id.button_gag)));
+            page.onActivity(activity -> {
+                button.set(activity.findViewById(R.id.button_gag));
+                TextView status = activity.findViewById(R.id.gag_status);
+                assertEquals(context.getString(R.string.control_state_off), status.getText().toString());
+            });
             tapView(button.get());
             androidx.test.uiautomator.BySelector toggle = androidx.test.uiautomator.By.res(
                     context.getPackageName(), "gag_enabled");
@@ -379,6 +445,21 @@ public class RemoteEditorAndroidTest {
         try(ActivityScenario<com.subhub.app.settings.SettingsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.settings.SettingsActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
             AtomicReference<View> selection=new AtomicReference<>();
+            page.onActivity(a -> {
+                View filters = a.findViewById(R.id.censor_filter_rules);
+                View appearance = a.findViewById(R.id.censor_appearance);
+                View capture = a.findViewById(R.id.censor_capture_section);
+                ViewGroup parent = (ViewGroup) filters.getParent();
+                assertSame(parent, appearance.getParent());
+                assertTrue(parent.indexOfChild(appearance) < parent.indexOfChild(filters));
+                assertSame(parent, capture.getParent().getParent());
+                assertTrue(parent.indexOfChild((View) capture.getParent()) < parent.indexOfChild(filters));
+                assertNull(a.findViewById(R.id.censor_photo_tools));
+                selection.set(a.findViewById(R.id.button_capture_details));
+            });
+            tapView(selection.get());
+            page.onActivity(a -> assertTrue(a.findViewById(R.id.capture_options_content).isShown()));
+            tapView(selection.get());
             page.onActivity(a->selection.set(a.findViewById(R.id.button_appearance_details)));tapView(selection.get());
             page.onActivity(a->selection.set(a.findViewById(R.id.radio_blur)));tapView(selection.get());
             page.recreate();
