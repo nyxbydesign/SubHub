@@ -194,7 +194,9 @@ SUBHUB_PASS_SOURCE_ONLY = {
     ],
     "com.subhub.app.remote.RemoteDurationAndroidTest": [
         "nativeInlineChoiceSurvivesRecreationAndQueuesOnlyTheSelectedPeersDuration",
-        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace"
+        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace",
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "pairedContractKeepsManageAppsAboveAnExpandablePreview",
@@ -203,8 +205,7 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "statisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
         "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
@@ -732,6 +733,10 @@ DUMMY_PREVIEW_NATIVE = {
     ]
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteDurationAndroidTest": [
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving",
+    ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
         "pairedContractKeepsManageAppsAboveAnExpandablePreview",
@@ -743,8 +748,7 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
         "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "statisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals",
         "peerNameChangesKeepRelationshipAndPersonIdentitiesStable",

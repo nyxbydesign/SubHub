@@ -66,7 +66,6 @@
     <string name="remote_session_start">Session started</string>
     <string name="remote_session_end">Session ends</string>
     <string name="remote_time">%1$dh %2$dm %3$ds</string>
-    <string-array name="remote_duration_choices"><item>Until released</item><item>Random</item><item>1 hour</item><item>1 day</item><item>1 week</item><item>30 days</item></string-array>
     <string name="remote_end_requested">End session requested</string>
     <string name="remote_end_title">End session</string>
     <string name="remote_target_ended">Target session ended</string>

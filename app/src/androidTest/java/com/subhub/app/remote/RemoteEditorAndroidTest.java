@@ -267,25 +267,7 @@ public class RemoteEditorAndroidTest {
     }
 
 
-    @Test public void fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            ready(page,"service_duration");page.onActivity(a->{
-                assertNull(controls(a).get("name"));assertNull(find(a.body,context.getString(R.string.role_retry)));
-                EditText minimum=(EditText)controls(a).get("service_minimum"),maximum=(EditText)controls(a).get("service_maximum");
-                assertFalse(minimum.isShown());assertFalse(maximum.isShown());minimum.setText("");maximum.setText("invalid");
-            });
-            page.onActivity(a->((android.widget.Switch)controls(a).get("service_hidden")).setChecked(true));
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-        }
-    }
-    @Test public void failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire()throws Exception {
-        feature.store.getWritableDatabase().delete("remote_objects","stream=?",new String[]{RemoteProtocol.Stream.BASELINE.name()});
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(find(a.body,context.getString(R.string.role_retry))!=null));return found.get();});
-            JSONObject restored=RemoteConfigurationAndroidTest.configuration();restored.getJSONObject("contract").put("name","Restored baseline");
-            String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",restored,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
-            tap(page,R.string.role_retry);ready(page,"service_duration");
-        }
+    @Test public void statisticsRetainSelectedPageAndExpire()throws Exception {
         feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()));
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
             page.onActivity(a->{assertNotNull(a.body.findViewWithTag("remote_stats_DAILY"));assertNotNull(a.body.findViewWithTag("remote_stats_APP_USAGE"));assertNotNull(a.body.findViewWithTag("remote_stats_RUNTIME"));android.widget.ScrollView scroll=statsScroll(a);scroll.scrollTo(0,200);});

@@ -517,7 +517,7 @@ public class RemoteSessionControlsAndroidTest {
             assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
             assertEquals(selection, ((com.subhub.app.commitment.DurationChoicesView) tag(a, "remote_duration_choice")).duration());
             assertEquals(context.getString(R.string.remote_session_applied_duration,
-                    context.getResources().getStringArray(R.array.remote_duration_choices)[0]),
+                    context.getString(R.string.role_permanent_duration)),
                     ((TextView) tag(a, "remote_session_applied_duration")).getText().toString());
         });
     }

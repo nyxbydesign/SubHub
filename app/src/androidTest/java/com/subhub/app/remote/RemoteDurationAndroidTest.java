@@ -7,9 +7,12 @@ import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static org.hamcrest.Matchers.*;
 import android.content.*;
 import android.view.View;
+import android.widget.EditText;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.NativeUiActions;
+import com.subhub.app.R;
 import com.subhub.app.people.*;
 import com.subhub.app.security.*;
 import com.subhub.app.settings.SettingsRepository;
@@ -83,6 +86,64 @@ public class RemoteDurationAndroidTest {
         }
         assertNull(feature.store.latestCommand(peer.identity, peer.generation));
     }
+
+    @Test public void fixedInlineDurationIgnoresHiddenRandomBounds() throws Exception {
+        try (ActivityScenario<PersonActivity> page = open()) {
+            ready(page);
+            page.onActivity(activity -> {
+                View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                assertNull(duration.findViewWithTag("feature_editor_apply"));
+                EditText minimum = duration.findViewWithTag("remote_duration_minimum");
+                EditText maximum = duration.findViewWithTag("remote_duration_maximum");
+                assertFalse(minimum.isShown());
+                assertFalse(maximum.isShown());
+                minimum.setText("");
+                maximum.setText("0");
+            });
+            onView(withTagValue(is("remote_duration_hidden"))).perform(NativeUiActions.revealAboveNavigation(), click());
+            await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
+            RemoteStore.Command command = feature.store.latestCommand(peer.identity, peer.generation);
+            JSONObject expected = new JSONObject(original.toString());
+            JSONObject service = expected.getJSONObject("service");
+            service.put("hidden", !service.getBoolean("hidden"));
+            JSONObject queued = new JSONObject(command.body).getJSONObject("configuration");
+            assertEquals(RemoteStore.CommandState.QUEUED, command.state);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(RemoteConfiguration.active(queued)));
+        }
+    }
+
+    @Test public void missingDurationBaselineOffersRetryAndRecoversWithoutSaving() throws Exception {
+        feature.store.getWritableDatabase().delete("remote_objects", "stream=?",
+                new String[]{RemoteProtocol.Stream.BASELINE.name()});
+        try (ActivityScenario<PersonActivity> page = open()) {
+            await(() -> {
+                AtomicReference<Boolean> visible = new AtomicReference<>(false);
+                page.onActivity(activity -> {
+                    View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                    if (duration == null) return;
+                    ArrayList<View> actions = new ArrayList<>();
+                    duration.findViewsWithText(actions, activity.getString(R.string.role_retry), View.FIND_VIEWS_WITH_TEXT);
+                    visible.set(actions.stream().anyMatch(action -> action.isShown() && action.isEnabled()));
+                });
+                return visible.get();
+            });
+            var retry = allOf(withText(R.string.role_retry),
+                    isDescendantOfA(withTagValue(is("remote_session_duration"))));
+            onView(retry).check(androidx.test.espresso.assertion.ViewAssertions.matches(isEnabled()));
+            page.onActivity(activity -> {
+                View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                assertNull(duration.findViewWithTag("remote_duration_choice"));
+            });
+
+            String dom = source.peers(false).get(0).identity;
+            source.publish(dom, peer.generation, RemoteProtocol.Stream.BASELINE, "active", original, false, 2);
+            feature.store.receive(peer.identity, source.nextBatch(dom, peer.generation, RemoteProtocol.Stream.BASELINE));
+            onView(retry).perform(NativeUiActions.revealAboveNavigation(), click());
+            ready(page);
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+        }
+    }
+
     @Test public void staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation()throws Exception {
         AtomicReference<View> stale=new AtomicReference<>();
         try(ActivityScenario<PersonActivity> page=open()) {
