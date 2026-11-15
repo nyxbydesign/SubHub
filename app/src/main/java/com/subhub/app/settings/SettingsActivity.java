@@ -76,7 +76,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
+        if (FeatureEditorSession.remote(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
             FeatureEditorSession.leaveEditor(this);
@@ -829,8 +829,8 @@ public final class SettingsActivity extends AppCompatActivity {
 
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+            super.onRestoreInstanceState(state);
     }
 
 }

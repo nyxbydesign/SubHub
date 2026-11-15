@@ -235,8 +235,6 @@ public final class FeatureEditorSession {
         RemoteStore.Peer current=scope.feature.store.peer(scope.peer.identity,scope.peer.generation);
         return current==null?scope.peer.name:current.name;
     }
-    /** Legacy read-only preview is replaced by the explicit INTERNAL editor backend. */
-    public static boolean preview(Context context){return false;}
     public static boolean internal(Context context){FeatureEditorSession scope=scope(context);return scope!=null&&scope.internal;}
     public static boolean canView(AppCompatActivity activity,String section){
         return canEdit(activity,section);
