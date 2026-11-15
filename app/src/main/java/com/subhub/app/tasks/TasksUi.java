@@ -30,9 +30,9 @@ final class TasksUi {
 
         ZonedDateTime start = task.start(occurrence.date).atZone(task.zone);
         ZonedDateTime end = task.end(occurrence.date).atZone(task.zone);
-        DateTimeFormatter dateTime = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
+        DateTimeFormatter dateTime = shortDateTime(context);
         DateTimeFormatter endFormat = start.toLocalDate().equals(end.toLocalDate())
-                ? DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT) : dateTime;
+                ? DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(dateTime.getLocale()) : dateTime;
         String schedule = context.getString(R.string.tasks_window, dateTime.format(start), endFormat.format(end));
         if (task.recurring()) {
             schedule = context.getString(R.string.tasks_window_with_days, schedule, scheduleDays(context, task.weekdays));
@@ -45,6 +45,11 @@ final class TasksUi {
             divider(card);
             PersonUi.text(card, task.text, false);
         }
+    }
+
+    static DateTimeFormatter shortDateTime(Context context) {
+        return DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+                .withLocale(context.getResources().getConfiguration().getLocales().get(0));
     }
 
     static String scheduleDays(Context context, Set<DayOfWeek> weekdays) {

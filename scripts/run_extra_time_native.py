@@ -389,6 +389,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "mediaViewerRejectsAnAttachmentOutsideTheRelationshipProjection",
         "skippedOccurrencesAppearOnlyInHistoryWithoutUserActions",
         "historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation",
+        "taskTimestampsUseResourceLocaleForListSubmissionAndOvernightWindow",
         "visibleImageClosesOnRoleOrOptOutChangeWithoutPausing",
         "taskListRefreshRetainsUnchangedCardsAndPositionWhenAnotherTaskArrives",
         "subHomeTaskCountUpdatesWithoutReplacingOtherControlsOrPosition",

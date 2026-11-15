@@ -52,12 +52,17 @@ import java.io.File;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.time.DayOfWeek;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -825,6 +830,92 @@ public final class TasksAndroidTest {
             assertPreviewTiming(page, approved, R.string.tasks_approved, R.string.tasks_due);
             assertCompletionText(page, approved, requested);
             captureHistoryView(page, "history-sub", null);
+        }
+    }
+
+    @Test public void taskTimestampsUseResourceLocaleForListSubmissionAndOvernightWindow() throws Exception {
+        ZoneId zone = ZoneId.of("Asia/Kathmandu");
+        LocalDate today = LocalDate.now(zone);
+        long overnightStart = today.minusDays(2).atTime(23, 45).atZone(zone).toInstant().toEpochMilli();
+        TaskDefinition approved = historyTask("overnight practice", overnightStart, zone, 45 * 60_000L);
+        TaskDefinition scheduled = historyTask("tomorrow's practice", today.plusDays(1).atTime(9, 15)
+                .atZone(zone).toInstant().toEpochMilli(), zone, 45 * 60_000L);
+        TaskAction proof = historyAction(approved, TaskAction.Kind.SUBMIT, overnightStart + 600_000L, "");
+        store.append(scope, proof, false, false);
+        store.append(scope, historyAction(approved, TaskAction.Kind.ACCEPT, proof.at + 60_000L, proof.id), true, false);
+
+        Locale resourceLocale = context.getResources().getConfiguration().getLocales().get(0);
+        Locale processLocale = "en".equals(resourceLocale.getLanguage()) ? Locale.GERMANY : Locale.US;
+        Locale savedFormat = Locale.getDefault(Locale.Category.FORMAT);
+        Locale.setDefault(Locale.Category.FORMAT, processLocale);
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "task_preview_timing:" + occurrenceId(scheduled));
+            capture("tasks-locale-list");
+            page.onActivity(activity -> {
+                assertEquals(resourceLocale, activity.getResources().getConfiguration().getLocales().get(0));
+                assertEquals(processLocale, Locale.getDefault(Locale.Category.FORMAT));
+                Instant start = scheduled.start(scheduled.firstStart.toLocalDate());
+                assertNotEquals(taskTime(start, zone, processLocale), taskTime(start, zone, resourceLocale));
+                assertRenderedTimestamp(activity, "task_preview_timing:" + occurrenceId(scheduled),
+                        R.string.tasks_starts, taskTime(start, zone, resourceLocale));
+            });
+            tap("tasks_history");
+            awaitTag(page, "task_completion_time:" + occurrenceId(approved));
+            capture("tasks-locale-history");
+            page.onActivity(activity -> {
+                Instant end = approved.end(approved.firstStart.toLocalDate());
+                assertRenderedTimestamp(activity, "task_preview_timing:" + occurrenceId(approved),
+                        R.string.tasks_due, taskTime(end, zone, resourceLocale));
+                assertRenderedTimestamp(activity, "task_completion_time:" + occurrenceId(approved),
+                        R.string.tasks_submission_timestamp, taskTime(Instant.ofEpochMilli(proof.at), zone, resourceLocale));
+                assertNarrowLocalizedWindow(activity, approved.firstStart, zone);
+            });
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, savedFormat);
+        }
+    }
+
+    private static void assertRenderedTimestamp(TasksActivity activity, String tag, int label, String time) {
+        android.widget.TextView text = activity.findViewById(android.R.id.content).findViewWithTag(tag);
+        assertNotNull(tag, text);
+        assertEquals(tag, activity.getString(label, time), text.getText().toString());
+        assertTextFits(text);
+    }
+
+    private static String taskTime(Instant instant, ZoneId zone, Locale locale) {
+        return DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(locale).withZone(zone).format(instant);
+    }
+
+    private static void assertNarrowLocalizedWindow(Context activity, LocalDateTime midnightStart, ZoneId zone) {
+        android.content.res.Configuration config = new android.content.res.Configuration(activity.getResources().getConfiguration());
+        config.setLocale(Locale.GERMANY);
+        config.fontScale = 2f;
+        Context german = activity.createConfigurationContext(config);
+        TaskDefinition recurring = new TaskDefinition("localized_window_fixture", "Overnight practice",
+                "Set aside time to review the reading list.", midnightStart, zone, 45 * 60_000L,
+                EnumSet.allOf(DayOfWeek.class), false, false, null);
+        LocalDate date = midnightStart.toLocalDate();
+        TaskEngine.Occurrence occurrence = new TaskEngine.Occurrence(recurring, date, TaskEngine.Status.ACTIVE, null, null, 0);
+        Instant start = recurring.start(date), end = recurring.end(date);
+        assertEquals(date.plusDays(1), end.atZone(zone).toLocalDate());
+        String expected = german.getString(R.string.tasks_window,
+                taskTime(start, zone, Locale.GERMANY), taskTime(end, zone, Locale.GERMANY));
+        expected = german.getString(R.string.tasks_window_with_days, expected, german.getString(R.string.tasks_all_week));
+
+        Locale restoreFormat = Locale.getDefault(Locale.Category.FORMAT);
+        Locale.setDefault(Locale.Category.FORMAT, Locale.US);
+        try {
+            android.widget.LinearLayout frame = PersonUi.column(german);
+            TasksUi.occurrenceHeader(PersonUi.card(frame), occurrence, R.string.tasks_active);
+            frame.measure(View.MeasureSpec.makeMeasureSpec(PersonUi.dp(german, 320), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            frame.layout(0, 0, frame.getMeasuredWidth(), frame.getMeasuredHeight());
+            android.widget.TextView window = frame.findViewWithTag("task_window:" + occurrence.id);
+            assertNotNull(window);
+            assertEquals(expected, window.getText().toString());
+            assertTextFits(window);
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, restoreFormat);
         }
     }
 

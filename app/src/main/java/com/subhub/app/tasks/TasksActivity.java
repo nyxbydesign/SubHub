@@ -33,7 +33,6 @@ import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
 import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -384,9 +383,9 @@ public final class TasksActivity extends RolePage {
         }
         if (visible.isEmpty()) return;
         PersonUi.text(body, getString(R.string.tasks_section_count, getString(heading), visible.size()), true);
+        DateTimeFormatter dateTime = TasksUi.shortDateTime(this);
         for (TaskEngine.Occurrence occurrence : visible) {
-            DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
-                    .withZone(occurrence.task.zone);
+            DateTimeFormatter display = dateTime.withZone(occurrence.task.zone);
             String timing = getString(occurrence.status == TaskEngine.Status.SCHEDULED
                     ? R.string.tasks_starts : R.string.tasks_due,
                     display.format(occurrence.status == TaskEngine.Status.SCHEDULED
@@ -553,7 +552,7 @@ public final class TasksActivity extends RolePage {
 
     private void completionTime(LinearLayout card, TaskEngine.Occurrence occurrence) {
         if (occurrence.submission == null) return;
-        DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
+        DateTimeFormatter display = TasksUi.shortDateTime(this).withZone(occurrence.task.zone);
         PersonUi.text(card, getString(R.string.tasks_submission_timestamp,
                 display.format(java.time.Instant.ofEpochMilli(occurrence.submission.at))), false)
                 .setTag("task_completion_time:" + occurrence.id);
