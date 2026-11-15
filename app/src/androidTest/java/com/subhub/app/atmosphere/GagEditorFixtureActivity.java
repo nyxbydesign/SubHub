@@ -14,6 +14,9 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String ACTION = "com.subhub.app.test.GAG_EDITOR_FIXTURE";
     static final String EDITOR = "Gag spacing test editor";
     static final String CLIPBOARD_TEXT = "Synthetic clipboard fixture";
+    static final String LONG_CLIPBOARD_PREFIX = "Long clipboard fixture ";
+    static final String LONG_CLIPBOARD_TEXT = LONG_CLIPBOARD_PREFIX + "abc 123 ".repeat(768) + "tail";
+    static final String SEED_LONG_CLIPBOARD = "gag_seed_long_clipboard";
     static final String DELETION_TEXT = "keep über café tail";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private boolean seedClipboard;
@@ -46,7 +49,9 @@ public final class GagEditorFixtureActivity extends Activity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && seedClipboard) {
             seedClipboard = false;
-            ClipData clip = ClipData.newPlainText("Fixture", CLIPBOARD_TEXT);
+            String text = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)
+                    ? LONG_CLIPBOARD_TEXT : CLIPBOARD_TEXT;
+            ClipData clip = ClipData.newPlainText("Fixture", text);
             if (getIntent().getBooleanExtra(SUPPRESS_CLIPBOARD_OVERLAY, false)) {
                 // Android honors this for emulator clipboard synchronization.
                 PersistableBundle extras = new PersistableBundle();

@@ -1511,7 +1511,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private String clipboardTitle(GagClipboard.Entry entry) {
         if (entry.screenshot() != null) return getString(R.string.gag_clipboard_screenshot);
-        return entry.image() == null ? entry.text() : getString(R.string.gag_clipboard_image);
+        return entry.image() == null ? GagClipboard.previewText(entry.text()) : getString(R.string.gag_clipboard_image);
     }
 
     private View clipboardPreview(View parent, GagClipboard.Entry entry, boolean compact) {
@@ -1562,13 +1562,18 @@ public final class GagKeyboardService extends InputMethodService {
             return;
         }
         refreshReplacementAuthority();
+        String insertion = word + entry.text();
+        String completed = subWorkspace && rules != null
+                ? GagClipboard.applyWords(insertion, token -> applyGag(token, token)) : insertion;
+        if (completed == null) {
+            android.widget.Toast.makeText(this, R.string.gag_clipboard_paste_too_long, android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
         clearDeletionHistory();
         clearPendingSpace();
         clearSuggestions();
         resetOpening(false);
-        String insertion = word + entry.text();
         word.setLength(0);
-        String completed = GagClipboard.applyWords(insertion, token -> applyGag(token, token));
         if (!input.commitText(completed, 1)) input.finishComposingText();
         literalWord = false;
         if (!completed.isEmpty()) {

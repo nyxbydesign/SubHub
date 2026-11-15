@@ -75,6 +75,7 @@
     <string name="gag_clipboard_save">Save</string>
     <string name="gag_clipboard_text_required">Enter text to save.</string>
     <string name="gag_clipboard_change_failed">Couldn’t update Clipboard history.</string>
+    <string name="gag_clipboard_paste_too_long">Text is too long to paste after applying Gag rules.</string>
     <string name="gag_clipboard_image">Image</string>
     <string name="gag_clipboard_image_unsupported">This field doesn’t accept images.</string>
     <string name="gag_keyboard_back_to_keys">Back to keys</string>
