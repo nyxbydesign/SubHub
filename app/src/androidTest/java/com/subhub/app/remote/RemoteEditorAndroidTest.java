@@ -389,12 +389,12 @@ public class RemoteEditorAndroidTest {
         String hash = RemoteProtocol.sha256(bytes);
         String name = database + ".png";
         ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
-        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/");
-        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+        values.put(MediaStore.Downloads.MIME_TYPE, "image/png");
+        values.put(MediaStore.Downloads.RELATIVE_PATH, "Download/");
+        values.put(MediaStore.Downloads.IS_PENDING, 1);
         ContentResolver resolver = context.getApplicationContext().getContentResolver();
-        Uri image = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+        Uri image = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
         assertNotNull(image);
         try (AutoCloseable cleanup = () -> assertEquals(1, resolver.delete(image, null, null))) {
             try (OutputStream output = resolver.openOutputStream(image)) {
@@ -402,7 +402,7 @@ public class RemoteEditorAndroidTest {
                 output.write(bytes);
             }
             values.clear();
-            values.put(MediaStore.Images.Media.IS_PENDING, 0);
+            values.put(MediaStore.Downloads.IS_PENDING, 0);
             assertEquals(1, resolver.update(image, values, null, null));
             Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
             UiDevice device = UiDevice.getInstance(instrument);
@@ -414,12 +414,12 @@ public class RemoteEditorAndroidTest {
                 instrument.runOnMainSync(() -> original.get().recreate());
                 instrument.waitForIdleSync();
                 device.findObject(By.desc("Show roots")).click();
-                BySelector recent = By.res("android:id/title").text("Recent");
-                assertTrue(device.wait(Until.hasObject(recent), 10_000));
-                device.findObject(recent).click();
+                BySelector downloads = By.res("android:id/title").text("Downloads");
+                assertTrue("Downloads root is missing", device.wait(Until.hasObject(downloads), 10_000));
+                device.findObject(downloads).click();
                 assertTrue(device.wait(Until.gone(By.text("Open from")), 10_000));
                 BySelector tile = By.descStartsWith(name + ", ");
-                assertTrue(device.wait(Until.hasObject(tile), 15_000));
+                assertTrue("Synthetic image is missing from Downloads", device.wait(Until.hasObject(tile), 15_000));
                 String picker = device.getCurrentPackageName();
                 assertTrue("Unexpected document picker " + picker,
                         "com.google.android.documentsui".equals(picker) || "com.android.documentsui".equals(picker));
