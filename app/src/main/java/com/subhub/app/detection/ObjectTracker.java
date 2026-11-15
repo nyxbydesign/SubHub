@@ -39,7 +39,7 @@ public final class ObjectTracker {
                 // Classification may flicker between adjacent NudeNet labels for the same region.
                 // Spatial continuity owns the identity so one stable image cannot create a new
                 // censor (and a new ledger event) merely because its label changed for one frame.
-                if (!track.isActive()) continue;
+                if (!canShareIdentity(detection, track)) continue;
                 boolean identityHint = detection.getTrackId() == track.getId();
                 float score = identityHint ? 3f : matchScore(detection, track, nowNanos,
                         config.getMaxExtrapolationMs());
@@ -105,13 +105,13 @@ public final class ObjectTracker {
             if (!matchedDetections[index]
                     && detection.getConfidence() >= config.getConfidenceThreshold()) {
                 TrackedObject hinted = tracks.get(detection.getTrackId());
-                if (hinted != null && hinted.isActive()) {
+                if (canShareIdentity(detection, hinted)) {
                     // A second observation linked to an identity already consumed this update is
                     // supporting evidence, never permission to create a parallel censor.
                     detection.setTrackId(hinted.getId());
                     continue;
                 }
-                TrackedObject covering = coveringTrack(detection.getBox());
+                TrackedObject covering = coveringTrack(detection);
                 if (covering != null) {
                     // Effects such as blur, mosaic, labels, and static can produce several nested
                     // model boxes when a display capture includes the overlay. Keep the existing
@@ -186,12 +186,12 @@ public final class ObjectTracker {
             if (detection == null || detection.getSource()
                     != Detection.ObservationSource.QUALITY_VISUAL) continue;
             TrackedObject hinted = tracks.get(detection.getTrackId());
-            if (hinted != null && hinted.isActive()) {
+            if (canShareIdentity(detection, hinted)) {
                 detection.setTrackId(hinted.getId());
                 refreshQualityOnlyTrack(hinted, detection, nowNanos);
                 continue;
             }
-            TrackedObject covering = coveringTrack(detection.getBox());
+            TrackedObject covering = coveringTrack(detection);
             if (covering != null) {
                 detection.setTrackId(covering.getId());
                 refreshQualityOnlyTrack(covering, detection, nowNanos);
@@ -247,6 +247,14 @@ public final class ObjectTracker {
         return tracks.size();
     }
 
+    private static boolean canShareIdentity(Detection detection, TrackedObject track) {
+        // The renderer routes a track by its original category. Sharing an identity across
+        // text and images would keep matched observations in the wrong rendering path.
+        return track != null && track.isActive()
+                && ("text_smut".equals(detection.getCategory())
+                == "text_smut".equals(track.getCategory()));
+    }
+
     private static float matchScore(
             Detection detection,
             TrackedObject track,
@@ -270,9 +278,10 @@ public final class ObjectTracker {
         return iou;
     }
 
-    private TrackedObject coveringTrack(BBox candidate) {
+    private TrackedObject coveringTrack(Detection detection) {
+        BBox candidate = detection.getBox();
         for (TrackedObject track : tracks.values()) {
-            if (!track.isActive() || track.getFramesTracked() < 2) continue;
+            if (!canShareIdentity(detection, track) || track.getFramesTracked() < 2) continue;
             BBox existing = track.getBox();
             int left = Math.max(candidate.getX(), existing.getX());
             int top = Math.max(candidate.getY(), existing.getY());
