@@ -9,10 +9,9 @@ import android.os.Build;
 
 import com.subhub.app.BuildConfig;
 import com.subhub.app.util.LowercaseHex;
+import com.subhub.app.util.Sha256;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.util.HashSet;
 import java.util.Set;
@@ -35,7 +34,7 @@ public final class UpdateVerifier {
             UpdateManifest.Asset asset) {
         try {
             if (!apk.isFile() || apk.length() != asset.size) return Result.failure(Failure.SIZE);
-            if (!sha256(apk).equals(asset.sha256)) return Result.failure(Failure.HASH);
+            if (!Sha256.file(apk, 64 * 1024).equals(asset.sha256)) return Result.failure(Failure.HASH);
             if (!asset.abi.equals("universal") && !supports(asset.abi, Build.SUPPORTED_ABIS)) {
                 return Result.failure(Failure.ABI);
             }
@@ -87,15 +86,5 @@ public final class UpdateVerifier {
             values.add(LowercaseHex.encode(digest));
         }
         return values;
-    }
-
-    private static String sha256(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (BufferedInputStream input = new BufferedInputStream(new FileInputStream(file))) {
-            byte[] buffer = new byte[64 * 1024];
-            int count;
-            while ((count = input.read(buffer)) >= 0) digest.update(buffer, 0, count);
-        }
-        return LowercaseHex.encode(digest.digest());
     }
 }

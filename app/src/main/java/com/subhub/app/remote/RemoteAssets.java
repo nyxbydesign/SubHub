@@ -1,6 +1,6 @@
 package com.subhub.app.remote;
 
-import com.subhub.app.util.LowercaseHex;
+import com.subhub.app.util.Sha256;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Content-addressed, resumable asset staging bounded independently of compression. */
@@ -148,14 +147,7 @@ public final class RemoteAssets {
     }
 
     public static String digest(File file) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream input = new FileInputStream(file)) {
-                byte[] buffer = new byte[8192]; int count;
-                while ((count = input.read(buffer)) != -1) digest.update(buffer,0,count);
-            }
-            return LowercaseHex.encode(digest.digest());
-        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        return Sha256.file(file, 8192);
     }
 
     private long expected(String hash) throws IOException {
