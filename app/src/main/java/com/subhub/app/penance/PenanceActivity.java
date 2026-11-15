@@ -13,10 +13,8 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.CompoundButton;
 import android.widget.EditText;
-import android.widget.Toast;
 import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.lifecycle.Lifecycle;
 
 import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.BuildConfig;
@@ -25,6 +23,7 @@ import com.subhub.app.databinding.ActivityPenanceBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.util.ForegroundSnackbar;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 import com.subhub.app.util.UiIdentity;
@@ -381,10 +380,8 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     @Override protected void onStop() {
-        if (walletMessage != null) {
-            walletMessage.dismiss();
-            walletMessage = null;
-        }
+        ForegroundSnackbar.dismiss(walletMessage);
+        walletMessage = null;
         super.onStop();
     }
 
@@ -998,17 +995,8 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void showMessage(CharSequence text, int duration) {
-        if (binding == null || isFinishing() || !binding.getRoot().isAttachedToWindow()
-                || !getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) {
-            Toast.makeText(this, text,
-                    duration == Snackbar.LENGTH_LONG ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
-            return;
-        }
-        View root = binding.getRoot();
-        View navigation = root.findViewById(R.id.bottom_navigation);
-        walletMessage = Snackbar.make(root, text, duration);
-        if (navigation != null && navigation.isShown()) walletMessage.setAnchorView(navigation);
-        walletMessage.show();
+        walletMessage = ForegroundSnackbar.show(this, binding == null ? null : binding.getRoot(),
+                walletMessage, text, duration);
     }
 
     @Override protected void onDestroy() {

@@ -82,6 +82,7 @@ NATIVE = {
     ],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest": [
         "requestApproveAndDeclineRetainAllowanceAndInputDrafts",
+        "decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh",
         "remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt",
         "unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission",
         "unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation",
@@ -792,7 +793,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 227}
+SUITE_COUNTS = {"extra-time": 22, "subhub-pass": 53, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 227}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -823,6 +824,8 @@ UI_WITNESSES = {
         "extra-time-overview-collapsed", "extra-time-overview-update-needed", "extra-time-overview-pending",
         "extra-time-dom-review", "extra-time-overview-approved", "extra-time-overview-declined",
         "extra-time-overview-repeated-request"],
+    "com.subhub.app.appmode.ExtraTimeUiAndroidTest#decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh": [
+        "extra-time-dom-action-failed"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt": [
         "extra-time-dom-remote-icon"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission": [

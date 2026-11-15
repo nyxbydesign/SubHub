@@ -15,12 +15,14 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.remote.ExtraTimeRequests;
 import com.subhub.app.util.AsyncUiScope;
+import com.subhub.app.util.ForegroundSnackbar;
 import com.subhub.app.util.PreferencePage;
 
 import java.text.DateFormat;
@@ -37,6 +39,7 @@ public final class ExtraTimeActivity extends PreferencePage {
     private PersonId person;
     private AsyncUiScope data;
     private LinearLayout content;
+    private Snackbar actionMessage;
     private ExtraTimeRequests.Snapshot snapshot;
     private final Bundle minuteDrafts = new Bundle();
     private final Set<String> pendingActions = new HashSet<>();
@@ -113,6 +116,12 @@ public final class ExtraTimeActivity extends PreferencePage {
         stopAppIcons();
         clock.removeCallbacks(refreshTick);
         super.onPause();
+    }
+
+    @Override protected void onStop() {
+        ForegroundSnackbar.dismiss(actionMessage);
+        actionMessage = null;
+        super.onStop();
     }
 
     @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
@@ -303,7 +312,8 @@ public final class ExtraTimeActivity extends PreferencePage {
             finish();
             return;
         }
-        notice(getString(R.string.extra_time_action_failed));
+        actionMessage = ForegroundSnackbar.show(this, findViewById(android.R.id.content), actionMessage,
+                getText(R.string.extra_time_action_failed), Snackbar.LENGTH_LONG);
         refresh();
     }
 

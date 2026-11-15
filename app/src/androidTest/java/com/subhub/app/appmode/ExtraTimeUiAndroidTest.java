@@ -17,6 +17,9 @@ import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.espresso.UiController;
 import androidx.test.espresso.ViewAction;
@@ -30,7 +33,10 @@ import com.subhub.app.people.PersonId;
 import com.subhub.app.remote.ExtraTimeRequests;
 import com.subhub.app.remote.RemoteExtraTimeUiFixture;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.time.ZonedDateTime;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
@@ -221,6 +227,114 @@ public final class ExtraTimeUiAndroidTest {
                 });
                 capture(home, tag("extra_time_inline_status:" + fixture.secondPackage), "extra-time-overview-repeated-request");
             }
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 30)
+    public void decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh() throws Exception {
+        Field snapshot = ExtraTimeActivity.class.getDeclaredField("snapshot");
+        snapshot.setAccessible(true);
+        Method actionFailed = ExtraTimeActivity.class.getDeclaredMethod(
+                "actionFailed", String.class, Exception.class);
+        actionFailed.setAccessible(true);
+        int messageId = com.google.android.material.R.id.snackbar_text;
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+            ExtraTimeRequests.Snapshot quote = fixture.subRequests().snapshot(System.currentTimeMillis());
+            ExtraTimeRequests.Request request = fixture.subRequests().submit(
+                    fixture.firstPackage, quote.tributeCents, quote.currency);
+            fixture.transfer();
+            fixture.switchDom();
+            try (UiPage<ExtraTimeActivity> dom = openDom(fixture.subPerson)) {
+                String approval = "extra_time_approve:" + request.id;
+                await(dom, a -> a.hasWindowFocus() && enabled(a, approval));
+                AtomicReference<Object> before = new AtomicReference<>();
+                AtomicReference<View> lastMessage = new AtomicReference<>();
+                AtomicInteger appearances = new AtomicInteger();
+                dom.onActivity(a -> {
+                    View root = a.findViewById(android.R.id.content);
+                    assertNull(root.findViewById(messageId));
+                    root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+                        View message = root.findViewById(messageId);
+                        if (lastMessage.getAndSet(message) != message && message != null) {
+                            appearances.incrementAndGet();
+                        }
+                    });
+                    before.set(snapshotValue(snapshot, a));
+                    // Deliver the real UI callback without running or changing a decision operation.
+                    try {
+                        actionFailed.invoke(a, "decision:" + request.id, new IllegalStateException("Fixture failure"));
+                    } catch (ReflectiveOperationException error) {
+                        throw new AssertionError(error);
+                    }
+                });
+                await(dom, a -> {
+                    TextView message = a.findViewById(messageId);
+                    return message != null && message.isShown()
+                            && message.getParent() instanceof View content
+                            && content.getParent() instanceof View bar
+                            && bar.isAttachedToWindow() && bar.isLaidOut()
+                            && bar.getTranslationY() == 0 && bar.getAlpha() == 1;
+                });
+                AtomicReference<TextView> visible = new AtomicReference<>();
+                AtomicReference<View> scroll = new AtomicReference<>();
+                AtomicReference<Rect> barBounds = new AtomicReference<>();
+                AtomicReference<Rect> visibleBarBounds = new AtomicReference<>();
+                AtomicReference<Rect> messageBounds = new AtomicReference<>();
+                AtomicReference<Rect> usableWindow = new AtomicReference<>();
+                dom.onActivity(a -> {
+                    TextView message = a.findViewById(messageId);
+                    assertNotNull(message);
+                    // Material wraps the snackbar_text view in its content layout inside the bar.
+                    View bar = (View) message.getParent().getParent();
+                    visible.set(message);
+                    scroll.set(a.findViewById(R.id.role_page_scroll));
+                    int[] origin = new int[2];
+                    bar.getLocationOnScreen(origin);
+                    barBounds.set(new Rect(origin[0], origin[1],
+                            origin[0] + bar.getWidth(), origin[1] + bar.getHeight()));
+                    visibleBarBounds.set(TextFrameWitness.screenClip(bar));
+                    messageBounds.set(TextFrameWitness.screenClip(message));
+                    WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(bar);
+                    assertNotNull(insets);
+                    Rect window = new Rect(a.getWindowManager().getCurrentWindowMetrics().getBounds());
+                    Insets navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars());
+                    window.inset(navigation.left, navigation.top, navigation.right, navigation.bottom);
+                    usableWindow.set(window);
+                });
+                String run = InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui");
+                TextFrameWitness.capture(visible.get(), scroll.get(), run, "extra-time-dom-action-failed");
+                dom.onActivity(a -> {
+                    assertSame(visible.get(), a.findViewById(messageId));
+                    assertEquals(a.getText(R.string.extra_time_action_failed).toString(),
+                            visible.get().getText().toString());
+                    assertEquals("The full Snackbar is visible", barBounds.get(), visibleBarBounds.get());
+                    assertTrue("Message fits in the attached Snackbar", barBounds.get().contains(messageBounds.get()));
+                    Rect window = usableWindow.get();
+                    Rect bar = barBounds.get();
+                    assertTrue("Snackbar clears system navigation: " + bar + " inside " + window, window.contains(bar));
+                    int maxBottomGap = Math.round(32 * a.getResources().getDisplayMetrics().density);
+                    assertTrue("Snackbar belongs at the bottom of the usable window: " + bar + " inside " + window,
+                            window.bottom - bar.bottom <= maxBottomGap);
+                    assertFalse(a.isFinishing());
+                });
+                await(dom, a -> snapshotValue(snapshot, a) != before.get() && a.findViewById(messageId) == null);
+                dom.onActivity(a -> before.set(snapshotValue(snapshot, a)));
+                await(dom, a -> snapshotValue(snapshot, a) != before.get());
+                dom.onActivity(a -> {
+                    assertNull("The next refresh does not repeat the notice", a.findViewById(messageId));
+                    assertEquals("Only one Snackbar appeared through both refreshes", 1, appearances.get());
+                    assertTrue(enabled(a, approval));
+                    assertFalse(a.isFinishing());
+                });
+            }
+        }
+    }
+
+    private static Object snapshotValue(Field snapshot, ExtraTimeActivity activity) {
+        try {
+            return snapshot.get(activity);
+        } catch (IllegalAccessException error) {
+            throw new AssertionError(error);
         }
     }
 

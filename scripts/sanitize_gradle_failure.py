@@ -875,6 +875,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/util/CompactChoiceGroup.java": "main_util_compact_choice_group",
     b"app/src/main/java/com/subhub/app/util/FiveSecondBackGesture.java": "main_util_five_second_back_gesture",
     b"app/src/main/java/com/subhub/app/util/FormRow.java": "main_util_form_row",
+    b"app/src/main/java/com/subhub/app/util/ForegroundSnackbar.java": "main_util_foreground_snackbar",
     b"app/src/main/java/com/subhub/app/util/InputBounds.java": "main_util_input_bounds",
     b"app/src/main/java/com/subhub/app/util/LowercaseHex.java": "main_util_lowercase_hex",
     b"app/src/main/java/com/subhub/app/util/InputFocusPolicy.java": "main_util_input_focus_policy",
