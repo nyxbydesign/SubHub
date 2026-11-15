@@ -29,6 +29,9 @@ public final class GagClipboardControlsServiceAndroidTest {
     private static final String EDITED = "Synthetic edited clipboard text";
 
     @Test public void editSavesPrivatelyWhileTapPastesAndHoldSlidesToPinOrDelete() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals("Grant full photo access in the synthetic guest to isolate the controls from the permission prompt",
+                GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
         openFixture(true);
         shell("input text Draft");
         assertEditor("Draft");
@@ -78,7 +81,8 @@ public final class GagClipboardControlsServiceAndroidTest {
                 shell("settings get secure default_input_method").trim());
         String started = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + "/" + GagEditorFixtureActivity.class.getName()
-                + " --ez gag_seed_clipboard " + seed);
+                + " --ez gag_seed_clipboard " + seed
+                + " --ez " + GagEditorFixtureActivity.SUPPRESS_CLIPBOARD_OVERLAY + " " + seed);
         assertTrue(started, started.contains("Status: ok"));
         await(By.pkg(APP).text("q"));
         assertEditor("");
@@ -87,8 +91,23 @@ public final class GagClipboardControlsServiceAndroidTest {
     private static void openClipboard() {
         BySelector tool = By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard));
         if (!device().hasObject(tool)) await(editor()).click();
-        await(tool).click();
-        await(By.pkg(APP).text(label(R.string.gag_clipboard_title)));
+        UiObject2 button = await(tool);
+        boolean overlayBefore = systemClipboardOverlayPresent();
+        Rect clickBounds = button.getVisibleBounds();
+        button.click();
+        if (!device().wait(Until.hasObject(By.pkg(APP).text(label(R.string.gag_clipboard_title))), TIMEOUT)) {
+            throw new AssertionError("Clipboard panel missing after toolbar tap"
+                    + " [buttonBounds=" + clickBounds + ", systemClipboardOverlayBefore=" + overlayBefore
+                    + ", systemClipboardOverlayAfter=" + systemClipboardOverlayPresent()
+                    + ", toolbarVisible=" + device().hasObject(tool)
+                    + ", backToKeysVisible=" + device().hasObject(By.pkg(APP).desc(label(R.string.gag_keyboard_back_to_keys)))
+                    + ", fixtureEditorVisible=" + device().hasObject(editor()) + "]");
+        }
+    }
+
+    private static boolean systemClipboardOverlayPresent() {
+        return InstrumentationRegistry.getInstrumentation().getUiAutomation().getWindows().stream()
+                .anyMatch(window -> "ClipboardOverlay".equals(String.valueOf(window.getTitle())));
     }
 
     private static UiObject2 openEditPopup() {

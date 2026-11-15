@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.os.Bundle;
+import android.os.PersistableBundle;
 import android.text.InputType;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
@@ -14,6 +15,7 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String EDITOR = "Gag spacing test editor";
     static final String CLIPBOARD_TEXT = "Synthetic clipboard fixture";
     static final String DELETION_TEXT = "keep über café tail";
+    static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private boolean seedClipboard;
 
     @Override protected void onCreate(Bundle state) {
@@ -44,7 +46,14 @@ public final class GagEditorFixtureActivity extends Activity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && seedClipboard) {
             seedClipboard = false;
-            getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Fixture", CLIPBOARD_TEXT));
+            ClipData clip = ClipData.newPlainText("Fixture", CLIPBOARD_TEXT);
+            if (getIntent().getBooleanExtra(SUPPRESS_CLIPBOARD_OVERLAY, false)) {
+                // Android honors this for emulator clipboard synchronization.
+                PersistableBundle extras = new PersistableBundle();
+                extras.putBoolean("com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY", true);
+                clip.getDescription().setExtras(extras);
+            }
+            getSystemService(ClipboardManager.class).setPrimaryClip(clip);
         }
     }
 }
