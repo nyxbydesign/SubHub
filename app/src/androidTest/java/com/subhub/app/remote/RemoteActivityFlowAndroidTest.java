@@ -1,6 +1,10 @@
 package com.subhub.app.remote;
 
 import static org.junit.Assert.*;
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.scrollTo;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import android.app.NotificationManager;
 import android.content.*;
 import android.database.Cursor;
@@ -10,6 +14,7 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.R;
 import com.subhub.app.activity.*;
 import com.subhub.app.appmode.*;
 import com.subhub.app.penance.*;
@@ -251,7 +256,7 @@ public final class RemoteActivityFlowAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(dom).value()))) {
             feature.changed();write("sub-state","artwork-ready");
             await(()->read("artwork-hash").matches("[0-9a-f]{64}"),120_000);String hash=read("artwork-hash");
-            await(()->Long.parseLong(feature.store.metadata(dom.identity,dom.generation,"applied_revision","0"))>0,120_000);
+            await(()->hasAppliedArtwork(hash),120_000);
             assertAppliedBytes(hash);write("sub-state","artwork-verified");
             await(()->feature.store.peer(dom.identity,dom.generation).state==RemoteStore.State.REVOKED,120_000);
             assertAppliedBytes(hash);assertEquals(KeyholderProvider.State.NONE,People.keyholder().state());
@@ -259,9 +264,13 @@ public final class RemoteActivityFlowAndroidTest {
         }
     }
     private void assertAppliedBytes(String expected)throws Exception {
-        boolean matched=false;for(File image:new com.subhub.app.capture.CustomImageManager(context).enabledConfigurationFiles())
-            if(expected.equals(RemoteAssets.digest(image)))matched=true;
-        assertTrue("Applied image points at the verified received bytes",matched);
+        assertTrue("Applied image points at the verified received bytes",hasAppliedArtwork(expected));
+    }
+    private boolean hasAppliedArtwork(String expected)throws Exception {
+        for(File image:new com.subhub.app.capture.CustomImageManager(context).enabledConfigurationFiles()) {
+            if(expected.equals(RemoteAssets.digest(image)))return true;
+        }
+        return false;
     }
     @androidx.annotation.RequiresApi(29)
     private void applyArtworkFromProfile(RemoteStore.Peer sub)throws Exception {
@@ -285,9 +294,9 @@ public final class RemoteActivityFlowAndroidTest {
                 await(()->hasTag(profile,"person_section:censor"),15_000);
                 androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is("person_section:censor")))
                         .perform(androidx.test.espresso.action.ViewActions.scrollTo(),androidx.test.espresso.action.ViewActions.click());
-                await(()->resumedEditor()!=null,15_000);
-                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.remote_add_censor_image))
-                        .perform(androidx.test.espresso.action.ViewActions.scrollTo(),androidx.test.espresso.action.ViewActions.click());
+                onView(withId(R.id.button_appearance_details)).perform(scrollTo(),click());
+                onView(withId(R.id.radio_custom)).perform(scrollTo(),click());
+                onView(withId(R.id.button_add_censor_images)).perform(scrollTo(),click());
                 androidx.test.uiautomator.UiDevice device=androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
                 assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.desc("Show roots")),10_000));
                 device.findObject(androidx.test.uiautomator.By.desc("Show roots")).click();
@@ -297,18 +306,16 @@ public final class RemoteActivityFlowAndroidTest {
                 androidx.test.uiautomator.BySelector tile=androidx.test.uiautomator.By.descStartsWith(name+", ");
                 assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(tile),15_000));device.findObject(tile).click();
                 assertTrue(device.wait(androidx.test.uiautomator.Until.gone(androidx.test.uiautomator.By.pkg("com.google.android.documentsui").depth(0)),10_000));
-                await(()->{RemoteContractActivity editor=resumedEditor();if(editor==null)return false;
-                    java.util.concurrent.atomic.AtomicBoolean ready=new java.util.concurrent.atomic.AtomicBoolean();
-                    InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{java.lang.reflect.Field draft=RemoteContractActivity.class.getDeclaredField("draft");draft.setAccessible(true);JSONObject doc=(JSONObject)draft.get(editor);ready.set(doc!=null&&doc.getJSONObject("contract").getJSONArray("assets").length()==original+1);}catch(Exception failure){throw new AssertionError(failure);}});return ready.get();},20_000);
                 await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.state==RemoteStore.CommandState.APPLIED
                         && command.body.contains(hash);},120_000);
                 RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);assertNotNull(command);
+                JSONArray applied=new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");
+                assertEquals(original+1,applied.length());
                 write("artwork-receipt",new JSONObject().put("command",command.id).put("sha256",hash).put("state",command.state.name()).toString());
             }
         } finally {context.getContentResolver().delete(image,null,null);}
     }
     private boolean hasTag(ActivityScenario<PersonActivity> page,String tag) {java.util.concurrent.atomic.AtomicBoolean result=new java.util.concurrent.atomic.AtomicBoolean();page.onActivity(a->result.set(a.findViewById(android.R.id.content).findViewWithTag(tag)!=null));return result.get();}
-    private RemoteContractActivity resumedEditor(){java.util.concurrent.atomic.AtomicReference<RemoteContractActivity> result=new java.util.concurrent.atomic.AtomicReference<>();InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{for(android.app.Activity activity:androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED))if(activity instanceof RemoteContractActivity)result.set((RemoteContractActivity)activity);});return result.get();}
     private void launchSelected(){Intent launch=context.getPackageManager().getLaunchIntentForPackage(SELECTED);assertNotNull(launch);context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
     private RemoteStore.Invitation candidate(String id){for(RemoteStore.Invitation item:feature.store.invitations(System.currentTimeMillis()))if(id.equals(item.id)&&item.candidate!=null)return item;return null;}
     private RemoteStore.Peer active(RemoteProtocol.Role role){for(RemoteStore.Peer peer:feature.store.peers(false))if(peer.localRole==role&&peer.state==RemoteStore.State.ACTIVE)return peer;return null;}

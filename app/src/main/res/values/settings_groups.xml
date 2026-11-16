@@ -2,7 +2,6 @@
     <item type="id" name="button_packs" />
     <item type="id" name="button_toggle_apps" />
     <item type="id" name="feature_areas_card" />
-    <string name="settings_apps">Apps</string>
     <string name="settings_help">Help &amp; About</string>
     <string name="settings_updates">App Updates</string>
     <string name="settings_services_ready">PayPal connected</string>

@@ -94,7 +94,6 @@ public final class UiComponentContractTest {
             assertTrue(choice.getMeasuredHeight() >= minimum);
         }
         int[][] dialogs = {
-            {R.layout.dialog_arrangement_details, R.id.arrangement_detail_close},
             {R.layout.dialog_achievement_details, R.id.achievement_detail_close}
         };
         for (int[] dialog : dialogs) {

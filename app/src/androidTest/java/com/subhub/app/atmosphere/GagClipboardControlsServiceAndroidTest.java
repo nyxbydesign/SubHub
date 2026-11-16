@@ -10,8 +10,13 @@ import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.view.InputDevice;
 import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.widget.Button;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
+import androidx.test.runner.lifecycle.Stage;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
@@ -39,6 +44,7 @@ public final class GagClipboardControlsServiceAndroidTest {
         openClipboard();
         UiObject2 firstEdit = openEditPopup();
         assertPopupAboveKeyboard(firstEdit);
+        assertPopupActionsFit();
         UiObject2 key = await(By.pkg(APP).text(java.util.regex.Pattern.compile("[qQ]")));
         String letter = key.getText();
         key.click();
@@ -157,7 +163,9 @@ public final class GagClipboardControlsServiceAndroidTest {
 
     private static void assertPopupAboveKeyboard(UiObject2 input) throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
-        float density = instrumentation.getTargetContext().getResources().getDisplayMetrics().density;
+        var resources = instrumentation.getTargetContext().getResources();
+        float density = resources.getDisplayMetrics().density;
+        boolean enlargedText = resources.getConfiguration().fontScale > 1.3f;
         long deadline = SystemClock.uptimeMillis() + TIMEOUT;
         Rect panel;
         Rect keyboardBounds;
@@ -166,13 +174,46 @@ public final class GagClipboardControlsServiceAndroidTest {
             keyboardBounds = inputMethodBounds();
             int gap = keyboardBounds.top - panel.bottom;
             if (input.isFocused() && !panel.isEmpty() && panel.width() <= Math.round(300 * density)
-                    && panel.height() <= Math.round(240 * density) && !keyboardBounds.isEmpty()
+                    && (enlargedText || panel.height() <= Math.round(240 * density)) && !keyboardBounds.isEmpty()
                     && gap >= 0 && gap <= Math.round(24 * density)) return;
             SystemClock.sleep(100);
         } while (SystemClock.uptimeMillis() < deadline);
         throw new AssertionError("Edit must be a bounded popup immediately above a shown input method"
                 + " [panel=" + panel + ", inputMethod=" + keyboardBounds + ", inputFocused=" + input.isFocused()
                 + ", inputMethodState=" + inputMethodState() + "]");
+    }
+
+    private static void assertPopupActionsFit() {
+        var cancel = await(By.pkg(APP).clazz(Button.class).text(label(android.R.string.cancel)));
+        var save = await(By.pkg(APP).clazz(Button.class).text(label(R.string.gag_clipboard_save)));
+        Rect cancelBounds = cancel.getVisibleBounds();
+        Rect saveBounds = save.getVisibleBounds();
+        assertTrue("Cancel and Save overlap", !Rect.intersects(cancelBounds, saveBounds));
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            var activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .stream().filter(GagClipboardEditActivity.class::isInstance).findFirst().orElseThrow();
+            var window = activity.getWindow();
+            assertTrue(window.isFloating());
+            assertTrue((window.getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
+            assertActionLabelFits(window.getDecorView(), activity.getString(android.R.string.cancel));
+            assertActionLabelFits(window.getDecorView(), activity.getString(R.string.gag_clipboard_save));
+        });
+    }
+
+    private static void assertActionLabelFits(View decor, String label) {
+        var views = new java.util.ArrayList<View>();
+        decor.findViewsWithText(views, label, View.FIND_VIEWS_WITH_TEXT);
+        Button button = views.stream().filter(Button.class::isInstance).map(Button.class::cast)
+                .filter(view -> label.contentEquals(view.getText())).findFirst().orElseThrow();
+        var layout = button.getLayout();
+        int minTouch = Math.round(48 * button.getResources().getDisplayMetrics().density);
+        assertTrue("Control is smaller than its touch target: " + label, button.getHeight() >= minTouch);
+        assertNotNull(layout);
+        assertEquals(label.length(), layout.getLineEnd(layout.getLineCount() - 1));
+        for (int line = 0; line < layout.getLineCount(); line++) {
+            assertEquals("Label is ellipsized: " + label, 0, layout.getEllipsisCount(line));
+            assertTrue("Label is clipped: " + label, layout.getLineWidth(line) <= layout.getWidth() + 1);
+        }
     }
 
     private static Rect inputMethodBounds() {

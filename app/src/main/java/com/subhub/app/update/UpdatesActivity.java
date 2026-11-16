@@ -27,10 +27,10 @@ import com.subhub.app.databinding.ActivityUpdatesBinding;
 import java.io.File;
 import java.time.ZoneId;
 import java.util.Date;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,7 +50,8 @@ public final class UpdatesActivity extends AppCompatActivity {
     private boolean verifyingInstall;
     private long lastCheckBeforeFailure = -1L;
     private String historyFingerprint = "";
-    private final Set<String> expandedHistory = new HashSet<>();
+    private boolean historyDevUpdates;
+    private final Map<String, Boolean> historyDisclosureOverrides = new HashMap<>();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             render();
@@ -182,7 +183,8 @@ public final class UpdatesActivity extends AppCompatActivity {
         else if (!devUpdates) history = ReleaseHistoryCatalog.merge(history, bundledHistory);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);
         renderInstalledVersion(history);
-        renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME), candidate);
+        renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME),
+                candidate, devUpdates);
         binding.downloadGuideCard.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
         if (candidate != null) {
             UpdateManifest.Asset asset = candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
@@ -250,7 +252,12 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.updateStatus.setVisibility(message.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
-    private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate) {
+    private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate,
+            boolean devUpdates) {
+        if (historyDevUpdates != devUpdates) {
+            historyDevUpdates = devUpdates;
+            historyDisclosureOverrides.clear();
+        }
         binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
         if (history.isEmpty()) {
             if (!historyFingerprint.isEmpty()) binding.releaseHistoryList.removeAllViews();
@@ -258,7 +265,8 @@ public final class UpdatesActivity extends AppCompatActivity {
             return;
         }
         StringBuilder fingerprint = new StringBuilder();
-        fingerprint.append(getResources().getConfiguration().getLocales().toLanguageTags())
+        fingerprint.append(devUpdates).append(';')
+                .append(getResources().getConfiguration().getLocales().toLanguageTags())
                 .append(':').append(ZoneId.systemDefault().getId()).append(';')
                 .append(candidate == null ? "" : candidate.manifest.tag).append(';');
         for (ReleaseHistoryItem item : history) {
@@ -267,9 +275,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         }
         String value = fingerprint.toString();
         if (value.equals(historyFingerprint)) return;
-        boolean firstRender = historyFingerprint.isEmpty();
         historyFingerprint = value;
-        if (firstRender && candidate != null) expandedHistory.add(candidate.manifest.tag);
         binding.releaseHistoryList.removeAllViews();
         LayoutInflater inflater = LayoutInflater.from(this);
         for (ReleaseHistoryItem item : history) {
@@ -294,12 +300,12 @@ public final class UpdatesActivity extends AppCompatActivity {
                             info.setClassName(android.widget.Button.class.getName());
                         }
                     });
-            renderHistoryDisclosure(heading, details, chevron, expandedHistory.contains(item.tag));
+            boolean expanded = historyDisclosureOverrides.getOrDefault(item.tag, !devUpdates || item.prerelease);
+            renderHistoryDisclosure(heading, details, chevron, expanded);
             heading.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
                 renderHistoryDisclosure(heading, details, chevron, show);
-                if (show) expandedHistory.add(item.tag);
-                else expandedHistory.remove(item.tag);
+                historyDisclosureOverrides.put(item.tag, show);
             });
             binding.releaseHistoryList.addView(row);
         }

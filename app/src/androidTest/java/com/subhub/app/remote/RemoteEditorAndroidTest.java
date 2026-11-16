@@ -2,6 +2,8 @@ package com.subhub.app.remote;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.scrollTo;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.hamcrest.Matchers.is;
@@ -11,16 +13,27 @@ import android.app.Instrumentation;
 import android.content.*;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.provider.MediaStore;
 import android.view.*;
 import android.widget.*;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.Until;
 import com.subhub.app.R;
+import com.subhub.app.appmode.AppModeActivity;
+import com.subhub.app.atmosphere.AtmosphereActivity;
+import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.people.*;
+import com.subhub.app.popup.PopupStormActivity;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.SettingsActivity;
+import com.subhub.app.stats.StatsActivity;
+import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import org.json.*;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -49,13 +62,6 @@ public class RemoteEditorAndroidTest {
         singleton=RemoteFeature.class.getDeclaredField("instance");singleton.setAccessible(true);previous=(RemoteFeature)singleton.get(null);singleton.set(null,feature);
     }
     @After public void cleanup()throws Exception {singleton.set(null,previous);feature.shutdownForTest();source.close();context.deleteDatabase(database+".db");context.deleteDatabase(database+"source.db");File assets=new File(context.getNoBackupFilesDir(),"remote-assets/"+peer.identity+"/"+generation);if(assets.isDirectory())try(java.util.stream.Stream<java.nio.file.Path> paths=java.nio.file.Files.walk(assets.toPath())){for(java.nio.file.Path path:paths.sorted(Comparator.reverseOrder()).toArray(java.nio.file.Path[]::new))java.nio.file.Files.delete(path);}ControllerPinManager.enterSubMode();}
-    @Test public void draftAndInvalidRawBudgetSurviveRecreation()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
-            ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
-            ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
-            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,generation));
-        }
-    }
     @Test @SdkSuppress(minSdkVersion = 29)
     public void pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance() throws Exception {
         String addedPackage = "com.example.fixture.browser";
@@ -95,6 +101,11 @@ public class RemoteEditorAndroidTest {
                     assertTrue(((CheckBox) panel.findViewWithTag("included:com.android.settings")).isChecked());
                     assertFalse(choice.get().isChecked());
                     assertTrue(choice.get().isEnabled());
+                    View body = editor.findViewById(R.id.role_page_body);
+                    assertNull(find(body, "Import contract"));
+                    assertNull(body.findViewById(R.id.button_add_censor_images));
+                    assertNull(find(body, context.getString(
+                            com.subhub.app.configuration.ConfigurationSettingCatalog.field("modules", "module_censor_enabled").label)));
                 });
                 inspectLayout(editor, "paired-apps");
                 assertNull(feature.store.latestCommand(peer.identity, generation));
@@ -203,121 +214,282 @@ public class RemoteEditorAndroidTest {
             throw new AssertionError("Could not tap paired profile action " + tag, failure);
         }
     }
-    @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");page.onActivity(a->{EditText name=(EditText)controls(a).get("name");name.setText("F");name.setText("Final offline name");});
-            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            RemoteStore.Command command=feature.store.latestCommand(peer.identity,generation);
-            assertEquals(1,command.revision);
-            assertEquals("Final offline name",new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").getString("name"));
-        }
-    }
-    @Test public void newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");page.onActivity(a->((EditText)controls(a).get("name")).setText("First change"));
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            page.onActivity(a->((EditText)controls(a).get("name")).setText("Latest change"));
-            await(()->"Latest change".equals(feature.contracts.editing(peer).getJSONObject("contract").getString("name")));
-            assertEquals(1,feature.store.latestCommand(peer.identity,generation).revision);
-            page.recreate();ready(page,"name");
-            page.onActivity(a->assertEquals("Latest change",((EditText)controls(a).get("name")).getText().toString()));
-        }
-    }
-
-    @Test public void automaticSaveRetainsTheFocusedEditorAndCursor()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");AtomicReference<EditText> name=new AtomicReference<>();
-            page.onActivity(a->{EditText value=(EditText)controls(a).get("name");name.set(value);value.requestFocus();value.setText("Saved without rebuilding");value.setSelection(5);});
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            page.onActivity(a->{assertSame(name.get(),controls(a).get("name"));assertTrue(name.get().hasFocus());assertEquals(5,name.get().getSelectionStart());});
-        }
-    }
-
-    @Test public void atmosphereRouteOpensSubliminalAndRoleLossClosesEditor()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("atmosphere")) {
-            ready(page,"name");page.onActivity(a->{try{java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("subliminal",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
-            ControllerPinManager.enterSubMode();page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);await(()->page.getState()==androidx.lifecycle.Lifecycle.State.DESTROYED);
-        }
-    }
-    @Test public void dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly()throws Exception {
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_unknown)));assertNotNull(find(a.body,context.getString(R.string.role_stale_data)));});
-        }
-        JSONObject metrics=new JSONObject().put("service_ms",3_661_000).put("assessed_EUR",123).put("photos",4).put("videos",5).put("limit_stops",2);
-        source.publish(source.peers(false).get(0).identity,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25").put("zone",JSONObject.NULL).put("metrics",metrics),false,1);
-        String dom=source.peers(false).get(0).identity;feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));feature.store.putMetadata(peer.identity,generation,"confirmed_DAILY",Long.toString(System.currentTimeMillis()));
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{View daily=a.body.findViewWithTag("remote_stats_DAILY");assertNotNull(daily);assertFalse(daily instanceof Button);});
-            await(()->{AtomicReference<Boolean> rendered=new AtomicReference<>(false);page.onActivity(a->rendered.set(find(a.body,"2026-10-25")!=null));return rendered.get();});
-            page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_time,1L,1L,1L)));assertNotNull(find(a.body,"1.23 EUR"));assertNotNull(find(a.body,context.getString(R.string.daily_photos)));assertNotNull(find(a.body,context.getString(R.string.daily_videos)));assertNotNull(find(a.body,context.getString(R.string.remote_unknown_zone)));assertNull(find(a.body,context.getString(R.string.remote_incomplete)));});
-            File directory=new File(context.getFilesDir(),"remote-editor-evidence");directory.mkdirs();assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(new File(directory,"daily-stats.png")));
-        }
-    }
-
-    @Test public void focusedSectionsExposeOnlyTheirOwnDirectProfileActions()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
-            ready(page,"apps_all");page.onActivity(a->{assertNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(controls(a).get("module_censor_enabled"));});
-        }
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(find(a.body,context.getString(R.string.remote_add_popup_image)));assertNull(find(a.body,context.getString(R.string.remote_apps)));});
-        }
-    }
-    @Test public void removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup()throws Exception {
-        ByteArrayOutputStream image=new ByteArrayOutputStream();android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(2,2,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xffd19bff);assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,image));bitmap.recycle();
-        byte[] bytes=image.toByteArray();String hash=RemoteProtocol.sha256(bytes);RemoteContracts.ingest(feature.contracts.assets(peer),hash,bytes.length,new ByteArrayInputStream(bytes));
-        JSONObject document=feature.contracts.current(peer);document.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/censor/fixture.png").put("hash",hash).put("length",bytes.length)).put(new JSONObject().put("path","assets/popup/fixture.png").put("hash",hash).put("length",bytes.length));
-        String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",document,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
-            JSONArray kept=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");assertEquals(1,kept.length());assertEquals("assets/popup/fixture.png",kept.getJSONObject(0).getString("path"));
-        }
-        try(ActivityScenario<RemoteContractActivity> page=open("popup")) {
-            ready(page,"name");AtomicReference<RemoteContractActivity> current=new AtomicReference<>();page.onActivity(current::set);tap(page,R.string.remote_add_popup_image);
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->current.get().recreate());
-            UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack();ready(page,"name");
-            page.onActivity(a->{try{java.lang.reflect.Field group=RemoteContractActivity.class.getDeclaredField("artGroup");group.setAccessible(true);assertEquals("popup",group.get(a));java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("popup",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
-        }
-    }
-
-
-    @Test public void fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            ready(page,"service_duration");page.onActivity(a->{
-                assertNull(controls(a).get("name"));assertNull(find(a.body,context.getString(R.string.role_retry)));
-                EditText minimum=(EditText)controls(a).get("service_minimum"),maximum=(EditText)controls(a).get("service_maximum");
-                assertFalse(minimum.isShown());assertFalse(maximum.isShown());minimum.setText("");maximum.setText("invalid");
+    @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                input.setText("5");
+                input.setText("53");
             });
-            page.onActivity(a->((android.widget.Switch)controls(a).get("service_hidden")).setChecked(true));
-            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            RemoteStore.Command command = feature.store.latestCommand(peer.identity, generation);
+            assertEquals(1, command.revision);
+            assertEquals(53, configuredAllowance(new JSONObject(command.body).getJSONObject("configuration")));
         }
     }
-    @Test public void failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire()throws Exception {
-        feature.store.getWritableDatabase().delete("remote_objects","stream=?",new String[]{RemoteProtocol.Stream.BASELINE.name()});
-        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
-            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(find(a.body,context.getString(R.string.role_retry))!=null));return found.get();});
-            JSONObject restored=RemoteConfigurationAndroidTest.configuration();restored.getJSONObject("contract").put("name","Restored baseline");
-            String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",restored,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
-            tap(page,R.string.role_retry);ready(page,"service_duration");
-        }
-        feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()));
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(a.body.findViewWithTag("remote_stats_DAILY"));assertNotNull(a.body.findViewWithTag("remote_stats_APP_USAGE"));assertNotNull(a.body.findViewWithTag("remote_stats_RUNTIME"));android.widget.ScrollView scroll=statsScroll(a);scroll.scrollTo(0,200);});
+
+    @Test public void newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            page.onActivity(activity -> allowanceEditor(activity).setText("42"));
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            page.onActivity(activity -> allowanceEditor(activity).setText("53"));
+            await(() -> configuredAllowance(feature.contracts.editing(peer)) == 53);
+            assertEquals(1, feature.store.latestCommand(peer.identity, generation).revision);
             page.recreate();
-            await(()->{AtomicReference<Boolean> restored=new AtomicReference<>(false);page.onActivity(a->restored.set(statsScroll(a).getScrollY()>0));return restored.get();});
-            page.onActivity(a->assertEquals(View.GONE,a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()));
-            feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()-91_000));
-            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(a.body.findViewWithTag("remote_freshness_RUNTIME")!=null&&a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()==View.VISIBLE));return found.get();});
+            waitForAllowance(page);
+            page.onActivity(activity -> assertEquals("53", allowanceEditor(activity).getText().toString()));
         }
     }
+
+    @Test public void automaticSaveRetainsTheFocusedEditorAndCursor() throws Exception {
+        try (ActivityScenario<AppModeActivity> page = openPairedLimits()) {
+            waitForAllowance(page);
+            AtomicReference<EditText> original = new AtomicReference<>();
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                original.set(input);
+                assertTrue(input.requestFocus());
+                input.setText("53");
+                input.setSelection(1);
+            });
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            page.onActivity(activity -> {
+                assertSame(original.get(), allowanceEditor(activity));
+                assertTrue(original.get().hasFocus());
+                assertEquals(1, original.get().getSelectionStart());
+                assertEquals("53", original.get().getText().toString());
+            });
+        }
+    }
+
+    private ActivityScenario<AppModeActivity> openPairedLimits() throws Exception {
+        JSONObject baseline = feature.contracts.current(peer);
+        baseline.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits")
+                .put("app_timer_per_app_enabled", true);
+        String dom = source.peers(false).get(0).identity;
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", baseline, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        return ActivityScenario.launch(pairedIntent(AppModeActivity.class));
+    }
+
+    private Intent pairedIntent(Class<? extends Activity> destination) {
+        return new Intent(context, destination)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, RemotePersonRepository.id(peer).value());
+    }
+
+    private static EditText allowanceEditor(AppModeActivity activity) {
+        return activity.getWindow().getDecorView().findViewWithTag("limit:com.android.settings");
+    }
+
+    private void waitForAllowance(ActivityScenario<AppModeActivity> page) throws Exception {
+        await(() -> {
+            AtomicReference<Boolean> ready = new AtomicReference<>(false);
+            page.onActivity(activity -> {
+                EditText input = allowanceEditor(activity);
+                ready.set(FeatureEditorSession.remote(activity) && input != null && input.isEnabled());
+            });
+            return ready.get();
+        });
+    }
+
+    private static int configuredAllowance(JSONObject configuration) throws JSONException {
+        return configuration.getJSONObject("apps").getJSONObject("allowances").getInt("com.android.settings");
+    }
+
+    @Test public void atmosphereRouteOpensSubliminalAndRoleLossClosesEditor() throws Exception {
+        try (ActivityScenario<AtmosphereActivity> page = ActivityScenario.launch(pairedIntent(AtmosphereActivity.class))) {
+            AtomicReference<View> whispers = new AtomicReference<>();
+            page.onActivity(activity -> whispers.set(activity.findViewById(R.id.whispers_card)));
+            tapView(whispers.get());
+            await(() -> {
+                AtomicReference<Boolean> visible = new AtomicReference<>(false);
+                page.onActivity(activity -> {
+                    View toggle = activity.findViewById(R.id.switch_whispers);
+                    visible.set(toggle != null && toggle.isShown());
+                });
+                return visible.get();
+            });
+            page.onActivity(activity -> {
+                assertTrue(FeatureEditorSession.remote(activity));
+                assertEquals(RemotePersonRepository.id(peer), PersonRoutes.requireId(activity.getIntent()));
+            });
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            ControllerPinManager.enterSubMode();
+            page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            await(() -> page.getState() == androidx.lifecycle.Lifecycle.State.DESTROYED);
+            assertNull(feature.store.latestCommand(peer.identity, generation));
+        }
+    }
+    @Test public void pairedCensorSettingsOmitPeerAppsAndPopupActions() {
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            page.onActivity(activity -> {
+                assertTrue(FeatureEditorSession.remote(activity));
+                assertNotNull(activity.findViewById(R.id.button_add_censor_images));
+                assertNull(activity.findViewById(R.id.button_add_folder));
+                assertNull(activity.findViewById(R.id.person_apps_panel));
+            });
+        }
+    }
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup() throws Exception {
+        byte[] bytes = artworkFixture(0xffd19bff);
+        String hash = RemoteProtocol.sha256(bytes);
+        RemoteContracts.ingest(feature.contracts.assets(peer), hash, bytes.length, new ByteArrayInputStream(bytes));
+        JSONObject document = feature.contracts.current(peer);
+        JSONObject contract = document.getJSONObject("contract");
+        contract.getJSONObject("sections").getJSONObject("censor").put("censor_type", "custom");
+        JSONArray assets = contract.getJSONArray("assets");
+        for (String group : List.of("censor", "popup")) {
+            assets.put(new JSONObject().put("path", "assets/" + group + "/fixture.png")
+                    .put("hash", hash).put("length", bytes.length));
+        }
+        String dom = source.peers(false).get(0).identity;
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", document, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            onView(withId(R.id.button_appearance_details)).perform(scrollTo(), click());
+            AtomicReference<View> delete = new AtomicReference<>();
+            await(() -> {
+                page.onActivity(activity -> {
+                    View row = activity.findViewById(R.id.censor_images_list)
+                            .findViewWithTag("censor-image:assets/censor/fixture.png");
+                    delete.set(row == null ? null : find(row, context.getString(R.string.delete)));
+                });
+                return delete.get() != null && delete.get().isEnabled();
+            });
+            tapView(delete.get());
+            await(() -> feature.store.latestCommand(peer.identity, generation) != null);
+            JSONArray kept = latestArtworkCommand();
+            assertEquals(1, kept.length());
+            assertEquals("assets/popup/fixture.png", kept.getJSONObject(0).getString("path"));
+        }
+        importPopupArtworkAcrossRecreation();
+    }
+
+    @androidx.annotation.RequiresApi(29)
+    private void importPopupArtworkAcrossRecreation() throws Exception {
+        RemoteStore.Command pending = feature.store.latestCommand(peer.identity, generation);
+        assertNotNull(pending);
+        assertTrue(pending.pending());
+        byte[] bytes = artworkFixture(0xff20304b);
+        String hash = RemoteProtocol.sha256(bytes);
+        String name = database + ".png";
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+        values.put(MediaStore.Downloads.MIME_TYPE, "image/png");
+        values.put(MediaStore.Downloads.RELATIVE_PATH, "Download/");
+        values.put(MediaStore.Downloads.IS_PENDING, 1);
+        ContentResolver resolver = context.getApplicationContext().getContentResolver();
+        Uri image = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+        assertNotNull(image);
+        try (AutoCloseable cleanup = () -> assertEquals(1, resolver.delete(image, null, null))) {
+            try (OutputStream output = resolver.openOutputStream(image)) {
+                assertNotNull(output);
+                output.write(bytes);
+            }
+            values.clear();
+            values.put(MediaStore.Downloads.IS_PENDING, 0);
+            assertEquals(1, resolver.update(image, values, null, null));
+            Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
+            UiDevice device = UiDevice.getInstance(instrument);
+            try (ActivityScenario<AtmosphereActivity> page = ActivityScenario.launch(pairedIntent(AtmosphereActivity.class))) {
+                AtomicReference<AtmosphereActivity> original = new AtomicReference<>();
+                AtomicReference<View> target = new AtomicReference<>();
+                page.onActivity(activity -> {
+                    original.set(activity);
+                    target.set(activity.findViewById(R.id.popup_storm_card));
+                });
+                tapView(target.get());
+                page.onActivity(activity -> target.set(activity.findViewById(R.id.button_add_folder)));
+                tapView(target.get());
+                assertTrue(device.wait(Until.hasObject(By.desc("Show roots")), 10_000));
+                instrument.runOnMainSync(() -> original.get().recreate());
+                instrument.waitForIdleSync();
+                device.findObject(By.desc("Show roots")).click();
+                BySelector downloads = By.res("android:id/title").text("Downloads");
+                assertTrue("Downloads root is missing", device.wait(Until.hasObject(downloads), 10_000));
+                device.findObject(downloads).click();
+                assertTrue(device.wait(Until.gone(By.text("Open from")), 10_000));
+                BySelector tile = By.descStartsWith(name + ", ");
+                assertTrue("Synthetic image is missing from Downloads", device.wait(Until.hasObject(tile), 15_000));
+                String picker = device.getCurrentPackageName();
+                assertTrue("Unexpected document picker " + picker,
+                        "com.google.android.documentsui".equals(picker) || "com.android.documentsui".equals(picker));
+                device.findObject(tile).longClick();
+                var select = device.wait(Until.findObject(By.res(picker, "action_menu_select")), 10_000);
+                assertNotNull("Document picker did not select the synthetic image", select);
+                select.click();
+                assertTrue("Picker did not return to Popup Storm",
+                        device.wait(Until.hasObject(By.res("com.subhub.app", "button_add_folder")), 10_000));
+                page.onActivity(activity -> assertNotSame(original.get(), activity));
+                try {
+                    await(() -> artworkAssets(feature.contracts.editing(peer)).length() == 2);
+                } catch (AssertionError pendingArtwork) {
+                    AtomicReference<String> viewState = new AtomicReference<>();
+                    page.onActivity(activity -> {
+                        TextView status = activity.findViewById(R.id.library_count);
+                        View add = activity.findViewById(R.id.button_add_folder);
+                        viewState.set("focus=" + activity.hasWindowFocus() + ", addEnabled=" + add.isEnabled()
+                                + ", library=" + status.getText());
+                    });
+                    throw new AssertionError("Popup artwork draft has " + artworkAssets(feature.contracts.editing(peer)).length()
+                            + " assets after picker return, " + viewState.get()
+                            + ", foreground=" + device.getCurrentPackageName(), pendingArtwork);
+                }
+                assertEquals(pending.id, feature.store.latestCommand(peer.identity, generation).id);
+                assertEquals(1, latestArtworkCommand().length());
+                JSONObject receipt = new JSONObject().put("schema", 1).put("id", pending.id)
+                        .put("revision", pending.revision).put("state", "APPLIED")
+                        .put("appliedRevision", pending.revision).put("reason", "");
+                feature.store.acceptResult(peer.identity, generation, receipt);
+                feature.contracts.process(peer);
+                await(() -> latestArtworkCommand().length() == 2);
+                assertEquals(pending.revision + 1, feature.store.latestCommand(peer.identity, generation).revision);
+                JSONArray saved = latestArtworkCommand();
+                assertEquals("assets/popup/fixture.png", saved.getJSONObject(0).getString("path"));
+                JSONObject added = saved.getJSONObject(1);
+                assertTrue(added.getString("path").startsWith("assets/popup/"));
+                assertEquals(hash, added.getString("hash"));
+            }
+        }
+    }
+
+    private JSONArray latestArtworkCommand() throws JSONException {
+        JSONObject body = new JSONObject(feature.store.latestCommand(peer.identity, generation).body);
+        return artworkAssets(body.getJSONObject("configuration"));
+    }
+
+    private static JSONArray artworkAssets(JSONObject configuration) throws JSONException {
+        return configuration.getJSONObject("contract").getJSONArray("assets");
+    }
+
+    private static byte[] artworkFixture(int color) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(48, 48,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            bitmap.eraseColor(color);
+            assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+            return output.toByteArray();
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
-        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"name");inspectLayout(page,"contract-censor");
+        try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
+            onView(withId(R.id.button_appearance_details)).perform(scrollTo(), click());
+            inspectLayout(page, "contract-censor");
         }
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
+        try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(pairedIntent(StatsActivity.class))) {
+            inspectLayout(page, "stats");
+        }
     }
     @androidx.annotation.RequiresApi(29)
     private <T extends Activity> void inspectLayout(ActivityScenario<T> page,String name)throws Exception {
@@ -480,21 +652,87 @@ public class RemoteEditorAndroidTest {
         assertEquals(before,local.getAll());
     }
     @Test public void sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals() throws Exception {
-        String dom=source.peers(false).get(0).identity;
-        source.publish(dom,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25")
-                .put("zone",JSONObject.NULL).put("metrics",new JSONObject().put("service_ms",3661000)),false,1);
-        feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));
-        Map<String,?> before=new HashMap<>(context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
-        try(ActivityScenario<com.subhub.app.stats.StatsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.stats.StatsActivity.class)
-                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(a.findViewById(R.id.daily_statistics_panel));
-                assertEquals(View.GONE,a.findViewById(R.id.bottom_navigation).getVisibility());
-                assertNotNull(find(a.findViewById(R.id.stats_lifetime_summary),context.getString(R.string.role_unknown_data)));});
+        var local = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0);
+        Map<String, ?> before = new HashMap<>(local.getAll());
+        try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(pairedIntent(StatsActivity.class))) {
+            await(() -> statsContains(page, R.string.daily_unavailable) && statsContains(page, R.string.role_stale_data));
+            page.onActivity(a -> {
+                assertNotNull(a.findViewById(R.id.daily_statistics_panel));
+                assertEquals(View.GONE, a.findViewById(R.id.bottom_navigation).getVisibility());
+                assertNotNull(find(a.findViewById(R.id.stats_lifetime_summary), a.getString(R.string.role_unknown_data)));
+            });
+            String day = java.time.LocalDate.now().toString();
+            String dom = source.peers(false).get(0).identity;
+            JSONObject metrics = new JSONObject().put("service_ms", 3_661_000).put("assessed_EUR", 123)
+                    .put("photos", 4).put("videos", 5).put("limit_stops", 2);
+            source.publish(dom, generation, RemoteProtocol.Stream.DAILY, day, new JSONObject()
+                    .put("schema", 1).put("day", day).put("zone", JSONObject.NULL).put("metrics", metrics), false, 1);
+            feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.DAILY));
+            source.publish(dom, generation, RemoteProtocol.Stream.STATS, "summary",
+                    CachedPeerReadModelAndroidTest.summary(), false, 1);
+            feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.STATS));
+            feature.store.putMetadata(peer.identity, generation, "confirmed_STATS", Long.toString(System.currentTimeMillis()));
+
+            await(() -> dailyMetricEndsWith(page, com.subhub.app.stats.StatsSnapshot.formatDuration(3661)));
+            await(() -> statsContains(page, R.string.profile_stats_feature_totals)
+                    && !statsContains(page, R.string.role_stale_data));
+            assertFalse(statsContains(page, R.string.daily_unavailable));
+            checkDailyMetric(page, R.string.daily_assessed_eur, com.subhub.app.penance.WalletCurrency.format("EUR", 123) + " EUR");
+            var counts = java.text.NumberFormat.getIntegerInstance();
+            checkDailyMetric(page, R.string.daily_photos, counts.format(4));
+            checkDailyMetric(page, R.string.daily_videos, counts.format(5));
+            File directory = new File(context.getFilesDir(), "remote-editor-evidence");
+            directory.mkdirs();
+            assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+                    .takeScreenshot(new File(directory, "daily-stats.png")));
+
+            page.onActivity(a -> {
+                ScrollView scroll = statsScroll(a);
+                scroll.scrollTo(0, 200);
+                assertTrue(scroll.getScrollY() > 0);
+            });
             page.recreate();
-            page.onActivity(a->assertNotNull(a.findViewById(R.id.daily_statistics_panel)));
+            await(() -> statsView(page, a -> statsScroll(a).getScrollY() > 0) && dailyMetricEndsWith(page, counts.format(5)));
+            feature.store.putMetadata(peer.identity, generation, "confirmed_STATS",
+                    Long.toString(System.currentTimeMillis() - 31 * 60_000));
+            await(() -> statsContains(page, R.string.role_stale_data));
         }
-        assertEquals(before,context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
+        assertEquals(before, local.getAll());
     }
+
+    private static boolean statsView(ActivityScenario<StatsActivity> page, java.util.function.Predicate<StatsActivity> check) {
+        AtomicReference<Boolean> found = new AtomicReference<>();
+        page.onActivity(activity -> found.set(check.test(activity)));
+        return found.get();
+    }
+
+    private static boolean statsContains(ActivityScenario<StatsActivity> page, int label) {
+        return statsView(page, a -> {
+            View view = find(statsScroll(a), a.getString(label));
+            return view != null && view.isShown();
+        });
+    }
+
+    private static boolean dailyMetricEndsWith(ActivityScenario<StatsActivity> page, String value) {
+        return statsView(page, a -> {
+            TextView result = a.findViewById(R.id.daily_day_summary);
+            return result != null && result.getText().toString().endsWith(" · " + value);
+        });
+    }
+
+    private void checkDailyMetric(ActivityScenario<StatsActivity> page, int label, String value) throws Exception {
+        page.onActivity(a -> {
+            Spinner filter = a.findViewById(R.id.daily_metric_filter);
+            for (int position = 0; position < filter.getCount(); position++) {
+                if (!a.getString(label).equals(filter.getItemAtPosition(position))) continue;
+                filter.setSelection(position);
+                return;
+            }
+            fail("Missing daily metric");
+        });
+        await(() -> dailyMetricEndsWith(page, value));
+    }
+
     @Test public void sharedWhispersEnableIsQueuedWithoutChangingTheDomModule() throws Exception {
         JSONObject saved=nativeToggle(com.subhub.app.subliminal.SubliminalSettingsActivity.class,R.id.switch_whispers);
         assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_subliminal_enabled"));
@@ -551,11 +789,11 @@ public class RemoteEditorAndroidTest {
         assertEquals(generation,feature.store.peer(peer.identity,generation).generation);
     }
 
-    private ActivityScenario<RemoteContractActivity> open(String section){return ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()).putExtra("section",section));}
-    @SuppressWarnings("unchecked") private static Map<String,View> controls(RemoteContractActivity activity){try{java.lang.reflect.Field field=RemoteContractActivity.class.getDeclaredField("controls");field.setAccessible(true);return (Map<String,View>)field.get(activity);}catch(Exception e){throw new AssertionError(e);}}
-    private void ready(ActivityScenario<RemoteContractActivity> page,String key)throws Exception {await(()->{AtomicReference<Boolean> value=new AtomicReference<>(false);page.onActivity(a->value.set(controls(a).containsKey(key)));return value.get();});}
-    private static android.widget.ScrollView statsScroll(RemoteStatsActivity activity){View view=activity.body;while(view.getParent() instanceof View){view=(View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}throw new AssertionError("Statistics scroll unavailable");}
-    private <T extends Activity> void tap(ActivityScenario<T> page,int label)throws Exception {AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(find(a.findViewById(R.id.role_page_body),context.getString(label))));assertNotNull(view.get());tapView(view.get());}
+    private static ScrollView statsScroll(StatsActivity activity) {
+        ScrollView scroll = activity.findViewById(R.id.role_page_scroll);
+        assertNotNull(scroll);
+        return scroll;
+    }
     private void tapView(View view)throws Exception {
         assertNotNull("Native tap target is missing",view);
         android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();

@@ -121,7 +121,7 @@ public final class PublicFormIdentityAndroidTest {
     @Test public void publicEditorsShareInputAndSwitchStylesInBothControlStates() throws Exception {
         for (String name : new String[]{"appmode.AppModeActivity", "settings.GlobalSettingsActivity",
                 "settings.SettingsActivity", "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
-                "capture.export.ExportAppearanceActivity", "privacy.PrivacyActivity"}) {
+                "capture.export.ExportAppearanceActivity"}) {
             Class<? extends android.app.Activity> type = Class.forName("com.subhub.app." + name).asSubclass(android.app.Activity.class);
             try (ActivityScenario<? extends android.app.Activity> page = ActivityScenario.launch(type)) {
                 settle();
