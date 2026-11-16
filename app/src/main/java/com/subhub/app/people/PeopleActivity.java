@@ -137,7 +137,6 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
         roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(roster, getString(R.string.role_data_unknown), false);
     }
 
     private void refreshActivityPreview() {

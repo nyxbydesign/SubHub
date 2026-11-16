@@ -27,15 +27,23 @@ final class InternalStatsSource implements DailyStatsPanel.Source {
             throw new SecurityException("Internal statistics authority changed");
     }
     Loaded read() {
-        requireAccess(); InternalSubRecord record=data.acknowledged();
-        InternalRuntimePresentationSnapshot snapshot=data.loadRuntimePresentation(physical,record);
-        PersonSnapshot person=InternalPersonPresentation.snapshot(physical,snapshot);
-        requireAccess(); return new Loaded(snapshot,person);
+        requireAccess();
+        if(!data.ownerDataReady())throw new IllegalStateException("Internal statistics observation unavailable");
+        data.loadPresentation(physical,data.acknowledged());
+        return retained();
+    }
+
+    Loaded retained() {
+        requireAccess();
+        InternalSubData.RetainedPresentation value=data.peekRuntimePresentation(physical);
+        return value==null?null:new Loaded(value.runtime(),value.person());
     }
     boolean publish(Loaded value) {
         requireAccess();
-        if (!matches(value)) return false;
-        published=value; return true;
+        if (value==null||!matches(value)) return false;
+        Loaded previous=published;
+        if(previous==null||previous.snapshot!=value.snapshot)published=value;
+        return true;
     }
     Loaded peek() { Loaded value=published; return current(value)?value:null; }
     void clear() { published=null; }

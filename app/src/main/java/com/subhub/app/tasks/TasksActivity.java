@@ -271,11 +271,7 @@ public final class TasksActivity extends RolePage {
         // Fit after all controls are set: the role badge and icon depend on this page's state.
         title("create".equals(model.form) ? R.string.tasks_new
                 : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
-        if (state == null) {
-            LinearLayout loading = PersonUi.card(body);
-            PersonUi.text(loading, getString(R.string.role_data_unknown), false);
-            return;
-        }
+        if (state == null) return;
         if (state.dom != repository.domView()) {
             model.snapshot = null;
             refresh();

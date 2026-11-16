@@ -24,7 +24,6 @@ import com.subhub.app.util.SubHubNavigation;
 public final class PersonActivity extends RolePage {
     private PersonId personId;
     private boolean internal;
-    private long renderedInternalRevision = -1;
     private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
     private boolean contractAppsExpanded;
@@ -397,7 +396,6 @@ public final class PersonActivity extends RolePage {
         observeRemoteChanges();
         data.cancel("person-observe");
         data.cancel("contract-cover");
-        loading();
         PersonId requested = personId;
         boolean includeContract = "contracts".equals(section);
         android.content.Context app = getApplicationContext();
@@ -433,10 +431,9 @@ public final class PersonActivity extends RolePage {
         PersonSnapshot cached=backend.peekPresentation();
         if(cached!=null){
             InternalPresentationStamp stamp=backend.presentationStamp(cached);
-            if(stamp!=null){renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(cached);return;}
+            if(stamp!=null){renderedInternalStamp=stamp;render(cached);return;}
         }
         if(data.isPending("person"))return;
-        if(renderedInternalRevision<0)loading();
         android.content.Context app=getApplicationContext();
         long controller=ControllerPinManager.domWorkspaceRevision();
         data.load("person",()->{
@@ -448,10 +445,10 @@ public final class PersonActivity extends RolePage {
             if(backend.acknowledged().revision!=record.revision||backend.peekPresentation()!=person){refreshInternal(true);return;}
             InternalPresentationStamp stamp=backend.presentationStamp(person);
             if(stamp==null){refreshInternal(true);return;}
-            renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(person);
+            renderedInternalStamp=stamp;render(person);
         },failure->{
             if(guardTarget()&&DummySubPreview.current(app,record.generation,controller)
-                    &&backend.acknowledged().revision==record.revision){renderedInternalRevision=-1;renderedInternalStamp=null;renderedSection=null;unavailable();}
+                    &&backend.acknowledged().revision==record.revision){renderedInternalStamp=null;renderedSection=null;unavailable();}
         });
     }
 

@@ -4,10 +4,8 @@ import android.app.Activity;
 import android.widget.LinearLayout;
 import com.subhub.app.R;
 import com.subhub.app.atmosphere.GagParticipation;
-import com.subhub.app.fullaccess.FullAccessGrant;
 import com.subhub.app.people.FeatureConsentView;
 import com.subhub.app.people.PersonUi;
-import com.subhub.app.util.AsyncUiScope;
 
 /** A Sub can change participation locally even when configuration belongs to a paired Dom. */
 public final class SubFeatureControls {
@@ -22,15 +20,15 @@ public final class SubFeatureControls {
         return GAG.equals(key) ? GagParticipation.allowed(context) : SubFeaturePolicy.chosen(context, key);
     }
 
-    public static void bindReadOnly(Activity activity, LinearLayout parent) {
-        bindChoices(activity, parent, null);
+    public static void bindReadOnly(Activity activity, LinearLayout parent, Boolean blackmail) {
+        bindChoices(activity, parent, null, blackmail);
     }
 
     public static FeatureConsentView bindDraft(Activity activity, LinearLayout parent, Draft draft) {
-        return bindChoices(activity, parent, draft);
+        return bindChoices(activity, parent, draft, null);
     }
 
-    private static FeatureConsentView bindChoices(Activity activity, LinearLayout parent, Draft draft) {
+    private static FeatureConsentView bindChoices(Activity activity, LinearLayout parent, Draft draft, Boolean blackmail) {
         parent.removeAllViews();
         if (!DeviceRolePreferences.supportsSub(activity) || DeviceRolePreferences.isDomWorkspace(activity)) return null;
         parent.setPadding(0, PersonUi.dp(activity, 10), 0, 0);
@@ -46,19 +44,8 @@ public final class SubFeatureControls {
                 control.setOnCheckedChangeListener((view, checked) -> draft.values.put(key, checked));
             }
         }
-        if (draft == null && new HardcoreModeManager(activity).isEnabled()) {
-            android.content.Context app = activity.getApplicationContext();
-            long workspace = ControllerPinManager.domWorkspaceRevision();
-            var showBlackmailState = grid.readOnlyPending("blackmail", R.string.full_access_title);
-            AsyncUiScope.forContext(activity).load("self-profile-blackmail", () -> FullAccessGrant.isLocallyEnabled(app),
-                    enabled -> {
-                        if (grid.getParent() == parent && grid.isAttachedToWindow()
-                                && workspace == ControllerPinManager.domWorkspaceRevision()
-                                && DeviceRolePreferences.supportsSub(app) && !DeviceRolePreferences.isDomWorkspace(app)
-                                && new HardcoreModeManager(app).isEnabled())
-                            showBlackmailState.accept(enabled);
-                    }, failure -> { });
-        }
+        if (draft == null && blackmail != null && new HardcoreModeManager(activity).isEnabled())
+            grid.readOnly("blackmail", R.string.full_access_title, blackmail);
         return grid;
     }
 

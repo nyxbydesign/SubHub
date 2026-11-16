@@ -48,7 +48,6 @@ public final class TasksOverviewActivity extends RolePage {
         long epoch = ++rosterEpoch;
         data.cancel("tasks-overview-open");
         if (!allowed()) { body.removeAllViews(); return; }
-        loading();
         android.content.Context app = getApplicationContext();
         PersonRepository people = People.repository(app);
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);

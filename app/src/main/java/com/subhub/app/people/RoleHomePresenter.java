@@ -460,7 +460,6 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(domPeople), true,
                 () -> com.subhub.app.journal.JournalRoutes.own(activity, true));
         domPeople.addView(domRecent, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(domFavorite, activity.getString(R.string.role_data_unknown), false);
         com.subhub.app.activity.ActivityPreview.addOverview(domBody, data, "home-activity-preview");
         domAchievements = achievementPreview(domBody);
         helpSafety(domBody, "home_help:dom");

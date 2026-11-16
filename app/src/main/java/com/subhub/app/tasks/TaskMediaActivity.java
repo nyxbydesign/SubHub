@@ -97,7 +97,6 @@ public final class TaskMediaActivity extends RolePage {
         String expected = scope;
         boolean mode = dom;
         Context app = getApplicationContext();
-        loading();
         data.load("task-media", () -> load(repo, media, expected, mode, app), result -> {
             if (!resumed || requested != generation) { result.close(); return; }
             if (!liveRole()) { result.close(); revokeAccess(); return; }

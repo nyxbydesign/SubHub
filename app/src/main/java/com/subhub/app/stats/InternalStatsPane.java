@@ -28,30 +28,52 @@ final class InternalStatsPane extends LinearLayout {
         sessions=PersonUi.card(this);sessions.setTag("stats_session_history");
         details=PersonUi.card(this);details.setId(R.id.stats_totals_details);
         achievements=PersonUi.card(this);achievements.setId(R.id.stats_achievements);
-        unavailable();
+        clearCards(false);
     }
     void refresh() {
         try { source.requireAccess(); } catch (RuntimeException revoked) { source.clear(); unavailable(); activity.finish(); return; }
-        if(rendered!=null&&!source.accessible()) { rendered=null; unavailable(); }
+        if(rendered!=null&&!source.accessible()) { rendered=null; clearCards(false); }
         if(requests.isPending("internal-statistics"))return;
+        if(rendered==null) {
+            try {
+                InternalStatsSource.Loaded retained=source.retained();
+                if(retained!=null&&source.publish(retained)) {
+                    rendered=retained;render(retained);daily.refreshIfNeeded();
+                }
+            } catch(RuntimeException unavailable) {
+                source.clear();rendered=null;unavailable();return;
+            }
+        }
         requests.load("internal-statistics",source::read,loaded->{
             if(activity.isFinishing()||activity.isDestroyed())return;
             try {
-                if(!source.publish(loaded)) { unavailable(); return; }
-                rendered=loaded; render(loaded);daily.refreshIfNeeded();
-            }catch(RuntimeException unavailable){source.clear();unavailable();}
+                if(!source.publish(loaded)) { rendered=null; clearCards(false); return; }
+                if(rendered==null||rendered.snapshot!=loaded.snapshot) {
+                    rendered=loaded;render(loaded);
+                }
+                daily.refreshIfNeeded();
+            }catch(RuntimeException unavailable){source.clear();rendered=null;unavailable();}
         },failure->{source.clear();rendered=null;unavailable();});
     }
-    void pause(){requests.cancel("internal-statistics");source.clear();rendered=null;unavailable();}
+    void pause(){requests.cancel("internal-statistics");source.clear();rendered=null;clearCards(false);}
     void save(Bundle state){daily.save(state);}
     int sessionLimit(){return sessionLimit;}
-    private void unavailable(){
-        for(LinearLayout card:new LinearLayout[]{totals,details,allowances,sessions,achievements})card.removeAllViews();
-        PersonUi.text(totals,activity.getString(R.string.role_person_unavailable),false);
+    private void unavailable(){clearCards(true);}
+    private void clearCards(boolean unavailable){
+        for(LinearLayout card:new LinearLayout[]{totals,details,allowances,sessions,achievements}){
+            card.removeAllViews();card.setVisibility(GONE);
+        }
+        daily.setVisibility(GONE);
+        if(unavailable){
+            totals.setVisibility(VISIBLE);
+            PersonUi.text(totals,activity.getString(R.string.role_person_unavailable),false);
+        }
         daily.refreshIfNeeded();
     }
     private void render(InternalStatsSource.Loaded value){
         InternalRuntimePresentationSnapshot snapshot=value.snapshot;StatsSnapshot stats=snapshot.statistics();
+        for(LinearLayout card:new LinearLayout[]{totals,details,sessions,achievements})card.setVisibility(VISIBLE);
+        daily.setVisibility(VISIBLE);
         totals.removeAllViews();
         activity.heading(totals, R.string.stats_all_time);
         activity.row(totals,R.string.stats_time,activity.duration(stats.getTotalProtectedSeconds()));

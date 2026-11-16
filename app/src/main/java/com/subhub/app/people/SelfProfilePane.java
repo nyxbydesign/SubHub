@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.LifecycleOwner;
 import com.subhub.app.R;
+import com.subhub.app.fullaccess.FullAccessGrant;
 import com.subhub.app.journal.JournalPreview;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -23,6 +24,8 @@ public final class SelfProfilePane {
     private final AppCompatActivity activity;
     private final LinearLayout content;
     private final AsyncUiScope data;
+    private long renderedWorkspace = -1;
+    private boolean renderedDom;
     private final SharedPreferences.OnSharedPreferenceChangeListener hardcoreChange = (settings, key) -> {
         if ((key == null || HardcoreModeManager.KEY_REQUESTED.equals(key)) && view().isShown()) refresh();
     };
@@ -51,20 +54,24 @@ public final class SelfProfilePane {
             content.removeAllViews();
             return;
         }
+        long revision = ControllerPinManager.domWorkspaceRevision();
+        if (renderedWorkspace != revision || renderedDom != dom) content.removeAllViews();
         if (dom) {
             data.cancel(OWN_PROFILE_READ);
-            render(true, ProfileStore.load(activity, true), null);
+            render(true, revision, ProfileStore.load(activity, true), null, null);
             return;
         }
         Context app = activity.getApplicationContext();
-        long revision = ControllerPinManager.domWorkspaceRevision();
         data.load(OWN_PROFILE_READ, () -> {
-            if (!ProfileStore.mayEdit(app, false)) throw new SecurityException("Sub profile unavailable");
-            return new SubProfile(ProfileStore.load(app, false), JournalPreview.loadInitial(app, false, PersonId.LOCAL));
+            ProfileData profile = ProfileWarmup.loadSelf(app, revision);
+            JournalPreview.Initial journal = JournalPreview.loadInitial(app, false, PersonId.LOCAL);
+            Boolean blackmail = new HardcoreModeManager(app).isEnabled() ? FullAccessGrant.isLocallyEnabled(app) : null;
+            return new SubProfile(profile, journal, blackmail);
         }, loaded -> {
-            if (canPublishSub(revision)) render(false, loaded.profile(), loaded.journal());
+            if (canPublishSub(revision)) render(false, revision, loaded.profile(), loaded.journal(), loaded.blackmail());
         }, failure -> {
-            if (canPublishSub(revision)) content.removeAllViews();
+            if (renderedWorkspace != ControllerPinManager.domWorkspaceRevision() || !ProfileStore.mayEdit(activity, false))
+                content.removeAllViews();
         });
     }
 
@@ -73,9 +80,11 @@ public final class SelfProfilePane {
                 && revision == ControllerPinManager.domWorkspaceRevision() && ProfileStore.mayEdit(activity, false);
     }
 
-    private record SubProfile(ProfileData profile, JournalPreview.Initial journal) {}
+    private record SubProfile(ProfileData profile, JournalPreview.Initial journal, Boolean blackmail) {}
 
-    private void render(boolean dom, ProfileData profile, JournalPreview.Initial journal) {
+    private void render(boolean dom, long revision, ProfileData profile, JournalPreview.Initial journal, Boolean blackmail) {
+        renderedWorkspace = revision;
+        renderedDom = dom;
         content.removeAllViews();
         LinearLayout hero = PersonUi.card(content);
         hero.setBackgroundResource(R.drawable.bg_home_composition_person);
@@ -84,7 +93,7 @@ public final class SelfProfilePane {
         if (!dom) {
             LinearLayout features = PersonUi.column(activity); features.setTag("self_profile_features");
             hero.addView(features, new LinearLayout.LayoutParams(-1, -2));
-            com.subhub.app.security.SubFeatureControls.bindReadOnly(activity, features);
+            com.subhub.app.security.SubFeatureControls.bindReadOnly(activity, features, blackmail);
         }
         JournalPreview.add(hero, dom, PersonId.LOCAL,
                 () -> com.subhub.app.journal.JournalRoutes.own(activity, dom), journal);

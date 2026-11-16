@@ -34,6 +34,8 @@ public final class SubHubApp extends Application {
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             private final java.util.Set<Activity> opened = java.util.Collections.newSetFromMap(
                     new java.util.IdentityHashMap<>());
+            private final com.subhub.app.people.ProfileWarmup profileWarmup =
+                    new com.subhub.app.people.ProfileWarmup(SubHubApp.this);
             @Override
             public void onActivityPreCreated(@NonNull Activity activity, @Nullable Bundle state) {
                 WindowCompat.setDecorFitsSystemWindows(activity.getWindow(), false);
@@ -59,6 +61,7 @@ public final class SubHubApp extends Application {
 
             @Override public void onActivityStarted(@NonNull Activity activity) { }
             @Override public void onActivityResumed(@NonNull Activity activity) {
+                profileWarmup.onWorkspaceOpen();
                 if (opened.add(activity)) {
                     // View-state restoration can focus a saved EditText after onCreate.
                     activity.getWindow().getDecorView().post(() ->

@@ -53,9 +53,11 @@ public final class InternalSubData {
     private static final class Presentation {
         final PersonSnapshot value;
         final InternalPresentationStamp stamp;
+        final InternalRuntimePresentationSnapshot runtime;
         Presentation(InternalSubRecord record, PersonSnapshot value, long controller, long dataRevision,
-                com.subhub.app.stats.OwnerObservation observed) {
+                com.subhub.app.stats.OwnerObservation observed, InternalRuntimePresentationSnapshot runtime) {
             this.value=value;
+            this.runtime=runtime;
             stamp=new InternalPresentationStamp(record,dataRevision,controller,observed);
         }
     }
@@ -65,8 +67,22 @@ public final class InternalSubData {
         return ownerData().acknowledgedRevisionHint(acknowledged.generation);
     }
     public PersonSnapshot peekPresentation() {
-        Presentation cached=presentation; InternalSubRecord record=acknowledged;
-        return cached!=null&&cached.stamp.current(record,presentationRevisionHint(),ControllerPinManager.domWorkspaceRevision())?cached.value:null;
+        Presentation cached=currentPresentation();
+        return cached==null?null:cached.value;
+    }
+    private Presentation currentPresentation() {
+        Presentation cached=presentation;
+        return cached!=null&&cached.stamp.current(acknowledged,presentationRevisionHint(),ControllerPinManager.domWorkspaceRevision())?cached:null;
+    }
+    /** Statistics can reuse the precise acknowledgement already retained for the Demo profile. */
+    public record RetainedPresentation(InternalRuntimePresentationSnapshot runtime, PersonSnapshot person) {}
+    public RetainedPresentation peekRuntimePresentation(Context physical) {
+        InternalSubRecord record=acknowledged;
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        Presentation cached=currentPresentation();
+        if (cached==null || cached.runtime==null || !DummySubPreview.current(physical,record.generation,controller)
+                || !cached.runtime.record.equals(record)) return null;
+        return new RetainedPresentation(cached.runtime,cached.value);
     }
     InternalPresentationStamp presentationStamp(PersonSnapshot value) {
         Presentation cached=presentation;
@@ -111,7 +127,7 @@ public final class InternalSubData {
         synchronized(this){if(current&&acknowledged.revision==record.revision&&acknowledged.generation.equals(record.generation)
                 &&presentationRevisionHint()==observedRevision
                 &&InternalPresentationCalendar.current(calendar,com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
-                    presentation=new Presentation(record,value,controller,observedRevision,calendar);}
+                    presentation=new Presentation(record,value,controller,observedRevision,calendar,observed);}
         return value;
     }
     public void requestPresentation(Context physical) {
