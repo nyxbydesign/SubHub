@@ -64,9 +64,6 @@ public abstract class RemotePage extends AppCompatActivity {
     protected void notice(int text){Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     protected TextView text(LinearLayout target,CharSequence value,boolean heading){return PersonUi.text(target,value,heading);}
     protected TextView button(LinearLayout target,int label,Runnable action){return PersonUi.action(target,label,action,false);}
-    protected EditText input(LinearLayout target,int label,String value) {
-        return input(target,label,value,com.subhub.app.util.InputBounds.DEFAULT_TEXT);
-    }
     protected EditText input(LinearLayout target,int label,String value,int maximum) {
         TextView caption = text(target, getString(label), false);
         EditText editor = new EditText(this);
