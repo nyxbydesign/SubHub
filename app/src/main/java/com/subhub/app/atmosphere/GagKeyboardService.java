@@ -283,7 +283,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (deletionStart != null && (newStart != newEnd || newEnd > deletionStart.end()
                 || newEnd < deletionStart.start() - GagDeletionHistory.MAX_DELETED)) clearDeletionHistory();
         if (suggestionSpace != null
-                && !suggestionSpace.atSelection(getCurrentInputConnection(), newStart, newEnd))
+                && suggestionSpace.cursorMoved(getCurrentInputConnection(), oldStart, oldEnd, newStart, newEnd))
             suggestionSpace = null;
         if (pendingBracket != null
                 && pendingBracket.cursorMoved(getCurrentInputConnection(), oldStart, oldEnd, newStart, newEnd))

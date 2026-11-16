@@ -8,7 +8,7 @@ import android.view.inputmethod.SurroundingText;
 
 /** A short-lived witness for a forwarded Backspace when an editor sends no selection callback. */
 final class GagDeleteSuggestion {
-    private static final int BEFORE = 8;
+    static final int BEFORE = 8;
     private static final int AFTER = 2;
 
     private final InputConnection connection;
