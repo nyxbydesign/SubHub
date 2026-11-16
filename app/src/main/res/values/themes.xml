@@ -38,6 +38,12 @@
         <item name="spinnerStyle">@style/Widget.SubHub.Spinner</item>
     </style>
 
+    <style name="Theme.SubHub.ClipboardEditor" parent="@android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:buttonStyle">@style/Widget.SubHub.DefaultButton</item>
+        <item name="android:editTextStyle">@style/Widget.SubHub.Input</item>
+    </style>
+
     <style name="Widget.SubHub.Spinner" parent="Widget.AppCompat.Spinner">
         <item name="android:background">@drawable/bg_spinner</item>
         <item name="android:popupBackground">@drawable/bg_native_dialog</item>

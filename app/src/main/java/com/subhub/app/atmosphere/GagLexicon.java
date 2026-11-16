@@ -7,11 +7,13 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Immutable local word frequencies. Candidate generation uses only the active token. */
 final class GagLexicon {
@@ -30,9 +32,14 @@ final class GagLexicon {
     private static final int SEPARATED_PART_MIN_COUNT = 25_000;
     private static final int JOINED_PART_MIN_COUNT = 40_000;
     private static final int KNOWN_JOIN_RATIO = 160;
+    private static final Comparator<Map.Entry<String, Long>> SUGGESTION_ORDER =
+            Comparator.<Map.Entry<String, Long>>comparingLong(Map.Entry::getValue)
+                    .reversed().thenComparing(Map.Entry::getKey);
     private final Map<String, Integer> counts;
     private final String[] sorted;
     private final int highestCount;
+    // Valid one-letter inputs form a bounded set, even with case variants.
+    private final Map<String, List<String>> singleLetterSuggestions = new ConcurrentHashMap<>();
 
     GagLexicon(Map<String, Integer> counts) {
         this(counts, null, 0);
@@ -109,12 +116,18 @@ final class GagLexicon {
     List<String> suggestions(String original) {
         String word = lookupWord(original);
         if (word == null) return List.of();
-        Map<String, Long> edits = typos(word);
-        List<String> rankedEdits = counts.containsKey(word) ? ranked(edits) : List.of();
+        return word.length() == 1
+                ? singleLetterSuggestions.computeIfAbsent(original, key -> suggestions(key, word))
+                : suggestions(original, word);
+    }
+
+    private List<String> suggestions(String original, String word) {
+        Map<String, Long> matches = typos(word);
+        String bestEdit = !matches.isEmpty() && counts.containsKey(word)
+                ? Collections.min(matches.entrySet(), SUGGESTION_ORDER).getKey() : null;
         List<String> result = new ArrayList<>(MAX_SUGGESTIONS);
         // A strong non-prefix alternative must survive the frequency ranking of completions.
-        if (!rankedEdits.isEmpty()) result.add(withCase(original, rankedEdits.get(0)));
-        Map<String, Long> matches = edits;
+        if (bestEdit != null) result.add(withCase(original, bestEdit));
         int start = Arrays.binarySearch(sorted, word);
         if (start < 0) start = -start - 1;
         String[] prefixes = new String[MAX_SUGGESTIONS];
@@ -138,11 +151,11 @@ final class GagLexicon {
             matches.putIfAbsent(prefixes[rank], (long) frequencies[rank]);
         if (matches.isEmpty() && word.length() >= 4 && !counts.containsKey(word))
             addCommonSubstitutions(matches, word);
-        List<String> ranked = ranked(matches);
-        for (String candidate : ranked) {
+        List<Map.Entry<String, Long>> ranked = new ArrayList<>(matches.entrySet());
+        ranked.sort(SUGGESTION_ORDER);
+        for (Map.Entry<String, Long> entry : ranked) {
             if (result.size() == MAX_SUGGESTIONS) break;
-            if (rankedEdits.isEmpty() || !candidate.equals(rankedEdits.get(0)))
-                result.add(withCase(original, candidate));
+            if (!entry.getKey().equals(bestEdit)) result.add(withCase(original, entry.getKey()));
         }
         return List.copyOf(result);
     }
@@ -262,12 +275,6 @@ final class GagLexicon {
             }
         }
         return best;
-    }
-
-    private static List<String> ranked(Map<String, Long> matches) {
-        List<String> ranked = new ArrayList<>(matches.keySet());
-        ranked.sort(Comparator.<String>comparingLong(matches::get).reversed().thenComparing(word -> word));
-        return ranked;
     }
 
     private void addCommonSubstitutions(Map<String, Long> matches, String word) {

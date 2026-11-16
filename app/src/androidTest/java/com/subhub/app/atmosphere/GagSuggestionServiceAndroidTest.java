@@ -62,9 +62,17 @@ public final class GagSuggestionServiceAndroidTest {
         key("x");
         assertText("hello x");
 
-        acceptHello();
-        key("x");
-        assertText("hello x");
+        openEditor(false, false, false, true);
+        correctHello("");
+        assertText("hello");
+        key("d");
+        await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.BATCHED_SEPARATOR));
+        assertText("hello d");
+        for (char letter : "efinately".toCharArray()) key(String.valueOf(letter));
+        await(By.pkg("com.subhub.app").text("definitely"));
+        assertText("hello definately");
+        key("definitely");
+        assertText("hello definitely");
     }
 
     @Test public void movingTheCaretOrDeletingCancelsThePendingSeparator() throws Exception {
@@ -88,12 +96,26 @@ public final class GagSuggestionServiceAndroidTest {
             acceptHello();
             keyDescription(R.string.gag_keyboard_symbols);
             if (!pair.equals("()")) keyDescription(R.string.gag_keyboard_more_symbols);
-            key(pair.substring(0, 1));
+            String opener = pair.substring(0, 1);
+            key(opener);
             assertText("hello" + pair);
+            keyDescription(R.string.gag_keyboard_delete);
+            assertText("hello");
+            key(opener);
             keyDescription(R.string.gag_keyboard_letters);
             key("x");
-            assertText("hello" + pair.substring(0, 1) + "x" + pair.substring(1));
+            assertText("hello" + opener + "x" + pair.substring(1));
         }
+
+        openEditor(false);
+        keyDescription(R.string.gag_keyboard_symbols);
+        key(")");
+        assertText(")");
+        assertTrue(device().pressKeyCode(android.view.KeyEvent.KEYCODE_DPAD_LEFT));
+        key("(");
+        assertText("())");
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText(")");
     }
 
     @Test public void emptyBackspaceRestoresTheIdleSuggestionStrip() throws Exception {
@@ -318,11 +340,17 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText) throws Exception {
+        openEditor(middle, seedClipboard, selectDeletionText, false);
+    }
+
+    private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText,
+            boolean watchSeparatorBatch) throws Exception {
         assertEquals(IME, shell("settings get secure default_input_method").strip());
         String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle
                 + " --ez gag_seed_clipboard " + seedClipboard
-                + " --ez gag_deletion_selection " + selectDeletionText);
+                + " --ez gag_deletion_selection " + selectDeletionText
+                + " --ez " + GagEditorFixtureActivity.WATCH_SEPARATOR_BATCH + " " + watchSeparatorBatch);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         await(By.pkg("com.subhub.app").text("q"));
@@ -363,7 +391,7 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void assertText(String expected) {
-        BySelector editor = By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR);
+        BySelector editor = By.pkg("com.subhub.app.test").descStartsWith(GagEditorFixtureActivity.EDITOR);
         long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
         String observed;
         do {

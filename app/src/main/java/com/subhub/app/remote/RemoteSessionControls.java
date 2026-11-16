@@ -110,8 +110,9 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
             if (showingStop) stop();
             else request(RemoteSessionCommands.Action.START);
         });
-        status = PersonUi.text(controls, observed.serviceLabel, false);
+        status = PersonUi.text(controls, "", false);
         status.setTag("remote_session_status");
+        status.setVisibility(View.GONE);
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
         action.setEnabled(false);
         lifecycle.addObserver(this);

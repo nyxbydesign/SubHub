@@ -200,8 +200,6 @@ final class GagClipboard {
         return true;
     }
 
-    boolean forgetPins() { return savePins(List.of()); }
-
     private boolean savePins(List<Entry> updated) {
         if (pinStore == null || !pinStore.write(updated.stream().map(Entry::text).collect(Collectors.toList()))) return false;
         pins = List.copyOf(updated);

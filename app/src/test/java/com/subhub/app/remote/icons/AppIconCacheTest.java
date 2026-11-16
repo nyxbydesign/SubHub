@@ -18,6 +18,50 @@ import org.junit.rules.TemporaryFolder;
 public class AppIconCacheTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
 
+    @Test public void coldCacheRestoresOnlyCurrentReferencesWithoutANewOffer() throws Exception {
+        File directory = temporary.newFolder();
+        AppIconCache first = cache(directory);
+        byte[] png = png(16, 16, 2);
+        RemoteAppIcon allowed = icon(SUB, GENERATION, PACKAGE, png, 16, 16);
+        RemoteAppIcon other = icon(DOM, GENERATION, PACKAGE, png, 16, 16);
+        first.publishReferences(List.of(allowed, other));
+        first.complete(first.snapshot(), allowed, png, () -> { });
+        first.complete(first.snapshot(), other, png, () -> { });
+
+        AppIconCache reopened = cache(directory);
+        reopened.publishReferences(List.of(bare()));
+        reopened.restoreCached(reopened.snapshot());
+        assertEquals(allowed, reopened.snapshot().identity(SUB, GENERATION, PACKAGE));
+        assertArrayEquals(png, reopened.load(allowed));
+        assertNull(reopened.load(other));
+    }
+
+    @Test public void legacyCacheFilenameRecoversTheDescriptorButCannotOverrideAnUnavailableOffer() throws Exception {
+        File directory = temporary.newFolder();
+        AppIconCache first = cache(directory);
+        byte[] png = png(16, 16, 1);
+        RemoteAppIcon allowed = icon(SUB, GENERATION, PACKAGE, png, 16, 16);
+        first.publishReferences(List.of(allowed));
+        first.complete(first.snapshot(), allowed, png, () -> { });
+        File indexDirectory = new File(directory, "remote-app-icon-index-v1");
+        File[] index = indexDirectory.listFiles();
+        assertNotNull(index);
+        assertEquals(1, index.length);
+        Files.delete(index[0].toPath());
+
+        AppIconCache restored = cache(directory);
+        restored.publishReferences(List.of(bare()));
+        restored.restoreCached(restored.snapshot());
+        assertArrayEquals(png, restored.load(allowed));
+        assertTrue(restored.offered(restored.snapshot(), bare()));
+
+        AppIconCache retired = cache(directory);
+        retired.publishReferences(List.of(bare()));
+        retired.restoreCached(retired.snapshot());
+        assertNull(retired.snapshot().identity(SUB, GENERATION, PACKAGE).descriptor);
+        assertNull(retired.load(allowed));
+    }
+
     @Test public void offlineAuthorizedReadRequiresExactCurrentDescriptorAndMissingReturnsNull() throws Exception {
         AppIconCache cache = cache(temporary.newFolder());
         byte[] png = png(128, 128, 1);
@@ -139,10 +183,12 @@ public class AppIconCacheTest {
         for (RemoteAppIcon ref : refs) cache.complete(token, ref, png, () -> { });
         try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(directory.toPath())) {
             List<java.nio.file.Path> files = new ArrayList<>(); paths.filter(Files::isRegularFile).forEach(files::add);
-            assertTrue(files.size() <= AppIconCache.MAX_ENTRIES);
+            assertTrue(files.stream().filter(path -> path.toString().endsWith(".png")).count() <= AppIconCache.MAX_ENTRIES);
+            assertEquals(1, files.stream().filter(path -> path.toString().endsWith(".idx")).count());
             long bytes = 0; for (java.nio.file.Path path : files) bytes += Files.size(path);
             assertTrue(bytes <= AppIconCache.MAX_DISK_BYTES);
-            for (java.nio.file.Path path : files) assertTrue(path.getFileName().toString().matches("[0-9a-f]{64}\\.png"));
+            for (java.nio.file.Path path : files)
+                assertTrue(path.getFileName().toString().matches("[0-9a-f]{64}\\.(png|idx)"));
         }
         // Exercise the entry cap independently from the byte cap with a small PNG.
         File smallRoot = temporary.newFolder(); AppIconCache small = cache(smallRoot); byte[] tiny = png(1, 1, 1);
@@ -151,7 +197,7 @@ public class AppIconCacheTest {
         small.publishReferences(smallRefs);
         for (RemoteAppIcon ref : smallRefs) small.complete(small.snapshot(), ref, tiny, () -> { });
         try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(smallRoot.toPath())) {
-            assertEquals(256, paths.filter(Files::isRegularFile).count());
+            assertEquals(256, paths.filter(Files::isRegularFile).filter(path -> path.toString().endsWith(".png")).count());
         }
     }
 

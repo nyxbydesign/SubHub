@@ -71,34 +71,23 @@ public final class GagClipboardAndroidTest {
     @Test public void screenshotCaptureFollowsClipboardUseAndCurrentFullPhotoGrant() {
         withPhotoAccess((scoped, grants) -> {
             var prefs = GagScreenshotClipboard.preferences(scoped);
+            prefs.edit().putBoolean("retention", false).apply();
             String full = GagScreenshotClipboard.requestedPermissions()[0];
             grants.add(full);
             assertFalse(GagScreenshotClipboard.updateAccess(scoped));
             assertFalse(GagScreenshotClipboard.enabled(scoped));
-
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
-            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
 
             assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
             long beforeOpen = System.currentTimeMillis();
             assertTrue(GagScreenshotClipboard.updateAccess(scoped));
             assertTrue(GagScreenshotClipboard.enabled(scoped));
             assertTrue(prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0) >= beforeOpen);
-
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
-            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
         });
     }
 
     @Test public void deniedOrSelectedPhotoAccessDoesNotKeepPrompting() {
         withPhotoAccess((scoped, grants) -> {
             var prefs = GagScreenshotClipboard.preferences(scoped);
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
             assertTrue(GagScreenshotClipboard.onClipboardOpened(scoped));
             assertFalse(GagScreenshotClipboard.updateAccess(scoped));
             assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));

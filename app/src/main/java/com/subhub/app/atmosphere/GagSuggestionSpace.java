@@ -3,7 +3,7 @@ package com.subhub.app.atmosphere;
 import android.view.inputmethod.InputConnection;
 
 /** Remembers where a suggestion can be followed by a separator. */
-record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot position) {
+record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot position, int previousCursor) {
     static boolean needsSpace(CharSequence after) {
         if (after == null) return false;
         if (after.length() == 0) return true;
@@ -23,21 +23,35 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
 
     static GagSuggestionSpace capture(InputConnection input, GagDeleteSuggestion.Snapshot before,
             int originalLength, String inserted) {
-        if (before == null || before.cursor() < originalLength || inserted.isEmpty()
+        if (before == null || originalLength < 0 || before.cursor() < originalLength || inserted.isEmpty()
                 || !needsSpace(before.right())) return null;
+        int start = before.cursor() - originalLength;
+        if (start > Integer.MAX_VALUE - inserted.length()) return null;
+        String knownLeft = before.left().substring(0, Math.max(0, before.left().length() - originalLength))
+                + inserted;
+        String suffix = knownLeft.substring(Math.max(0, knownLeft.length() - GagDeleteSuggestion.BEFORE));
+        GagSuggestionSpace pending = new GagSuggestionSpace(input,
+                new GagDeleteSuggestion.Snapshot(start + inserted.length(), suffix, before.right()),
+                before.cursor());
         GagDeleteSuggestion.Snapshot after = GagDeleteSuggestion.editorSnapshot(input);
-        int expected = before.cursor() - originalLength + inserted.length();
-        return after != null && after.cursor() == expected && !after.left().isEmpty()
-                && after.right().equals(before.right())
-                && after.left().endsWith(inserted.substring(Math.max(0, inserted.length() - after.left().length())))
-                ? new GagSuggestionSpace(input, after) : null;
+        // Some editors acknowledge the commit before their contextual reads catch up.
+        return after == null || before.equals(after) || pending.isExpected(after) ? pending : null;
     }
 
-    boolean atSelection(InputConnection current, int start, int end) {
-        return input == current && start == end && end == position.cursor();
+    boolean cursorMoved(InputConnection current, int oldStart, int oldEnd, int newStart, int newEnd) {
+        if (current != input || newStart != newEnd) return true;
+        if (newEnd == position.cursor()) return false;
+        // A queued report for the old caret may precede the commit's selection update.
+        return newEnd != previousCursor || (oldStart == position.cursor() && oldEnd == position.cursor());
     }
 
     boolean matches(InputConnection current) {
-        return current == input && position.equals(GagDeleteSuggestion.editorSnapshot(current));
+        return current == input && isExpected(GagDeleteSuggestion.editorSnapshot(current));
+    }
+
+    private boolean isExpected(GagDeleteSuggestion.Snapshot current) {
+        return current != null && current.cursor() == position.cursor()
+                && current.right().equals(position.right())
+                && current.left().endsWith(position.left());
     }
 }

@@ -22,6 +22,11 @@ public final class RemoteUi implements ConnectionUi {
         });
     };
 
+    static void prepareCachedAppIcons() {
+        RemoteAppIconIntegration provider = iconProvider;
+        if (provider != null) provider.prepareCachedForDisplay();
+    }
+
     /** Memory-only lookup. Missing images retain the complete remote scope, never local package authority. */
     public static com.subhub.app.util.RemoteAppIcon appIcon(android.content.Context context,String peer,String generation,String packageName){
         if(packageName==null||packageName.isEmpty())return null;
@@ -39,6 +44,8 @@ public final class RemoteUi implements ConnectionUi {
                 public void addInvalidationListener(Runnable listener){}public void removeInvalidationListener(Runnable listener){}
             });
         }
+        RemoteAppIconIntegration provider=iconProvider;
+        if(identity!=null&&provider!=null)identity=provider.currentIdentity(identity);
         iconBinder.bind(view,identity==null?unavailableIcon:identity,fallback);
     }
     public static AutoCloseable observeAppIcons(Runnable observer){

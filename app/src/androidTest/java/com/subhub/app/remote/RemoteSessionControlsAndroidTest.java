@@ -699,6 +699,11 @@ public class RemoteSessionControlsAndroidTest {
         page.onActivity(a -> {
             View old = tag(a, "remote_session_controls"); LinearLayout parent = (LinearLayout) old.getParent();
             parent.removeView(old); new RemoteSessionControls(a, parent, person, dirty::get, gateway).bind();
+            // Still in the binding callback, before the first asynchronously delivered snapshot.
+            assertTrue(tag(a, "person_service_label").isShown());
+            TextView commandStatus = (TextView) tag(a, "remote_session_status");
+            assertEquals(0, commandStatus.length());
+            assertEquals(View.GONE, commandStatus.getVisibility());
         });
         await(() -> hasText(page, "remote_session_applied_duration", context.getString(R.string.remote_session_applied_duration,
                 "60 " + context.getString(R.string.remote_minutes))));

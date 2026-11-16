@@ -16,6 +16,8 @@ import android.widget.EditText;
 public final class GagEditorFixtureActivity extends Activity {
     static final String ACTION = "com.subhub.app.test.GAG_EDITOR_FIXTURE";
     static final String EDITOR = "Gag spacing test editor";
+    static final String WATCH_SEPARATOR_BATCH = "gag_watch_separator_batch";
+    static final String BATCHED_SEPARATOR = EDITOR + " batched separator";
     static final String CLIPBOARD_TEXT = "Synthetic clipboard fixture";
     static final String LONG_CLIPBOARD_PREFIX = "Long clipboard fixture ";
     static final String LONG_CLIPBOARD_TEXT = LONG_CLIPBOARD_PREFIX + "abc 123 ".repeat(768) + "tail";
@@ -32,7 +34,23 @@ public final class GagEditorFixtureActivity extends Activity {
         }
 
         boolean longClipboard = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false);
-        EditText editor = new EditText(this);
+        EditText editor = getIntent().getBooleanExtra(WATCH_SEPARATOR_BATCH, false)
+                ? new EditText(this) {
+                    private boolean startsAfterHello;
+
+                    @Override public void onBeginBatchEdit() {
+                        super.onBeginBatchEdit();
+                        startsAfterHello = TextUtils.equals("hello", getText());
+                    }
+
+                    @Override public void onEndBatchEdit() {
+                        super.onEndBatchEdit();
+                        if (startsAfterHello && TextUtils.equals("hello d", getText())) {
+                            setContentDescription(BATCHED_SEPARATOR);
+                        }
+                    }
+                }
+                : new EditText(this);
         editor.setSingleLine(!longClipboard);
         editor.setInputType(InputType.TYPE_CLASS_TEXT | (longClipboard ? InputType.TYPE_TEXT_FLAG_MULTI_LINE : 0));
         editor.setContentDescription(EDITOR);

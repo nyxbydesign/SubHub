@@ -63,8 +63,8 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
         long revision=ControllerPinManager.domWorkspaceRevision();
         if(!viewerAllowed()){publish(Collections.emptySet());return;}
         try {
-            store.authorityAccess(()->{
-                if(!viewerAllowed()){publish(Collections.emptySet());return null;}
+            boolean accepted=store.authorityAccess(()->{
+                if(!viewerAllowed()){publish(Collections.emptySet());return false;}
                 Set<RemoteAppIcon> current=new LinkedHashSet<>();
                 for (RemoteStore.Peer peer:store.peers(false)) {
                     if (peer.state!=RemoteStore.State.ACTIVE || peer.localRole!=RemoteProtocol.Role.DOM) continue;
@@ -72,9 +72,14 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
                 }
                 if(revision!=ControllerPinManager.domWorkspaceRevision()||!viewerAllowed())throw new SecurityException("Dom workspace changed");
                 publish(current);
-                long previous=viewerRevision;viewerRevision=revision;if(previous!=revision)changed();
-                return null;
+                return true;
             });
+            if (!accepted) return;
+            // Disk cache restoration never runs under the RemoteStore authority monitor.
+            cache.restoreCached(cache.snapshot());
+            if (revision==ControllerPinManager.domWorkspaceRevision() && viewerAllowed()) {
+                long previous=viewerRevision;viewerRevision=revision;if(previous!=revision)changed();
+            }
         } catch (RuntimeException unavailable) {
             publish(Collections.emptySet());throw unavailable;
         }
@@ -113,6 +118,16 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
         exchange.exchange(connection,peer,deadline);
     }
 
+    /** Prepare the first icon-bearing projection on its existing worker. */
+    void prepareCachedForDisplay() {
+        if (viewerRevision == ControllerPinManager.domWorkspaceRevision()
+                || android.os.Looper.getMainLooper() == android.os.Looper.myLooper()
+                || store.hasCurrentFormalTransaction()
+                || Thread.holdsLock(store) || Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK)
+                || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)) return;
+        try { refresh(); } catch (IOException | RuntimeException unavailable) { /* Render the ordinary fallback. */ }
+    }
+
     RemoteAppIcon identity(String peer,String generation,String name) {
         RemoteAppIcon bare;
         try {bare=new RemoteAppIcon(peer,generation,name,null);}
@@ -125,9 +140,14 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
             while(demand.size()>256){String oldest=demand.keySet().iterator().next();demand.remove(oldest);lastAttempt.remove(oldest);}
         }
         if (requested) synchronize.run();
+        return currentIdentity(bare);
+    }
+
+    RemoteAppIcon currentIdentity(RemoteAppIcon requested) {
         AppIconCache target=cache;
-        RemoteAppIcon known=target==null?null:target.snapshot().identity(peer,generation,name);
-        return known!=null && currentAuthority().permits(known)?known:bare;
+        RemoteAppIcon known=target==null?null:target.snapshot().identity(
+                requested.peer,requested.generation,requested.packageName);
+        return known!=null && currentAuthority().permits(known)?known:requested;
     }
 
     @Override public boolean current(RemoteStore.Peer peer) {
@@ -219,6 +239,10 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
     @Override public RemoteAppIcons.Authority currentAuthority() {
         AppIconCache target=cache;
         return target!=null && viewerAllowed()&&viewerRevision==ControllerPinManager.domWorkspaceRevision()?target.currentAuthority():RemoteAppIcons.Authority.EMPTY;
+    }
+    @Override public android.graphics.Bitmap preview(RemoteAppIcon icon) {
+        AppIconCache target = cache;
+        return target != null && currentAuthority().permits(icon) ? target.preview(icon) : null;
     }
     private volatile long viewerRevision=-1;
     private boolean viewerAllowed(){

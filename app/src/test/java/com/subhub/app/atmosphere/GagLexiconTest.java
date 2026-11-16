@@ -146,7 +146,10 @@ public final class GagLexiconTest {
         counts.put("getting", 10_000);
         counts.put("geht", 5_000);
         GagLexicon lexicon = new GagLexicon(counts);
-        assertEquals(List.of("Get", "Getting", "Geht"), lexicon.suggestions("G"));
+        for (int pass = 0; pass < 2; pass++) {
+            assertEquals(List.of("Get", "Getting", "Geht"), lexicon.suggestions("G"));
+            assertEquals(List.of("get", "getting", "geht"), lexicon.suggestions("g"));
+        }
         assertEquals(List.of("get", "getting", "geht"), lexicon.suggestions("ge"));
     }
 
