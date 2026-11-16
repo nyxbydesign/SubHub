@@ -62,9 +62,17 @@ public final class GagSuggestionServiceAndroidTest {
         key("x");
         assertText("hello x");
 
-        acceptHello();
-        key("x");
-        assertText("hello x");
+        openEditor(false, false, false, true);
+        correctHello("");
+        assertText("hello");
+        key("d");
+        await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.BATCHED_SEPARATOR));
+        assertText("hello d");
+        for (char letter : "efinately".toCharArray()) key(String.valueOf(letter));
+        await(By.pkg("com.subhub.app").text("definitely"));
+        assertText("hello definately");
+        key("definitely");
+        assertText("hello definitely");
     }
 
     @Test public void movingTheCaretOrDeletingCancelsThePendingSeparator() throws Exception {
@@ -318,11 +326,17 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText) throws Exception {
+        openEditor(middle, seedClipboard, selectDeletionText, false);
+    }
+
+    private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText,
+            boolean watchSeparatorBatch) throws Exception {
         assertEquals(IME, shell("settings get secure default_input_method").strip());
         String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle
                 + " --ez gag_seed_clipboard " + seedClipboard
-                + " --ez gag_deletion_selection " + selectDeletionText);
+                + " --ez gag_deletion_selection " + selectDeletionText
+                + " --ez " + GagEditorFixtureActivity.WATCH_SEPARATOR_BATCH + " " + watchSeparatorBatch);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         await(By.pkg("com.subhub.app").text("q"));
@@ -363,7 +377,7 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     private static void assertText(String expected) {
-        BySelector editor = By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR);
+        BySelector editor = By.pkg("com.subhub.app.test").descStartsWith(GagEditorFixtureActivity.EDITOR);
         long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
         String observed;
         do {

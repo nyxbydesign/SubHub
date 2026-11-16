@@ -369,7 +369,18 @@ public final class GagKeyboardService extends InputMethodService {
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
         int character = text.codePointAt(0);
-        insertPendingSpace(input, character);
+        boolean insertSpace = takePendingSpace(input, character);
+        // Report selection for the separator and the newly composing character together.
+        boolean batching = insertSpace && input.beginBatchEdit();
+        try {
+            if (insertSpace) input.commitText(" ", 1);
+            typeCharacter(input, text, character);
+        } finally {
+            if (batching) input.endBatchEdit();
+        }
+    }
+
+    private void typeCharacter(InputConnection input, String text, int character) {
         boolean inWord = (page == Page.LETTERS && GagRules.wordCharacter(character))
                 || ((word.length() > 0 || literalWord) && GagRules.apostrophe(character));
         if (editorAllowed && inWord && !literalWord) {
@@ -417,20 +428,17 @@ public final class GagKeyboardService extends InputMethodService {
         punctuationCursor = -1;
     }
 
-    private void insertPendingSpace(InputConnection input, int next) {
+    private boolean takePendingSpace(InputConnection input, int next) {
         GagSuggestionSpace space = suggestionSpace;
         char punctuation = pendingPunctuation;
         clearPendingSpace();
-        if (!editorAllowed || !Character.isLetter(next)) return;
-        if (space != null && space.matches(input)) {
-            input.commitText(" ", 1);
-            return;
-        }
-        if (punctuation == 0) return;
+        if (!editorAllowed || !Character.isLetter(next)) return false;
+        if (space != null && space.matches(input)) return true;
+        if (punctuation == 0) return false;
         CharSequence selected = input.getSelectedText(0);
-        if (selected != null && selected.length() != 0) return;
-        if (GagPunctuation.needsSpace(punctuation, next, input.getTextBeforeCursor(2, 0),
-                input.getTextAfterCursor(2, 0))) input.commitText(" ", 1);
+        return (selected == null || selected.length() == 0)
+                && GagPunctuation.needsSpace(punctuation, next, input.getTextBeforeCursor(2, 0),
+                        input.getTextAfterCursor(2, 0));
     }
 
     private boolean completeWord(InputConnection input, String suffix, String suggestion) {
