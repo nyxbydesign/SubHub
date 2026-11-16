@@ -140,7 +140,7 @@ public final class RemotePersonRepository implements PersonRepository {
         String appSummary=appDoc.getBoolean("all")?context.getString(R.string.remote_all_apps):context.getString(R.string.remote_app_count,names.size());
         result.add(new PersonSnapshot.Section("apps",context.getString(R.string.remote_apps),appSummary,String.join("\n",names),appRows));
         long duration=service.getLong("duration");String rendered;
-        if(duration==-1)rendered=context.getResources().getStringArray(R.array.remote_duration_choices)[0];
+        if(duration==-1)rendered=context.getString(R.string.role_permanent_duration);
         else if(duration==-2)rendered=(service.getLong("minimum")/60_000)+"–"+(service.getLong("maximum")/60_000)+" "+context.getString(R.string.remote_minutes);
         else rendered=(duration/60_000)+" "+context.getString(R.string.remote_minutes);
         result.add(new PersonSnapshot.Section("duration",context.getString(R.string.remote_duration),rendered,""));

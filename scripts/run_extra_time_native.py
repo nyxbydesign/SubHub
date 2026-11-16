@@ -158,7 +158,8 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
         "actualRemoteStatsReprojectsVisibleAllowanceAfterDescriptorArrival",
-        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "pairedAppsRebindsIconsWithoutChangingSelectionAndClearsOnRevocation",
+        "pairedLimitsRetainsIncompleteAllowanceDuringIconArrivalAndRecreation",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons"
     ],
     "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
@@ -193,18 +194,18 @@ SUBHUB_PASS_SOURCE_ONLY = {
     ],
     "com.subhub.app.remote.RemoteDurationAndroidTest": [
         "nativeInlineChoiceSurvivesRecreationAndQueuesOnlyTheSelectedPeersDuration",
-        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace"
+        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace",
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "draftAndInvalidRawBudgetSurviveRecreation",
         "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
-        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "pairedCensorSettingsOmitPeerAppsAndPopupActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "statisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
         "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
@@ -420,7 +421,8 @@ DEVICE_PASS_SOURCE_ONLY = {
         "actualActivityPreviewOpensFullHistoryAndUsesArrivingRemotePixels",
         "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
-        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "pairedAppsRebindsIconsWithoutChangingSelectionAndClearsOnRevocation",
+        "pairedLimitsRetainsIncompleteAllowanceDuringIconArrivalAndRecreation",
         "sharedNativeLimitsAndAppSelectorKeepRemoteIconScope",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons",
     ],
@@ -732,20 +734,22 @@ DUMMY_PREVIEW_NATIVE = {
     ]
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteDurationAndroidTest": [
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving",
+    ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
         "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor",
-        "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
         "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
-        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "pairedCensorSettingsOmitPeerAppsAndPopupActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "statisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals",
         "peerNameChangesKeepRelationshipAndPersonIdentitiesStable",

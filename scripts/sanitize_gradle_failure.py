@@ -587,7 +587,6 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/remote/RemoteConfigurationWriter.java": "main_remote_remote_configuration_writer",
     b"app/src/main/java/com/subhub/app/remote/RemoteConnectionActivity.java": "main_remote_remote_connection_activity",
     b"app/src/main/java/com/subhub/app/remote/RemoteConnectivityWake.java": "main_remote_remote_connectivity_wake",
-    b"app/src/main/java/com/subhub/app/remote/RemoteContractActivity.java": "main_remote_remote_contract_activity",
     b"app/src/main/java/com/subhub/app/remote/RemoteContracts.java": "main_remote_remote_contracts",
     b"app/src/main/java/com/subhub/app/remote/RemoteDeviceData.java": "main_remote_remote_device_data",
     b"app/src/main/java/com/subhub/app/remote/RemoteDurationControls.java": "main_remote_remote_duration_controls",
