@@ -55,7 +55,7 @@ public class RemoteEditorAndroidTest {
         assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
         database="editor-"+UUID.randomUUID();feature=new RemoteFeature(context,new RemoteStore(context,database+".db"));source=new RemoteStore(context,database+"source.db");
         char[] a=new char[64],b=new char[64];Arrays.fill(a,'a');Arrays.fill(b,'b');String dom=new String(a),sub=new String(b);
-        PairingInvite invite=PairingInvite.create(dom,"ticket",1000);generation=invite.id;feature.store.saveInvite(invite);feature.store.bindInvite(generation,sub,invite.tokenHash(),1001);feature.store.approveInvite(generation,sub,"Fixture Sub",1001);feature.store.activate(sub,generation);source.acceptInvite(invite,"Dom");source.activate(dom,generation);peer=feature.store.peer(sub,generation);
+        PairingInvite invite=PairingInvite.create(dom,"ticket",1000);generation=invite.id;TimedPairingFixture.activeDom(feature.store, invite, sub, "Fixture Sub");TimedPairingFixture.activeSub(source, invite, sub, "Dom");peer=feature.store.peer(sub,generation);
         JSONObject doc=RemoteConfigurationAndroidTest.configuration();doc.getJSONObject("apps").getJSONArray("packages").put("com.android.settings");doc.getJSONObject("apps").getJSONObject("allowances").put("com.android.settings",37);
         source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",doc,false,1);feature.store.receive(sub,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
         source.publish(dom,generation,RemoteProtocol.Stream.APP_CATALOG,"com.android.settings",new JSONObject().put("label","Settings"),false,1);feature.store.receive(sub,source.nextBatch(dom,generation,RemoteProtocol.Stream.APP_CATALOG));

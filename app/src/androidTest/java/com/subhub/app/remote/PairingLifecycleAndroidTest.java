@@ -94,7 +94,7 @@ public final class PairingLifecycleAndroidTest {
             String active=f.rows();assertFalse(f.store.cancelPairingOperation(invite.id,invite.id,PairingLifecycleClock.Direction.ACCEPT,null,f.clock.observe(),f.clock));assertEquals(active,f.rows());
         }
         try(Fixture f=new Fixture(SUB)){
-            PairingInvite legacy=PairingInvite.create(DOM,"owned",f.clock.wall);f.store.acceptInvite(legacy,"Legacy synthetic Dom");f.provisionExisting(legacy);
+            PairingInvite legacy=PairingInvite.create(DOM,"owned",f.clock.wall);RetainedPairingFixture.pendingSub(f.store, legacy, "Legacy synthetic Dom");f.provisionExisting(legacy);
             assertNull(f.operation(legacy,PairingLifecycleClock.Direction.ACCEPT));Map<String,String> metadata=f.metadata(legacy);Map<String,?> ciphertext=f.ciphertext();
             f.clock.advance(PairingInvite.LIFETIME_MILLIS+1000);
             PairingCompletionProof.Exchange exchange=PairingCompletionProof.offer(DOM,SUB,legacy.id,f.clock.observe()).challenge(PairingCompletionProof.freshNonce());
@@ -104,7 +104,7 @@ public final class PairingLifecycleAndroidTest {
             assertNull(f.operation(legacy,PairingLifecycleClock.Direction.ACCEPT));assertEquals(metadata,f.metadata(legacy));assertEquals(ciphertext,f.ciphertext());
         }
         for(boolean cancelled:new boolean[]{false,true})try(Fixture f=new Fixture(SUB)){
-            PairingInvite invite=PairingInvite.create(DOM,"owned",f.clock.wall);f.store.acceptInvite(invite,"Legacy synthetic Dom");f.provisionExisting(invite);
+            PairingInvite invite=PairingInvite.create(DOM,"owned",f.clock.wall);RetainedPairingFixture.pendingSub(f.store, invite, "Legacy synthetic Dom");f.provisionExisting(invite);
             assertNull(f.operation(invite,PairingLifecycleClock.Direction.ACCEPT));assertEquals(invite.id,f.store.legacyPendingGeneration(PairingLifecycleClock.Direction.ACCEPT));
             PairingCompletionProof.Exchange exchange=PairingCompletionProof.offer(DOM,SUB,invite.id,f.clock.observe()).challenge(PairingCompletionProof.freshNonce());
             PairingCompletionProof.Verified proof=exchange.verifyReady(SECRET,exchange.ready(SECRET),f.clock.observe());String digest=PairingCompletionProof.credentialDigest(SECRET);

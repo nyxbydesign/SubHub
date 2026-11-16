@@ -129,9 +129,9 @@ public class RemoteStoreAndroidTest {
 
     @Test public void subCannotGainAnotherDomWithoutRevocation() {
         PairingInvite other = PairingInvite.create(SUB2,"ticket",1000);
-        assertThrows(android.database.sqlite.SQLiteConstraintException.class, () -> sub.acceptInvite(other,"Other Dom"));
+        assertThrows(android.database.sqlite.SQLiteConstraintException.class, () -> TimedPairingFixture.stageSub(sub, other, "Other Dom"));
         sub.revoke(DOM,generation);
-        sub.acceptInvite(other,"Other Dom"); sub.activate(SUB2,other.id);
+        TimedPairingFixture.activeSub(sub, other, SUB, "Other Dom");
         assertTrue(sub.isRemotelyControlled());
         assertEquals(2,sub.peers(true).size());
     }
@@ -146,12 +146,15 @@ public class RemoteStoreAndroidTest {
     }
 
     @Test public void invitationRequiresMatchingSecretAndCandidateAndCannotBeReused() {
-        PairingInvite invite = PairingInvite.create(DOM,"ticket",1000); dom.saveInvite(invite);
-        assertThrows(SecurityException.class, () -> dom.bindInvite(invite.id,SUB2,"wrong",1001));
-        dom.bindInvite(invite.id,SUB2,invite.tokenHash(),1001);
-        assertThrows(SecurityException.class, () -> dom.bindInvite(invite.id,SUB,invite.tokenHash(),1001));
-        dom.approveInvite(invite.id,SUB2,"Second Sub",1001);
-        assertThrows(SecurityException.class, () -> dom.bindInvite(invite.id,SUB2,invite.tokenHash(),1001));
+        PairingInvite invite = PairingInvite.create(DOM,"ticket",1000);
+        PairingLifecycleClock.Source clock = TimedPairingFixture.clock(invite);
+        FormalRelationshipClock.Sample sample = clock.observe();
+        dom.saveTimedInvite(invite, sample, clock);
+        assertThrows(SecurityException.class, () -> dom.bindTimedInvite(invite.id, SUB2, "wrong", sample, clock));
+        dom.bindTimedInvite(invite.id, SUB2, invite.tokenHash(), sample, clock);
+        assertThrows(SecurityException.class, () -> dom.bindTimedInvite(invite.id, SUB, invite.tokenHash(), sample, clock));
+        TimedPairingFixture.approveDom(dom, invite, SUB2, "Second Sub", "", clock);
+        assertThrows(SecurityException.class, () -> dom.bindTimedInvite(invite.id, SUB2, invite.tokenHash(), sample, clock));
     }
 
     @Test public void failedOutboxWriteRollsBackSourceRecordAndRevision() throws Exception {
@@ -191,9 +194,8 @@ public class RemoteStoreAndroidTest {
 
     private String pair(RemoteStore dom,RemoteStore sub,String subIdentity) {
         PairingInvite invite = PairingInvite.create(DOM,"ticket",1000);
-        dom.saveInvite(invite); dom.bindInvite(invite.id,subIdentity,invite.tokenHash(),1001);
-        sub.acceptInvite(invite,"Dom"); dom.approveInvite(invite.id,subIdentity,"Sub",1001);
-        dom.activate(subIdentity,invite.id); sub.activate(DOM,invite.id);
+        TimedPairingFixture.activeDom(dom, invite, subIdentity, "Sub");
+        TimedPairingFixture.activeSub(sub, invite, subIdentity, "Dom");
         return invite.id;
     }
     private RemoteStore store() {

@@ -108,9 +108,11 @@ public class PairingServiceAndroidTest {
         PairingInvite invite=dom.create(at(1000));sub.accept(invite.code(),"Dom fixture",at(1001));assertFalse(handshake(invite,at(1002),false));
         dom.approve(invite.id,subTransport.localIdentity(),PairingInvite.fingerprint(domTransport.localIdentity(),subTransport.localIdentity(),invite.id),at(1003));
         dom.cancel(invite.id);assertEquals(RemoteStore.State.REVOKED,domStore.peer(subTransport.localIdentity(),invite.id).state);
-        assertFalse(domStore.approvedInvite(invite.id,subTransport.localIdentity(),invite.tokenHash()));
+        assertFalse(domStore.timedApproval(invite.id,subTransport.localIdentity(),invite.tokenHash(),clock.observe(),clock));
         assertNull(domSecrets.controllerSecret(RemoteProtocol.Role.DOM,subTransport.localIdentity(),invite.id));
-        assertThrows(SecurityException.class,()->domStore.bindInvite(invite.id,subTransport.localIdentity(),invite.tokenHash(),at(1004)));
+        at(1004);
+        assertThrows(SecurityException.class,()->domStore.bindTimedInvite(
+                invite.id,subTransport.localIdentity(),invite.tokenHash(),clock.observe(),clock));
     }
     @Test public void sharedPayloadIsPlainCodeAndOldHandshakeDoesNotProvision()throws Exception {
         PairingInvite invite=dom.create(at(1000));android.content.Intent shared=PairingActivity.sharePayload(invite);

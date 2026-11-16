@@ -35,8 +35,7 @@ public class RemoteDurationAndroidTest {
         com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context);assertTrue(ControllerPinManager.setPin(context,"2468"));assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
         database="inline-duration-"+UUID.randomUUID();feature=new RemoteFeature(context,new RemoteStore(context,database+".db"));source=new RemoteStore(context,database+"source.db");
         String dom=String.join("",Collections.nCopies(64,"a")),sub=String.join("",Collections.nCopies(64,"b"));
-        PairingInvite invite=PairingInvite.create(dom,"fixture",1000);feature.store.saveInvite(invite);feature.store.bindInvite(invite.id,sub,invite.tokenHash(),1001);
-        feature.store.approveInvite(invite.id,sub,"Fixture Sub",1001);feature.store.activate(sub,invite.id);source.acceptInvite(invite,"Dom");source.activate(dom,invite.id);peer=feature.store.peer(sub,invite.id);
+        PairingInvite invite=PairingInvite.create(dom,"fixture",1000);TimedPairingFixture.activeDom(feature.store, invite, sub, "Fixture Sub");TimedPairingFixture.activeSub(source, invite, sub, "Dom");peer=feature.store.peer(sub,invite.id);
         original=RemoteConfiguration.active(RemoteConfigurationAndroidTest.configuration());source.publish(dom,invite.id,RemoteProtocol.Stream.BASELINE,"active",original,false,1);feature.store.receive(sub,source.nextBatch(dom,invite.id,RemoteProtocol.Stream.BASELINE));
         singleton=RemoteFeature.class.getDeclaredField("instance");singleton.setAccessible(true);previous=(RemoteFeature)singleton.get(null);singleton.set(null,feature);
         People.installRemoteRepository(new RemotePersonRepository(context,feature));People.installConnectionUi(new RemoteUi());People.installRemoteAuthority(feature::controlsLocal);

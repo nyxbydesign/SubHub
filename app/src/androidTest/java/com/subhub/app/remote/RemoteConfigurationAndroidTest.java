@@ -30,8 +30,8 @@ public class RemoteConfigurationAndroidTest {
         assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context));
         dom=new RemoteStore(context,prefix+"dom.db");sub=new RemoteStore(context,prefix+"sub.db");
         PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;
-        dom.saveInvite(invite);dom.bindInvite(generation,SUB,invite.tokenHash(),1001);dom.approveInvite(generation,SUB,"Sub",1001);dom.activate(SUB,generation);
-        sub.acceptInvite(invite,"Dom");sub.activate(DOM,generation);assets=new RemoteAssets(new File(root,"blobs"));
+        TimedPairingFixture.activeDom(dom, invite, SUB, "Sub");
+        TimedPairingFixture.activeSub(sub, invite, SUB, "Dom");assets=new RemoteAssets(new File(root,"blobs"));
     }
     @After public void cleanup() throws Exception {
         dom.close();sub.close();context.deleteDatabase(prefix+"dom.db");context.deleteDatabase(prefix+"sub.db");
@@ -338,7 +338,7 @@ public class RemoteConfigurationAndroidTest {
         sub.revoke(DOM,generation);
         assertNull(GagContractFields.applied(sub,owner));
         PairingInvite next=PairingInvite.create(DOM,"next",2000);
-        sub.acceptInvite(next,"Same Dom, new pairing"); sub.activate(DOM,next.id);
+        TimedPairingFixture.activeSub(sub, next, SUB, "Same Dom, new pairing");
         sub.putMetadata(DOM,next.id,GagContractFields.VERSION,"1");
         assertNull(GagContractFields.applied(sub,sub.peer(DOM,next.id)));
     }
@@ -356,8 +356,7 @@ public class RemoteConfigurationAndroidTest {
         com.subhub.app.people.ProfileData first = new com.subhub.app.people.ProfileData("Contract owner", "Owner bio", "");
         RemoteProfiles.receive(sub, owner, RemoteProfiles.encode(first, RemoteProtocol.Role.DOM));
         PairingInvite other = PairingInvite.create(SUB, "other", 1000);
-        sub.saveInvite(other); sub.bindInvite(other.id, repeat('c'), other.tokenHash(), 1001);
-        sub.approveInvite(other.id, repeat('c'), "Unrelated Sub", 1001); sub.activate(repeat('c'), other.id);
+        TimedPairingFixture.activeDom(sub, other, repeat('c'), "Unrelated Sub");
         RemoteProfiles.receive(sub, sub.peer(repeat('c'), other.id), RemoteProfiles.encode(
                 new com.subhub.app.people.ProfileData("Unrelated private profile", "Do not show", ""), RemoteProtocol.Role.SUB));
         RemoteStore.Command command = deliver(configuration());
@@ -385,7 +384,7 @@ public class RemoteConfigurationAndroidTest {
         assertEquals("Previous Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
         sub.revoke(DOM, generation);
         PairingInvite next = PairingInvite.create(repeat('d'), "next", 2000);
-        sub.acceptInvite(next, "Next Dom"); sub.activate(repeat('d'), next.id);
+        TimedPairingFixture.activeSub(sub, next, SUB, "Next Dom");
         RemoteStore.Peer nextOwner = sub.peer(repeat('d'), next.id);
         RemoteProfiles.receive(sub, nextOwner, RemoteProfiles.encode(
                 new com.subhub.app.people.ProfileData("Next Dom", "Next private bio", ""), RemoteProtocol.Role.DOM));
@@ -399,7 +398,7 @@ public class RemoteConfigurationAndroidTest {
         assertEquals("Next private bio", RemoteProfiles.contractDom(context, sub, contracts).about);
         sub.revoke(repeat('d'), next.id);
         PairingInvite renewed = PairingInvite.create(repeat('d'), "renewed", 3000);
-        sub.acceptInvite(renewed, "Renewed Dom"); sub.activate(repeat('d'), renewed.id);
+        TimedPairingFixture.activeSub(sub, renewed, SUB, "Renewed Dom");
         RemoteProfiles.receive(sub, sub.peer(repeat('d'), renewed.id), RemoteProfiles.encode(
                 new com.subhub.app.people.ProfileData("Renewed Dom", "Fresh generation bio", ""), RemoteProtocol.Role.DOM));
         assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);

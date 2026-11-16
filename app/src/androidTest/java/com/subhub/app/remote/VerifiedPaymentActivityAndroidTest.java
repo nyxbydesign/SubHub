@@ -52,9 +52,8 @@ public final class VerifiedPaymentActivityAndroidTest {
         constructor.setAccessible(true); daily = constructor.newInstance(context, prefix + "daily.db"); dailyField.set(null, daily);
         sub = new RemoteStore(context, prefix + "sub.db"); dom = new RemoteStore(domContext, prefix + "dom.db");
         PairingInvite invite = PairingInvite.create(DOM, "ticket", 1000); generation = invite.id;
-        dom.saveInvite(invite); dom.bindInvite(generation, SUB, invite.tokenHash(), 1001);
-        dom.approveInvite(generation, SUB, "Synthetic Sub", 1001); dom.activate(SUB, generation);
-        sub.acceptInvite(invite, "Original Dom"); sub.activate(DOM, generation);
+        TimedPairingFixture.activeDom(dom, invite, SUB, "Synthetic Sub");
+        TimedPairingFixture.activeSub(sub, invite, SUB, "Original Dom");
         sending = new RemoteActivityRepository(context, sub, () -> {}, NO_NOTIFICATIONS);
         receiving = new RemoteActivityRepository(domContext, dom, () -> {}, NO_NOTIFICATIONS);
         recorderField = RemoteActivityRecorder.class.getDeclaredField("installed"); recorderField.setAccessible(true);
@@ -188,7 +187,7 @@ public final class VerifiedPaymentActivityAndroidTest {
         String original = penance().getString(AUDIENCE, "");
         sub.revoke(DOM, generation);
         PairingInvite replacement = PairingInvite.create(OTHER, "replacement", 2000);
-        sub.acceptInvite(replacement, "Replacement Dom"); sub.activate(OTHER, replacement.id); sending.refreshSource();
+        TimedPairingFixture.activeSub(sub, replacement, SUB, "Replacement Dom"); sending.refreshSource();
         assertEquals(selected.getId(), wallet.beginSettlement(System.currentTimeMillis()).getId());
         assertEquals(original, penance().getString(AUDIENCE, ""));
         assertTrue(wallet.completeVerifiedSettlement(selected.getId(), 100, capture(selected.getId(), 100, "EUR", "CAPTURE-OLD-AUDIENCE")));

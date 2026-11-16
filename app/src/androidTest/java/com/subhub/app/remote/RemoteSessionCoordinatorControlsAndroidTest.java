@@ -185,10 +185,7 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
         long now = System.currentTimeMillis();
         PairingInvite invite = PairingInvite.create(DOM, "fixture", now);
         generation = invite.id;
-        store.saveInvite(invite);
-        store.bindInvite(generation, SUB, invite.tokenHash(), now);
-        store.approveInvite(generation, SUB, "Synthetic Sub", now);
-        store.activate(SUB, generation);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Synthetic Sub");
         peer = store.peer(SUB, generation);
         store.putMetadata(SUB, generation, "session_control_version", "1");
         coordinator = new RemoteSessionControlCoordinator(authority, store, DOM);

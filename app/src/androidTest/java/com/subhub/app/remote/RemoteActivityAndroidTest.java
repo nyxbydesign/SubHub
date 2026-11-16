@@ -91,9 +91,8 @@ public class RemoteActivityAndroidTest {
     private RemoteStore database(){String name="activity-"+UUID.randomUUID()+".db";databases.add(name);return new RemoteStore(context,name);}
     private void pair() {
         PairingInvite invitation=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());generation=invitation.id;
-        receiver.saveInvite(invitation);receiver.bindInvite(generation,SUB,invitation.tokenHash(),System.currentTimeMillis());
-        receiver.approveInvite(generation,SUB,"Fixture Sub",System.currentTimeMillis());receiver.activate(SUB,generation);
-        sender.acceptInvite(invitation,"Fixture Dom");sender.activate(DOM,generation);
+        TimedPairingFixture.activeDom(receiver, invitation, SUB, "Fixture Sub");
+        TimedPairingFixture.activeSub(sender, invitation, SUB, "Fixture Dom");
         sourcePeer=sender.peer(DOM,generation);targetPeer=receiver.peer(SUB,generation);
     }
     private static JSONObject event(String id,long time)throws Exception {
@@ -393,7 +392,7 @@ public class RemoteActivityAndroidTest {
         String localKey=sending.recent(PersonId.LOCAL,1).get(0).key;ActivityRepository.Page local=sending.locate(localKey,20);
         assertTrue(local.cursor.startsWith("local:"));assertEquals(localKey,sending.load(local.cursor,20).entries.get(0).key);
         assertFalse(local.entries.get(0).unread);
-        PairingInvite replacement=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());sender.acceptInvite(replacement,"New approval");sender.activate(DOM,replacement.id);
+        PairingInvite replacement=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());TimedPairingFixture.activeSub(sender, replacement, SUB, "New approval");
         sending.refreshSource();sending.prepare(sender.peer(DOM,replacement.id));
         assertTrue(sender.nextBatch(DOM,replacement.id,RemoteProtocol.Stream.EVENTS).changes.isEmpty());
         sending.foreground("com.example.selected","com.example.other",false,now+1);sending.foreground("com.example.other","com.example.selected",true,System.currentTimeMillis()+2);drain(sending);

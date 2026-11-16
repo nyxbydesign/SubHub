@@ -115,10 +115,10 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
             public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){return actual.verifyCode(code);}
         });
         try{
-            change.set(1);SecurityException lock=assertThrows(SecurityException.class,()->store.saveInvite(PairingInvite.create(DOM,"fixture",System.currentTimeMillis())));
+            change.set(1);SecurityException lock=assertThrows(SecurityException.class,()->saveTimedFixtureInvite(PairingInvite.create(DOM,"fixture",System.currentTimeMillis())));
             assertTrue(LinkingWitness.acknowledgedRejection(lock));assertEquals(0,count("invites"));
             assertTrue(ControllerPinManager.verify(context,"624871"));change.set(2);
-            assertThrows(SecurityException.class,()->store.saveInvite(PairingInvite.create(DOM,"fixture",System.currentTimeMillis())));
+            assertThrows(SecurityException.class,()->saveTimedFixtureInvite(PairingInvite.create(DOM,"fixture",System.currentTimeMillis())));
             assertEquals(0,count("invites"));assertEquals(0,count("peers"));assertEquals(0,count("formal_governing_slots"));assertEquals(2,observations[0]);assertEquals(0,forbidden[0]);
         }finally{com.subhub.app.people.People.installKeyholder(actual);}
     }
@@ -129,16 +129,16 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
         java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
         try{
             PairingInvite first=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());
-            store.authorityAccess(()->{secrets.savePending(first);store.acceptInvite(first,"First");return null;});
+            store.authorityAccess(()->{secrets.savePending(first);RetainedPairingFixture.pendingSub(store, first, "First");return null;});
             java.util.concurrent.CountDownLatch captured=new java.util.concurrent.CountDownLatch(1),replacement=new java.util.concurrent.CountDownLatch(1);
             java.util.concurrent.Future<Boolean> delayed=worker.submit(()->{
                 String expected=store.authorityAccess(()->secrets.pendingLink(first.id));captured.countDown();
                 assertTrue(replacement.await(10,TimeUnit.SECONDS));return store.authorityAccess(()->secrets.removePendingIfMatches(first.id,expected));
             });
-            assertTrue(captured.await(10,TimeUnit.SECONDS));assertTrue(store.cancelPendingPeer(DOM,first.id));assertNull(secrets.pendingLink(first.id));
+            assertTrue(captured.await(10,TimeUnit.SECONDS));assertTrue(cancelFixtureInvite(first, PairingLifecycleClock.Direction.ACCEPT));assertNull(secrets.pendingLink(first.id));
             assertTrue(ControllerPinManager.verify(context,"624871"));
             PairingInvite second=PairingInvite.restore(first.link().replace("&peer="+DOM,"&peer="+SUB));
-            store.authorityAccess(()->{secrets.savePending(second);store.acceptInvite(second,"Second");return null;});
+            store.authorityAccess(()->{secrets.savePending(second);RetainedPairingFixture.pendingSub(store, second, "Second");return null;});
             replacement.countDown();assertFalse(delayed.get(10,TimeUnit.SECONDS));assertEquals(second.link(),secrets.pendingLink(second.id));
             assertEquals(RemoteStore.State.PENDING,store.peer(SUB,second.id).state);
             PairingService pairing=new PairingService(store,secrets,endpoint(repeat('c')),feature.keyholder,()->ControllerPinManager.isDomModeActive()&&ControllerPinManager.isConfigured(context),"Owned local");
@@ -156,7 +156,8 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
         };
         RemoteStore applicationStore=new RemoteStore(mapped);handles.add(applicationStore);assertTrue(applicationStore.isApplicationDatabase());
         // No relationship adapter was attached: the default-path writer itself must install continuity.
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());applicationStore.acceptInvite(invite,"Owned Dom");
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());TimedPairingFixture.stageSub(applicationStore, invite, "Owned Dom");
+        TimedPairingFixture.approveSub(applicationStore, invite, SUB);
         assertNotNull(applicationStore.attachedWitness);assertEquals(1,count("formal_governing_slots"));
         FormalRelationshipProvider cleanup=new FormalRelationshipProvider(context,store);providers.add(cleanup);
         RemoteSecrets secrets=new RemoteSecrets(context,"owned-secrets","subhub.test.formal."+prefix);secrets.savePending(invite);
@@ -168,7 +169,7 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
             assertTrue(feature.recoveryReady());assertEquals(com.subhub.app.security.KeyholderProvider.State.NONE,installed.state());
             for(RemoteStore handle:handles)handle.close();
             byte[] databaseImage=java.nio.file.Files.readAllBytes(owned.toPath()),markerImage=java.nio.file.Files.readAllBytes(marker().toPath());
-            applicationStore.activate(DOM,invite.id);assertEquals(RemoteStore.State.ACTIVE,applicationStore.peer(DOM,invite.id).state);
+            TimedPairingFixture.activate(applicationStore, invite, DOM);assertEquals(RemoteStore.State.ACTIVE,applicationStore.peer(DOM,invite.id).state);
             for(RemoteStore handle:handles)handle.close();
             try(java.io.FileOutputStream output=new java.io.FileOutputStream(owned)){output.write(databaseImage);output.getFD().sync();}
             java.nio.file.Files.write(marker().toPath(),markerImage);
@@ -244,7 +245,7 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
     }
     @Test public void authenticatedRevokedResponseCommitsAndAcknowledgesWhileControllerIsLocked()throws Exception{
         FormalRelationshipProvider real=provider();await(real.snapshot());
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());store.saveInvite(invite);store.bindInvite(invite.id,SUB,invite.tokenHash(),System.currentTimeMillis());store.approveInvite(invite.id,SUB,"Owned Sub",System.currentTimeMillis());store.activate(SUB,invite.id);
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());TimedPairingFixture.activeDom(store, invite, SUB, "Owned Sub");
         RemoteStore.Peer peer=store.peer(SUB,invite.id);int[] revoked={0};store.onRevoked((identity,generation)->{assertFalse(Thread.holdsLock(store));assertEquals(RemoteStore.State.REVOKED,store.peer(identity,generation).state);revoked[0]++;});
         RemoteSession session=new RemoteSession(store,endpoint(DOM),new RemoteSession.Hooks(){
             public void prepare(RemoteStore.Peer current){throw new AssertionError("Revoked peer reached protected exchange");}public void received(RemoteStore.Peer current,RemoteProtocol.Stream stream){}public java.util.List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer current){return java.util.Collections.emptyList();}public RemoteAssets assets(RemoteStore.Peer current){return null;}public void complete(RemoteStore.Peer current){}
@@ -258,7 +259,8 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
     @Test public void restoredRevokedBackgroundPeerCannotReachActualProfileOrCredentialHooks()throws Exception{
         FormalRelationshipProvider real=provider();await(real.snapshot());
         RemoteSecrets secrets=new RemoteSecrets(context,"owned-secrets","subhub.test.formal."+prefix);
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());store.acceptInvite(invite,"Legacy active Dom");store.activate(DOM,invite.id);
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());RetainedPairingFixture.pendingSub(store, invite, "Legacy active Dom");
+        RetainedPairingFixture.activateRetainedPeer(store, DOM, invite.id);
         RemoteFeature feature=new RemoteFeature(context,store,secrets);PeerTransport endpoint=endpoint(SUB);
         java.lang.reflect.Method factory=RemoteFeature.class.getDeclaredMethod("session",PeerTransport.class);factory.setAccessible(true);RemoteSession session=(RemoteSession)factory.invoke(feature,endpoint);
         java.lang.reflect.Field callbacks=RemoteSession.class.getDeclaredField("hooks");callbacks.setAccessible(true);RemoteSession.Hooks hooks=(RemoteSession.Hooks)callbacks.get(session);
@@ -278,16 +280,26 @@ public final class LinkingProviderAndroidTest extends LinkingFixture {
             java.lang.reflect.Field active=RemoteFeature.class.getDeclaredField("endpoint");active.setAccessible(true);assertNull(active.get(feature));
         }finally{feature.shutdownForTest();}
     }
+    private void saveTimedFixtureInvite(PairingInvite invite) {
+        PairingLifecycleClock.Source clock = TimedPairingFixture.clock(invite);
+        store.saveTimedInvite(invite, clock.observe(), clock);
+    }
+
+    private boolean cancelFixtureInvite(PairingInvite invite, PairingLifecycleClock.Direction direction) {
+        PairingLifecycleClock.Source clock = TimedPairingFixture.clock(invite);
+        return store.cancelPairingOperation(invite.id, invite.id, direction, null, clock.observe(), clock);
+    }
+
     @Test public void legacyPendingCancelCannotRevokeActiveRelationship()throws Exception{
         FormalRelationshipProvider real=provider();await(real.snapshot());
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);store.acceptInvite(invite,"Dom");
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);RetainedPairingFixture.pendingSub(store, invite, "Dom");
         RemoteSecrets secrets=new RemoteSecrets(context,"owned-secrets","subhub.test.formal."+prefix);
         RemoteKeyholder authenticator=new RemoteKeyholder(context,store,secrets);
         String seed=store.authorityAccess(()->authenticator.provisionSub(store.peer(DOM,invite.id),SUB));
-        store.activate(DOM,invite.id);ControllerPinManager.enterSubMode();
+        RetainedPairingFixture.activateRetainedPeer(store, DOM, invite.id);ControllerPinManager.enterSubMode();
         assertEquals(com.subhub.app.security.ControllerAuthenticator.Result.SUCCESS,store.authorityAccess(()->authenticator.verifyCode(com.subhub.app.security.Totp.code(seed,System.currentTimeMillis()/com.subhub.app.security.Totp.STEP_MILLIS))));
-        assertFalse(store.cancelPendingPeer(DOM,invite.id));
-        assertThrows(SecurityException.class,()->store.cancelInvite(invite.id));
+        assertFalse(cancelFixtureInvite(invite, PairingLifecycleClock.Direction.ACCEPT));
+        assertFalse(cancelFixtureInvite(invite, PairingLifecycleClock.Direction.CREATE));
         assertEquals(RemoteStore.State.ACTIVE,store.peer(DOM,invite.id).state);assertEquals(1,count("formal_governing_slots"));
         store.revoke(DOM,invite.id);assertEquals(RemoteStore.State.REVOKED,store.peer(DOM,invite.id).state);assertEquals(0,count("formal_governing_slots"));
     }

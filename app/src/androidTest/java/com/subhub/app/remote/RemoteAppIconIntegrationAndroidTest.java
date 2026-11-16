@@ -66,8 +66,7 @@ public final class RemoteAppIconIntegrationAndroidTest extends LinkingFixture {
     @Before public void setupIcons()throws Exception{
         await(provider().snapshot());
         PairingInvite invite=PairingInvite.create(DOM,"owned fixture",System.currentTimeMillis());generation=invite.id;
-        store.saveInvite(invite);store.bindInvite(invite.id,SUB,invite.tokenHash(),System.currentTimeMillis());
-        store.approveInvite(invite.id,SUB,"Fixture Sub",System.currentTimeMillis());store.activate(SUB,invite.id);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Fixture Sub");
         peer=store.peer(SUB,generation);
         cacheRoot=new File(target.getCacheDir(),prefix+"icons");
         Context owned=new ContextWrapper(context){
