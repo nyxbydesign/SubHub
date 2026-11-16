@@ -21,6 +21,7 @@ import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
@@ -35,6 +36,7 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -303,6 +305,72 @@ public final class DevUpdatesAndroidTest {
         assertEquals(development.tag, state.releaseHistory().get(0).tag);
         preferences.edit().remove("release_history").apply();
         assertTrue(state.releaseHistory().isEmpty());
+    }
+
+    @Test public void pagingCachedHistoryFiltersPreviewsAndKeepsPageAfterRecreation() {
+        List<ReleaseHistoryItem> cached = new ArrayList<>();
+        for (int patch = 35; patch >= 1; patch--) {
+            cached.add(historyItem("99.0." + patch, "2099-01-01", false));
+        }
+        ReleaseHistoryItem newestPreview = historyItem("99.0.36-dev.1", "2099-01-02", true);
+        ReleaseHistoryItem olderPreview = historyItem("99.0.18-dev.1", "2099-01-01", true);
+        ReleaseHistoryItem installed = historyItem(BuildConfig.VERSION_NAME, "2098-12-31", true);
+        cached.addAll(List.of(newestPreview, olderPreview, installed));
+        state.setReleaseHistory(cached);
+
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        assertNotNull(instrumentation.getUiAutomation());
+        try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
+            instrumentation.waitForIdleSync();
+            scenario.onActivity(activity -> {
+                assertCachedHistoryPage(activity, cached.subList(0, 15), installed);
+                assertHistoryMeta(activity, installed, R.string.update_history_installed);
+                assertEquals(View.GONE, activity.findViewById(R.id.history_newer).getVisibility());
+            });
+
+            tapHistoryControl(R.id.history_older);
+            scenario.onActivity(activity -> assertCachedHistoryPage(activity, cached.subList(15, 31), null));
+            scenario.recreate();
+            instrumentation.waitForIdleSync();
+            scenario.onActivity(activity -> {
+                assertCachedHistoryPage(activity, cached.subList(15, 31), null);
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.history_newer).getVisibility());
+            });
+
+            tapHistoryControl(R.id.history_older);
+            scenario.onActivity(activity -> {
+                ViewGroup rows = activity.findViewById(R.id.release_history_list);
+                assertTrue(rows.getChildCount() >= 4);
+                for (int index = 0; index < 4; index++) {
+                    assertSame(cached.get(31 + index).tag, rows.getChildAt(index),
+                            historyRow(activity, cached.get(31 + index)));
+                }
+                assertNull(historyRow(activity, olderPreview));
+                assertNull(historyRow(activity, newestPreview));
+                assertEquals(View.GONE, activity.findViewById(R.id.history_status).getVisibility());
+            });
+            tapHistoryControl(R.id.history_newer);
+            scenario.onActivity(activity -> assertCachedHistoryPage(activity, cached.subList(15, 31), null));
+            tapHistoryControl(R.id.history_newer);
+            scenario.onActivity(activity -> assertCachedHistoryPage(activity, cached.subList(0, 15), installed));
+        }
+    }
+
+    private static void tapHistoryControl(int viewId) {
+        androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(viewId))
+                .perform(androidx.test.espresso.action.ViewActions.scrollTo(),
+                        androidx.test.espresso.action.ViewActions.click());
+    }
+
+    private static void assertCachedHistoryPage(UpdatesActivity activity, List<ReleaseHistoryItem> stable,
+            ReleaseHistoryItem installed) {
+        ViewGroup rows = activity.findViewById(R.id.release_history_list);
+        assertEquals(16, rows.getChildCount());
+        for (int index = 0; index < stable.size(); index++) {
+            assertSame(stable.get(index).tag, rows.getChildAt(index), historyRow(activity, stable.get(index)));
+        }
+        if (installed != null) assertSame(rows.getChildAt(15), historyRow(activity, installed));
+        assertEquals(View.GONE, activity.findViewById(R.id.history_status).getVisibility());
     }
 
     @Test public void developmentSwitchFiltersCachedAndRefreshedHistoryImmediately() throws Exception {

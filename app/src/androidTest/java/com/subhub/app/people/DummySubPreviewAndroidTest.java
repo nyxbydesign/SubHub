@@ -6,6 +6,7 @@ import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
 import static androidx.test.espresso.action.ViewActions.replaceText;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.RootMatchers.isDialog;
+import static androidx.test.espresso.matcher.ViewMatchers.isCompletelyDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withContentDescription;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
@@ -374,12 +375,23 @@ public final class DummySubPreviewAndroidTest {
 
             scenario.recreate();
             instrumentation.waitForIdleSync();
+            AtomicReference<Activity> recreated = new AtomicReference<>();
+            scenario.onActivity(recreated::set);
+            await(() -> resumed(recreated.get()) && recreated.get().hasWindowFocus());
+            onView(withId(R.id.gag_add_pair)).perform(revealAboveNavigation());
             authored.forEach((word, replacement) -> onView(withContentDescription(
                     context.getString(R.string.gag_pair_row_accessibility, word, replacement)))
+                    .check(matches(isCompletelyDisplayed()))
                     .check(matches(withText(context.getString(R.string.gag_pair_row, word, replacement)))));
-            onView(withId(R.id.gag_words)).check(matches(withText("legacy")));
-            onView(withId(R.id.gag_replacements)).check(matches(withText("shared one\nshared two")));
+            onView(withId(R.id.gag_add_pair)).check(matches(isCompletelyDisplayed()));
             assertSavedGagPairs(authored);
+            capture(recreated.get(), "gag-word-pairs");
+
+            onView(withId(R.id.gag_replacements)).perform(revealAboveNavigation());
+            onView(withId(R.id.gag_words)).check(matches(isCompletelyDisplayed())).check(matches(withText("legacy")));
+            onView(withId(R.id.gag_replacements)).check(matches(isCompletelyDisplayed()))
+                    .check(matches(withText("shared one\nshared two")));
+            capture(recreated.get(), "gag-shared-replacements");
         }
     }
 
