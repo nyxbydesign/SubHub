@@ -288,7 +288,8 @@ public final class DevUpdatesAndroidTest {
         render.setAccessible(true);
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
             scenario.onActivity(activity -> {
-                assertNotNull(historyRow(activity, development));
+                assertHistoryDetails(activity, development, View.VISIBLE);
+                assertHistoryDetails(activity, stable, View.GONE);
                 holdActivityUpdateCheck(activity);
                 CompoundButton toggle = activity.findViewById(R.id.dev_updates);
                 toggle.performClick();
@@ -298,14 +299,18 @@ public final class DevUpdatesAndroidTest {
                 assertEquals(View.VISIBLE, feedback.getVisibility());
                 assertEquals(activity.getString(R.string.update_checking), feedback.getText());
                 assertNull("Cached development rows disappear before the refresh", historyRow(activity, development));
-                assertNotNull(historyRow(activity, stable));
+                assertHistoryDetails(activity, stable, View.VISIBLE);
+                assertHistoryDetails(activity, installed, View.VISIBLE);
                 assertHistoryMeta(activity, installed, R.string.update_history_installed);
+                historyRow(activity, stable).findViewById(R.id.release_item_heading).performClick();
+                assertHistoryDetails(activity, stable, View.GONE);
             });
             state.setReleaseHistory(List.of(stable, installed, newerDevelopment));
             state.setCandidate(candidate(stable.versionName, BuildConfig.VERSION_CODE + 1L));
             scenario.onActivity(activity -> {
                 renderUpdates(activity, render);
                 assertNull(historyRow(activity, newerDevelopment));
+                assertHistoryDetails(activity, stable, View.GONE);
                 assertHistoryMeta(activity, stable, R.string.update_history_available);
                 assertHistoryMeta(activity, installed, R.string.update_history_installed);
             });
@@ -319,12 +324,13 @@ public final class DevUpdatesAndroidTest {
                 CompoundButton toggle = activity.findViewById(R.id.dev_updates);
                 assertFalse(toggle.isChecked());
                 assertNull(historyRow(activity, newerDevelopment));
+                assertHistoryDetails(activity, stable, View.VISIBLE);
                 assertHistoryMeta(activity, installed, R.string.update_history_installed);
                 holdActivityUpdateCheck(activity);
                 toggle.performClick();
                 assertTrue(toggle.isChecked());
-                assertNotNull("Cached development rows return before the refresh", historyRow(activity, newerDevelopment));
-                assertNotNull(historyRow(activity, stable));
+                assertHistoryDetails(activity, newerDevelopment, View.VISIBLE);
+                assertHistoryDetails(activity, stable, View.GONE);
             });
         }
     }
@@ -365,6 +371,12 @@ public final class DevUpdatesAndroidTest {
     private static String historyMeta(android.view.View row) {
         assertNotNull(row);
         return ((TextView) row.findViewById(R.id.release_meta)).getText().toString();
+    }
+
+    private static void assertHistoryDetails(UpdatesActivity activity, ReleaseHistoryItem item, int visibility) {
+        View row = historyRow(activity, item);
+        assertNotNull(item.tag, row);
+        assertEquals(item.tag, visibility, row.findViewById(R.id.release_details).getVisibility());
     }
 
     private static void assertHistoryMeta(UpdatesActivity activity, ReleaseHistoryItem item, int label) {
