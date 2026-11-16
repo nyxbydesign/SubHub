@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONObject;
 import static org.junit.Assert.*;
 
 /** Canonical JUnit uses the real configuration catalog and JSON dependency, not substitute schemas. */
@@ -66,6 +67,20 @@ public final class InternalConfigurationTest {
         assertEquals("fixture", f.config.edit(f.config.read()).gagRules().getString("replacements"));
         assertFalse(f.config.edit(saved).preferences(SettingsRepository.PREFERENCES_NAME).getAll().containsKey("replacements"));
         assertFalse(draft.hasUnflushedChanges());
+    }
+
+    @Test public void demoPerWordRulesSurviveFlushAndCanReturnToTheLegacyShape() throws Exception {
+        Fixture f = new Fixture();
+        InternalConfigurationStore.EditorDraft draft = f.config.edit(f.config.read());
+        JSONObject rules = GagContractFields.defaults().put("enabled", true).put("mode", "MATCH")
+                .put("replacements", "").put(GagContractFields.PAIRS, new JSONObject().put("one", "two"));
+        draft.editGagRules(rules);
+        f.config.flush(draft);
+        InternalConfigurationStore.EditorDraft reopened = f.config.edit(f.config.read());
+        assertEquals("two", reopened.gagRules().getJSONObject(GagContractFields.PAIRS).getString("one"));
+        reopened.editGagRules(GagContractFields.defaults());
+        f.config.flush(reopened);
+        assertFalse(f.config.edit(f.config.read()).gagRules().has(GagContractFields.PAIRS));
     }
 
     @Test public void immutableRuntimeViewDoesNotBorrowLaterDraftOrDeviceState() {

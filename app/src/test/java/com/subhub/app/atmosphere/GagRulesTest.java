@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.Test;
 
@@ -29,6 +30,28 @@ public final class GagRulesTest {
         assertEquals("mph", rules.complete("HELLO", size -> 0));
         assertEquals("hellos", rules.complete("hellos", size -> 0));
         assertEquals("mph", rules.complete("Don't", size -> 0));
+    }
+
+    @Test public void authoredPairsStayDeterministicAndCoexistWithLegacyMatches() throws Exception {
+        GagSettings settings = new GagSettings(true, GagRules.Mode.MATCH, 1, "hello", "mph\nmmph",
+                Map.of("Welcome", "good evening", "Don't", "hush"));
+        GagSettings restored = GagSettings.from(settings.json());
+        assertEquals(settings, restored);
+        GagRules rules = restored.rules();
+        assertEquals("good evening’", rules.complete("WELCOME’", size -> { throw new AssertionError(); }));
+        assertEquals("hush", rules.complete("Don't", size -> { throw new AssertionError(); }));
+        assertEquals("mph", rules.complete("HELLO", size -> 0));
+        assertEquals("mmph", rules.complete("HELLO", size -> 1));
+        assertEquals("accepted", rules.complete("welcomes", "accepted", size -> { throw new AssertionError(); }));
+    }
+
+    @Test public void otherModesUseTheSharedPoolEvenWhenPairsAreRetained() {
+        Map<String, String> pairs = Map.of("one", "pair", "two", "pair");
+        assertEquals("shared", new GagRules(GagRules.Mode.ALL, 1, Set.of(), List.of("shared"), pairs)
+                .complete("one", size -> 0));
+        GagRules interval = new GagRules(GagRules.Mode.INTERVAL, 2, Set.of(), List.of("shared"), pairs);
+        assertEquals("one", interval.complete("one", size -> 0));
+        assertEquals("shared", interval.complete("two", size -> 0));
     }
 
     @Test public void fieldPolicyRejectsSensitiveEditors() {

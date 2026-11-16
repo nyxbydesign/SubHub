@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/gag_rules_settings"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -85,6 +86,37 @@
             </LinearLayout>
 
             <LinearLayout
+                android:id="@+id/gag_pairs_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:accessibilityHeading="true"
+                    android:text="@string/gag_word_pairs"
+                    tools:targetApi="p" />
+
+                <LinearLayout
+                    android:id="@+id/gag_pair_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/gag_add_pair"
+                    style="@style/Widget.SubHub.OutlineAction"
+                    android:text="@string/gag_add_word_pair" />
+
+                <TextView
+                    android:id="@+id/gag_pairs_update_required"
+                    style="@style/Widget.SubHub.FieldHelp"
+                    android:text="@string/gag_pairs_update_required"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/gag_words_field"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -92,6 +124,7 @@
                 android:visibility="gone">
 
                 <TextView
+                    android:id="@+id/gag_words_label"
                     style="@style/Widget.SubHub.FieldLabel"
                     android:labelFor="@+id/gag_words"
                     android:text="@string/gag_words" />
@@ -113,6 +146,7 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/gag_shared_replacements_field"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/ui_gap_group"

@@ -7,7 +7,9 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
@@ -38,6 +40,7 @@ public final class RemoteSession {
         default int tasksVersion() { return 0; }
         default int extraTimeVersion() { return 0; }
         default boolean gagRulesSupported() { return false; }
+        default boolean gagPairsSupported() { return false; }
         default void gagCapabilityChanged(RemoteStore.Peer peer) { }
         default void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int taskCancelVersion() { return 0; }
@@ -95,7 +98,10 @@ public final class RemoteSession {
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
-        if (hooks.gagRulesSupported()) hello.put("gagVersion", 1);
+        if (hooks.gagRulesSupported()) {
+            hello.put("gagVersion", 1);
+            if (hooks.gagPairsSupported()) hello.put("gagPairsVersion", 1);
+        }
         String retainedProfile = "";
         if (hooks.profileVersion() == 1) {
             hello.put("profileVersion", 1);
@@ -175,7 +181,10 @@ public final class RemoteSession {
         boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         if (extraTime) ready.put("extraTimeVersion", 1);
-        if (rememberGag(peer, hello)) ready.put("gagVersion", 1);
+        if (rememberGag(peer, hello)) {
+            ready.put("gagVersion", 1);
+            if (GagContractFields.pairsSupported(store, peer)) ready.put("gagPairsVersion", 1);
+        }
         if (priority) ready.put("phasePlanVersion",1);
         boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
         if (appIcons) ready.put("appIconsVersion",1);
@@ -358,9 +367,19 @@ public final class RemoteSession {
     private boolean rememberGag(RemoteStore.Peer peer, JSONObject frame) throws JSONException {
         boolean supported = hooks.gagRulesSupported() && frame.has("gagVersion")
                 && RemoteProtocol.integer(frame, "gagVersion") == 1;
+        boolean pairs = supported && hooks.gagPairsSupported() && frame.has("gagPairsVersion")
+                && RemoteProtocol.integer(frame, "gagPairsVersion") == 1;
         String value = supported ? "1" : "0";
-        if (!value.equals(store.metadata(peer.identity, peer.generation, GagContractFields.VERSION, "0"))) {
+        boolean changed = !value.equals(store.metadata(peer.identity, peer.generation, GagContractFields.VERSION, "0"));
+        if (changed) {
             store.putMetadata(peer.identity, peer.generation, GagContractFields.VERSION, value);
+        }
+        String pairsValue = pairs ? "1" : "0";
+        if (!pairsValue.equals(store.metadata(peer.identity, peer.generation, GagContractFields.PAIRS_VERSION, "0"))) {
+            store.putMetadata(peer.identity, peer.generation, GagContractFields.PAIRS_VERSION, pairsValue);
+            changed = true;
+        }
+        if (changed) {
             hooks.gagCapabilityChanged(peer);
             RemoteUi.configurationChanged();
         }
@@ -481,6 +500,7 @@ public final class RemoteSession {
     private int pushState(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,int phase) throws Exception {
         int batches=0;
         int limit=phase==0?16:phase==1?48:MAX_BATCHES;
+        Set<RemoteProtocol.Stream> withheld = EnumSet.noneOf(RemoteProtocol.Stream.class);
         // Historical pagination must not delay current state or an application result.
         for(RemoteProtocol.Stream stream:new RemoteProtocol.Stream[]{RemoteProtocol.Stream.CONFIGURATION,
                 RemoteProtocol.Stream.COMMAND_RESULT,RemoteProtocol.Stream.RUNTIME,RemoteProtocol.Stream.BASELINE,
@@ -494,6 +514,11 @@ public final class RemoteSession {
                 if(!store.hasPendingBatch(peer.identity,peer.generation,stream)) break;
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
+                // A later capability handshake can resume these exact rows and their acknowledgments.
+                if (!GagContractFields.pairsSupported(store, peer) && GagContractFields.containsPairs(batch)) {
+                    withheld.add(stream);
+                    break;
+                }
                 boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
                 if (sectionCandidate && !GagContractFields.supported(store, peer)
                         && GagContractFields.containsRules(batch)) sectionCandidate=false;
@@ -512,7 +537,9 @@ public final class RemoteSession {
                 batches++;
             }
         }
-        JSONObject complete=message("state_complete",peer).put("heads",store.outgoingHeads(peer.identity,peer.generation,activity));
+        JSONObject heads = store.outgoingHeads(peer.identity,peer.generation,activity);
+        for (RemoteProtocol.Stream stream : withheld) heads.put(stream.name(), -1);
+        JSONObject complete=message("state_complete",peer).put("heads",heads);
         boolean bulk=phase==0&&hasBulk(peer,activity);
         if(phase>=0) complete.put("phase",phase);
         if(phase==0) complete.put("bulkPending",bulk);
@@ -631,6 +658,8 @@ public final class RemoteSession {
             if(phase>=0 && core(batch.stream)!=(phase==0))throw new IOException("Unexpected stream phase");
             if(batch.stream==RemoteProtocol.Stream.EVENTS&&!activity)throw new SecurityException("Activity capability was not negotiated");
             if (!peer.generation.equals(batch.generation)) throw new SecurityException("Sync generation changed");
+            if (!GagContractFields.pairsSupported(store, peer) && GagContractFields.containsPairs(batch))
+                throw new SecurityException(GagContractFields.PAIRS_UPDATE_REQUIRED);
             RemoteStore.BatchReceipt receipt = store.receiveBatch(peer.identity, batch);
             if (receipt.acceptedData) recordDataPresence(peer);
             send(connection, receipt.ack.json(), deadline);
