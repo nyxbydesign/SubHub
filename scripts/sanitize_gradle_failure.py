@@ -510,6 +510,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/people/ProfilePreview.java": "main_people_profile_preview",
     b"app/src/main/java/com/subhub/app/people/ProfileStore.java": "main_people_profile_store",
     b"app/src/main/java/com/subhub/app/people/ProfileViews.java": "main_people_profile_views",
+    b"app/src/main/java/com/subhub/app/people/ProfileWarmup.java": "main_people_profile_warmup",
     b"app/src/main/java/com/subhub/app/people/RoleHomePresenter.java": "main_people_role_home_presenter",
     b"app/src/main/java/com/subhub/app/people/RolePage.java": "main_people_role_page",
     b"app/src/main/java/com/subhub/app/people/SelfProfilePane.java": "main_people_self_profile_pane",
