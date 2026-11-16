@@ -2,8 +2,15 @@ package com.subhub.app.people;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
+import static androidx.test.espresso.action.ViewActions.replaceText;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.RootMatchers.isDialog;
+import static androidx.test.espresso.matcher.ViewMatchers.withContentDescription;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
@@ -25,12 +32,15 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
+import androidx.test.uiautomator.UiDevice;
 import com.subhub.app.OwnedUiIntegrationFixture;
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.remote.DummyPreviewEndpointFixture;
+import com.subhub.app.remote.GagContractFields;
 import com.subhub.app.remote.PairingActivity;
+import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -42,6 +52,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import org.json.JSONObject;
 import org.junit.*;
 import org.junit.rules.TestName;
 
@@ -331,6 +342,66 @@ public final class DummySubPreviewAndroidTest {
 
     @Test public void atmosphereEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("atmosphere");
+    }
+
+    @Test public void gagWordPairsSaveThroughTheSharedEditorAndSurviveRecreation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        var store = internalFixture.data.configuration;
+        var draft = store.edit(store.read());
+        draft.editGagRules(GagContractFields.defaults()
+                .put("enabled", true).put("mode", "MATCH").put("words", "legacy")
+                .put("replacements", "shared one\nshared two"));
+        store.flush(draft);
+        Intent route = authorizedSectionIntent(authorizedProfileIntent(), "atmosphere");
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(route)) {
+            instrumentation.waitForIdleSync();
+            tapTag("atmosphere_header:gag");
+            onView(withId(R.id.gag_add_pair)).perform(revealAboveNavigation(), click());
+            saveGagPair(device, "alpha", "first phrase");
+            assertSavedGagPairs(Map.of("alpha", "first phrase"));
+
+            onView(withId(R.id.gag_add_pair)).perform(revealAboveNavigation(), click());
+            saveGagPair(device, "beta", "before edit");
+            assertSavedGagPairs(Map.of("alpha", "first phrase", "beta", "before edit"));
+
+            onView(withContentDescription(context.getString(R.string.gag_pair_row_accessibility, "beta", "before edit")))
+                    .perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_pair_source)).inRoot(isDialog()).check(matches(withText("beta")));
+            saveGagPair(device, null, "second phrase");
+            Map<String, String> authored = Map.of("alpha", "first phrase", "beta", "second phrase");
+            assertSavedGagPairs(authored);
+
+            scenario.recreate();
+            instrumentation.waitForIdleSync();
+            authored.forEach((word, replacement) -> onView(withContentDescription(
+                    context.getString(R.string.gag_pair_row_accessibility, word, replacement)))
+                    .check(matches(withText(context.getString(R.string.gag_pair_row, word, replacement)))));
+            onView(withId(R.id.gag_words)).check(matches(withText("legacy")));
+            onView(withId(R.id.gag_replacements)).check(matches(withText("shared one\nshared two")));
+            assertSavedGagPairs(authored);
+        }
+    }
+
+    private void saveGagPair(UiDevice device, String source, String replacement) {
+        var dialog = isDialog();
+        if (source != null) onView(withId(R.id.gag_pair_source)).inRoot(dialog)
+                .perform(replaceText(source));
+        onView(withId(R.id.gag_pair_replacement)).inRoot(dialog)
+                .perform(replaceText(replacement), closeSoftKeyboard());
+        device.waitForIdle();
+        onView(withId(android.R.id.button1)).inRoot(dialog).perform(click());
+    }
+
+    private void assertSavedGagPairs(Map<String, String> authored) throws Exception {
+        var store = internalFixture.data.configuration;
+        String expected = RemoteProtocol.canonical(new JSONObject(authored));
+        await(() -> expected.equals(store.read().configuration().get("gag").get("pairs")));
+        var rules = store.edit(store.read()).gagRules();
+        assertTrue(rules.getBoolean("enabled"));
+        assertEquals("MATCH", rules.getString("mode"));
+        assertEquals("legacy", rules.getString("words"));
+        assertEquals("shared one\nshared two", rules.getString("replacements"));
     }
 
     @Test public void appsEditorRecreatesAndRejectsForgedTargets() throws Exception {
@@ -1069,7 +1140,7 @@ public final class DummySubPreviewAndroidTest {
             assertAtmospherePanel(atmosphere, "gag");
             assertEquals(View.GONE, atmosphere.findViewById(R.id.gag_rules_button).getVisibility());
             assertTrue(atmosphere.findViewById(R.id.gag_interval).isShown());
-            assertTrue(atmosphere.findViewById(R.id.gag_words).isShown());
+            assertFalse(atmosphere.findViewById(R.id.gag_words).isShown());
             assertNull(atmosphere.findViewById(R.id.gag_keyboard_settings));
         });
         String synthetic = "fixture replacement";
