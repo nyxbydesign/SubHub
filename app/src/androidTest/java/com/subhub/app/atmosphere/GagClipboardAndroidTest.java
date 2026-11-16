@@ -254,7 +254,7 @@ public final class GagClipboardAndroidTest {
         assertEquals(emoji.repeat(256), GagClipboard.previewText(emoji.repeat(256)));
     }
 
-    @Test public void freshTextAndCompatibleImagesCanBeOfferedOnlyForTheInitialMinute() {
+    @Test public void retainedClipsAreOfferedInEmptyEditorsAndOnlyNewClipsAreOfferedWhileTyping() {
         long copied = 20L;
         GagClipboard clips = new GagClipboard();
         clips.remember("Copied text", copied, copied, copied);
@@ -262,13 +262,17 @@ public final class GagClipboardAndroidTest {
         clips.remember(screenshotImage(0xff9955cc), copied + 1, copied + 1, copied + 1);
         var image = clips.entries(copied + 1).get(0);
         var editor = new EditorInfo();
-        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, copied + 1));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, true, copied + 1, copied + 1));
         editor.contentMimeTypes = new String[]{"image/*"};
-        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(image, editor, copied + 1));
-        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, copied + 60_001L));
-        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, copied + 60_002L));
-        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(text, editor, copied + 60_000L));
-        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(text, editor, copied + 1));
+        long fresh = copied + 1;
+        long stale = fresh + 60_000L;
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, fresh, fresh));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, copied, fresh));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, fresh, stale));
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(image, editor, true, 0, stale));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(text, editor, false, copied, stale));
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(text, editor, true, 0, stale));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(text, editor, true, 0, text.expiresAt()));
     }
 
     @Test public void sessionHistoryCapsExpiresAndDoesNotRenewOnRead() {
