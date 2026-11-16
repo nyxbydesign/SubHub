@@ -31,6 +31,7 @@ public final class WhispersEditorPanel implements AutoCloseable {
     private final SecureRandom random = new SecureRandom();
     private boolean loading;
     private boolean customChanged;
+    private boolean showAllSettings;
     private final Runnable saveCustom = this::flush;
 
     public WhispersEditorPanel(AppCompatActivity activity, View root, boolean advancedExpanded) {
@@ -49,6 +50,13 @@ public final class WhispersEditorPanel implements AutoCloseable {
         return binding.whispersAdvancedContent.getVisibility() == View.VISIBLE;
     }
 
+    public void showAllSettings() {
+        showAllSettings = true;
+        binding.whispersAdvancedButton.setVisibility(View.GONE);
+        binding.whispersAdvancedContent.setVisibility(View.VISIBLE);
+        render(repository.load());
+    }
+
     public boolean flush() {
         main.removeCallbacks(saveCustom);
         if (customChanged && canEdit()) {
@@ -58,7 +66,7 @@ public final class WhispersEditorPanel implements AutoCloseable {
         return true;
     }
 
-    void resume() {
+    public void resume() {
         flush();
         render(repository.load());
     }
@@ -70,13 +78,19 @@ public final class WhispersEditorPanel implements AutoCloseable {
         binding.whispersPreview.setEnabled(editable);
         binding.advancedEnabled.setEnabled(editable);
         for (SeekBar bar : new SeekBar[] {binding.opacity, binding.duration, binding.minInterval,
-                binding.maxInterval, binding.textSize}) bar.setEnabled(editable);
+                binding.maxInterval, binding.textSize}) bar.setEnabled(editable && binding.advancedEnabled.isChecked());
         for (CheckBox pack : packChecks()) pack.setEnabled(editable);
-        binding.customPhrases.setEnabled(editable);
+        binding.customPhrases.setEnabled(editable && binding.packCustom.isChecked());
     }
 
     private boolean canEdit() {
         return FeatureEditorSession.canEdit(activity, "subliminal");
+    }
+
+    private void renderCustomPhrases() {
+        boolean selected = binding.packCustom.isChecked();
+        binding.customPhrasesSection.setVisibility(showAllSettings || selected ? View.VISIBLE : View.GONE);
+        binding.customPhrases.setEnabled(canEdit() && selected);
     }
 
     private void bindListeners() {
@@ -118,7 +132,7 @@ public final class WhispersEditorPanel implements AutoCloseable {
             check.setOnCheckedChangeListener((button, checked) -> {
                 if (!loading && canEdit()) {
                     repository.savePacks(selectedPacks());
-                    binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
+                    renderCustomPhrases();
                 }
             });
         }
@@ -142,7 +156,7 @@ public final class WhispersEditorPanel implements AutoCloseable {
         binding.whispersPresetSlider.setValue(settings.getPreset().ordinal());
         binding.whispersPresetValue.setText(presetLabel(settings.getPreset().ordinal()));
         binding.advancedEnabled.setChecked(settings.isAdvanced());
-        binding.advancedPanel.setVisibility(settings.isAdvanced() ? View.VISIBLE : View.GONE);
+        binding.advancedPanel.setVisibility(showAllSettings || settings.isAdvanced() ? View.VISIBLE : View.GONE);
         binding.opacity.setProgress(settings.getOpacityPercent() - 1);
         binding.duration.setProgress((int) ((settings.getVisibleMillis() - 800L) / 100L));
         binding.minInterval.setProgress((int) (settings.getMinimumIntervalMillis() / 1_000L) - 5);
@@ -154,7 +168,7 @@ public final class WhispersEditorPanel implements AutoCloseable {
         binding.packBeta.setChecked(packs.contains(SubliminalSettingsRepository.PACK_BETA));
         binding.packFindom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_FINDOM));
         binding.packCustom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_CUSTOM));
-        binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
+        renderCustomPhrases();
         if (!binding.customPhrases.getText().toString().equals(settings.getCustomPhrases())) {
             binding.customPhrases.setText(settings.getCustomPhrases());
         }

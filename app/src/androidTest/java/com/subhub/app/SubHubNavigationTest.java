@@ -468,6 +468,11 @@ public final class SubHubNavigationTest {
                                     .inflate(R.layout.activity_atmosphere, null, false);
                             PrimaryHeader.bind(page, R.drawable.ic_atmosphere,
                                     R.string.atmosphere_title, R.string.atmosphere_subtitle_dom);
+                            ViewGroup effectCards = page.findViewById(R.id.atmosphere_panels);
+                            TextView lastAction = (TextView) LayoutInflater.from(themed)
+                                    .inflate(R.layout.view_atmosphere_disclosure, effectCards, false);
+                            lastAction.setText(R.string.gag_title);
+                            effectCards.addView(lastAction);
                             int pageWidth = Math.round(width * themed.getResources()
                                     .getDisplayMetrics().density);
                             int pageHeight = Math.round(720 * themed.getResources()
@@ -487,7 +492,6 @@ public final class SubHubNavigationTest {
                             if (dom) assertTrue(page.findViewById(R.id.nav_people).isSelected());
                             ScrollView scroll = (ScrollView) page.getChildAt(0);
                             scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
-                            View lastAction = page.findViewById(R.id.button_popup_storm);
                             Rect bounds = new Rect(0, 0, lastAction.getWidth(), lastAction.getHeight());
                             page.offsetDescendantRectToMyCoords(lastAction, bounds);
                             assertTrue("Last action must scroll above navigation",

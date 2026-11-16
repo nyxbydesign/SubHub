@@ -136,15 +136,19 @@ public class UiFollowupAndroidTest {
         try (ActivityScenario<AtmosphereActivity> page = ActivityScenario.launch(new Intent(context, AtmosphereActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             page.onActivity(a -> {
-                assertNull(a.findViewById(R.id.switch_whispers));
+                assertTrue(((CompoundButton) a.findViewById(R.id.switch_whispers)).isChecked());
                 assertNull(a.findViewById(R.id.switch_popup_storm));
-                assertEquals("Enabled", ((TextView) a.findViewById(R.id.whispers_status)).getText().toString());
-                assertEquals("Disabled", ((TextView) a.findViewById(R.id.popup_storm_status)).getText().toString());
                 assertNotNull(a.findViewById(R.id.whispers_card));
                 assertNotNull(a.findViewById(R.id.popup_storm_card));
                 for (int id : new int[] {R.id.rituals_keyholder_card,
                         R.id.rituals_gallery_card, R.id.achievements_home_card}) assertNull(a.findViewById(id));
                 capture(a, "atmosphere-effects");
+            });
+            onView(withId(R.id.popup_storm_card)).perform(revealAboveNavigation(), click());
+            page.onActivity(a -> {
+                assertFalse(a.findViewById(R.id.switch_whispers).isShown());
+                assertFalse(((CompoundButton) a.findViewById(R.id.switch_popup_storm)).isChecked());
+                assertEquals(View.VISIBLE, a.findViewById(R.id.dynamic_settings).getVisibility());
             });
         }
         ControllerPinManager.enterSubMode();

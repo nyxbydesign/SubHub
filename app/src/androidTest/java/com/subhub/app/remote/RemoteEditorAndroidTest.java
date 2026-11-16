@@ -410,40 +410,42 @@ public class RemoteEditorAndroidTest {
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
         try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> page = ActivityScenario.launch(route)) {
             AtomicReference<View> button = new AtomicReference<>();
-            page.onActivity(activity -> {
-                button.set(activity.findViewById(R.id.button_gag));
-                TextView status = activity.findViewById(R.id.gag_status);
-                assertEquals(context.getString(R.string.control_state_off), status.getText().toString());
-            });
+            page.onActivity(activity -> button.set(activity.findViewById(R.id.gag_card)));
             tapView(button.get());
             androidx.test.uiautomator.BySelector toggle = androidx.test.uiautomator.By.res(
                     context.getPackageName(), "gag_enabled");
             assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(toggle), 5000));
-            String packageName = context.getPackageName();
-            var interval = androidx.test.uiautomator.By.res(packageName, "gag_interval");
-            var words = androidx.test.uiautomator.By.res(packageName, "gag_words");
-            var replacements = androidx.test.uiautomator.By.res(packageName, "gag_replacements");
-            assertFalse(device.hasObject(androidx.test.uiautomator.By.res(packageName, "gag_keyboard_settings")));
-            assertFalse(device.hasObject(interval));
-            assertFalse(device.hasObject(words));
-            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_replacements))));
-            assertTrue(device.hasObject(replacements));
+            page.onActivity(activity -> {
+                assertNull(activity.findViewById(R.id.gag_keyboard_settings));
+                assertEquals(View.GONE, activity.findViewById(R.id.gag_rules_button).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.gag_rules_content).getVisibility());
+                assertGagModeFields(activity, false, false);
+                assertTrue(activity.findViewById(R.id.gag_replacements).isShown());
+                assertFalse(((com.subhub.app.util.StateToggle) activity.findViewById(R.id.gag_enabled)).isChecked());
+            });
             device.findObject(toggle).click();
             await(() -> feature.store.latestCommand(peer.identity, generation) != null);
             JSONObject command = new JSONObject(feature.store.latestCommand(peer.identity, generation).body);
             assertTrue(GagContractFields.section(command.getJSONObject("configuration")).getBoolean("enabled"));
-            device.findObject(androidx.test.uiautomator.By.res(packageName, "gag_every_n")).click();
-            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(interval), 5000));
-            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_interval))));
-            assertFalse(device.hasObject(words));
-            device.findObject(androidx.test.uiautomator.By.res(packageName, "gag_specific")).click();
-            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(words), 5000));
-            assertTrue(device.hasObject(androidx.test.uiautomator.By.text(context.getString(R.string.gag_words))));
-            assertFalse(device.hasObject(interval));
+            page.onActivity(activity -> button.set(activity.findViewById(R.id.gag_every_n)));
+            tapView(button.get());
+            page.onActivity(activity -> assertGagModeFields(activity, true, false));
+            page.onActivity(activity -> button.set(activity.findViewById(R.id.gag_specific)));
+            tapView(button.get());
+            page.onActivity(activity -> assertGagModeFields(activity, false, true));
         } finally {
             if (device.hasObject(androidx.test.uiautomator.By.res(context.getPackageName(), "gag_enabled")))
                 device.pressBack();
         }
+    }
+
+    private static void assertGagModeFields(android.app.Activity activity, boolean intervalActive, boolean wordsActive) {
+        View interval = activity.findViewById(R.id.gag_interval);
+        View words = activity.findViewById(R.id.gag_words);
+        assertTrue(interval.isShown());
+        assertTrue(words.isShown());
+        assertEquals(intervalActive, interval.isEnabled());
+        assertEquals(wordsActive, words.isEnabled());
     }
 
     @Test public void sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity() throws Exception {

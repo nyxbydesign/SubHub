@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
-    style="@style/Widget.SubHub.OutlineAction"
-    android:layout_marginTop="@dimen/ui_gap_inline"
-    android:drawablePadding="@dimen/ui_gap_inline"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:drawablePadding="@dimen/ui_gap_control"
     android:gravity="start|center_vertical"
-    android:textAlignment="viewStart" />
+    android:minHeight="@dimen/control_min_height"
+    android:paddingHorizontal="@dimen/ui_control_padding"
+    android:paddingVertical="@dimen/ui_gap_control"
+    android:textColor="@color/text_primary"
+    android:textSize="@dimen/ui_text_section"
+    android:textStyle="bold" />

@@ -115,41 +115,22 @@ public final class UiComponentContractTest {
         try (ActivityScenario<AtmosphereActivity> scenario =
                 ActivityScenario.launch(AtmosphereActivity.class)) {
             scenario.onActivity(activity -> {
-                int[][] cards = {
-                    {R.id.whispers_card, R.id.button_whispers, R.id.whispers_status},
-                    {R.id.popup_storm_card, R.id.button_popup_storm, R.id.popup_storm_status},
-                    {R.id.gag_card, R.id.button_gag, R.id.gag_status}
-                };
-                for (int[] ids : cards) {
-                    View card = activity.findViewById(ids[0]);
-                    View arrow = card.findViewById(ids[1]);
-                    TextView status = card.findViewById(ids[2]);
-                    assertTrue(card.isClickable());
-                    assertTrue(card.isFocusable());
-                    assertTrue(ViewCompat.isScreenReaderFocusable(card));
-                    var node = AccessibilityNodeInfoCompat.wrap(card.createAccessibilityNodeInfo());
+                for (int id : new int[] {R.id.whispers_card, R.id.popup_storm_card, R.id.gag_card}) {
+                    TextView header = activity.findViewById(id);
+                    assertTrue(header.isClickable());
+                    assertTrue(header.isFocusable());
+                    assertTrue(ViewCompat.isAccessibilityHeading(header));
+                    var node = AccessibilityNodeInfoCompat.wrap(header.createAccessibilityNodeInfo());
                     assertEquals(Button.class.getName(), node.getClassName().toString());
-                    assertFalse(arrow.isClickable());
-                    assertFalse(arrow.isFocusable());
-                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
-                            arrow.getImportantForAccessibility());
-                    ViewGroup copy = (ViewGroup) status.getParent();
-                    ViewGroup content = (ViewGroup) copy.getParent();
-                    View icon = content.getChildAt(0);
-                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
-                            icon.getImportantForAccessibility());
-                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,
-                            copy.getImportantForAccessibility());
-                    if (card.isShown()) {
-                        TextView title = (TextView) copy.getChildAt(0);
-                        assertReadable(title);
-                        assertReadable(status);
-                        assertEquals(activity.getString(R.string.atmosphere_card_description,
-                                title.getText(), status.getText()), node.getContentDescription().toString());
-                        assertTrue(card.getHeight() >= activity.getResources()
-                                .getDimensionPixelSize(R.dimen.control_min_height));
-                        assertTrue(arrow.isShown());
-                    }
+                    assertEquals(header.getText().toString(), node.getText().toString());
+                    assertEquals(activity.getString(id == R.id.whispers_card
+                            ? R.string.section_expanded : R.string.section_collapsed),
+                            ViewCompat.getStateDescription(header).toString());
+                    assertReadable(header);
+                    assertTrue(header.getHeight() >= activity.getResources()
+                            .getDimensionPixelSize(R.dimen.control_min_height));
+                    assertNotNull(header.getCompoundDrawablesRelative()[0]);
+                    assertNotNull(header.getCompoundDrawablesRelative()[2]);
                 }
             });
         }

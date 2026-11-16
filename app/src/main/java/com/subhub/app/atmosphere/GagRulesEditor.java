@@ -26,6 +26,7 @@ final class GagRulesEditor {
     private final EditText words;
     private final EditText replacements;
     private boolean changed;
+    private boolean showAllSettings;
 
     GagRulesEditor(AppCompatActivity activity, View content, Bundle state) throws Exception {
         this.activity = activity;
@@ -76,10 +77,23 @@ final class GagRulesEditor {
         return state;
     }
 
+    void showAllSettings() {
+        showAllSettings = true;
+        content.findViewById(R.id.gag_rules_button).setVisibility(View.GONE);
+        content.findViewById(R.id.gag_rules_heading).setVisibility(View.VISIBLE);
+        content.findViewById(R.id.gag_rules_content).setVisibility(View.VISIBLE);
+        updateFields();
+    }
+
     private void updateFields() {
         int mode = modes.getCheckedRadioButtonId();
-        content.findViewById(R.id.gag_interval_field).setVisibility(mode == R.id.gag_every_n ? View.VISIBLE : View.GONE);
-        content.findViewById(R.id.gag_words_field).setVisibility(mode == R.id.gag_specific ? View.VISIBLE : View.GONE);
+        updateModeField(R.id.gag_interval_field, interval, mode == R.id.gag_every_n);
+        updateModeField(R.id.gag_words_field, words, mode == R.id.gag_specific);
+    }
+
+    private void updateModeField(int fieldId, EditText input, boolean active) {
+        content.findViewById(fieldId).setVisibility(active || showAllSettings ? View.VISIBLE : View.GONE);
+        input.setEnabled(active);
     }
 
     private void rulesChanged() {
@@ -116,8 +130,10 @@ final class GagRulesEditor {
         } catch (JSONException | IllegalArgumentException invalid) { return false; }
     }
     private boolean showRuleError(EditText input, int message) {
-        TextView header = content.findViewById(R.id.gag_rules_button);
-        AtmosphereDisclosure.show(header, content.findViewById(R.id.gag_rules_content), true);
+        if (!showAllSettings) {
+            TextView header = content.findViewById(R.id.gag_rules_button);
+            AtmosphereDisclosure.show(header, content.findViewById(R.id.gag_rules_content), true);
+        }
         input.setError(activity.getString(message));
         return false;
     }

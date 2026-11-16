@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="whispers_card" type="id" />
+    <item name="popup_storm_card" type="id" />
+    <item name="gag_card" type="id" />
+</resources>
