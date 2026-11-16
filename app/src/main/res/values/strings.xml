@@ -940,6 +940,10 @@
     <string name="update_automatic_dom_help">Unlock Dom to change automatic checks.</string>
     <string name="update_release_notes">What’s New</string>
     <string name="update_history_help">Tap a build to open its changelog.</string>
+    <string name="update_history_newer">Newer releases</string>
+    <string name="update_history_older">Older releases</string>
+    <string name="update_history_loading">Loading older releases…</string>
+    <string name="update_history_no_matches">No additional releases on this page.</string>
     <string name="update_history_version">SubHub %1$s</string>
     <string name="update_history_available">Available Now</string>
     <string name="update_history_installed">Installed</string>

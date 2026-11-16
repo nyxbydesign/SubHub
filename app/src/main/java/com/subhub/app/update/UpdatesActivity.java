@@ -19,6 +19,8 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
@@ -39,8 +41,10 @@ public final class UpdatesActivity extends AppCompatActivity {
     private ActivityUpdatesBinding binding;
     private UpdateStateStore state;
     private UpdateDownloadCoordinator downloads;
-    private List<ReleaseHistoryItem> bundledHistory;
+    private ReleaseHistoryPager history;
+    private ReleaseHistoryPager.Request historyRequest;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private final ExecutorService historyNetwork = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean checking;
     private boolean resumed;
@@ -66,16 +70,33 @@ public final class UpdatesActivity extends AppCompatActivity {
                 }
             });
 
+    public static final class HistoryModel extends ViewModel {
+        private UpdateStateStore state;
+        private ReleaseHistoryPager pager;
+    }
+
     @Override protected void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
         binding = ActivityUpdatesBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.update_title, false);
-        state = new UpdateStateStore(this);
+        HistoryModel model = new ViewModelProvider(this).get(HistoryModel.class);
+        if (model.pager == null) {
+            model.state = new UpdateStateStore(this);
+            model.pager = new ReleaseHistoryPager(ReleaseHistoryCatalog.bundled(this), BuildConfig.VERSION_NAME);
+        }
+        state = model.state;
+        history = model.pager;
         downloads = new UpdateDownloadCoordinator(this);
-        bundledHistory = ReleaseHistoryCatalog.bundled(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonCheck.setOnClickListener(view -> checkNow());
+        binding.historyOlder.setOnClickListener(view -> olderReleases());
+        binding.historyNewer.setOnClickListener(view -> {
+            int page = history.pageIndex();
+            history.newer();
+            render();
+            scrollToHistoryOnPageChange(page);
+        });
         binding.buttonCancel.setOnClickListener(view -> {
             downloads.cancel();
             showFeedback(R.string.update_download_failed);
@@ -155,13 +176,18 @@ public final class UpdatesActivity extends AppCompatActivity {
     private void render() {
         if (binding == null) return;
         UpdateCandidate candidate;
+        List<ReleaseHistoryItem> cachedHistory;
         long last;
+        long channelRevision;
         boolean devUpdates;
         synchronized (UpdateStateStore.class) {
             candidate = state.candidate();
             last = state.lastCheck();
             devUpdates = state.devUpdates();
+            cachedHistory = state.releaseHistory();
+            channelRevision = state.channelRevision();
         }
+        history.update(cachedHistory, candidate, channelRevision, devUpdates);
         if (candidate == null && (state.downloadId() >= 0 || !state.verifiedPath().isEmpty())) {
             downloads.cancel();
         }
@@ -178,13 +204,9 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.devUpdates.setChecked(devUpdates);
         changingAutomatic = false;
         binding.devUpdatesHelp.setText(R.string.update_dev_help);
-        List<ReleaseHistoryItem> history = state.releaseHistory();
-        if (history.isEmpty()) history = bundledHistory;
-        else if (!devUpdates) history = ReleaseHistoryCatalog.merge(history, bundledHistory);
-        history = ReleaseHistoryCatalog.withCandidate(history, candidate);
-        renderInstalledVersion(history);
-        renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME),
-                candidate, devUpdates);
+        renderInstalledVersion();
+        renderReleaseHistory(history.rows(), candidate, devUpdates);
+        renderHistoryControls();
         binding.downloadGuideCard.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
         if (candidate != null) {
             UpdateManifest.Asset asset = candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
@@ -252,13 +274,57 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.updateStatus.setVisibility(message.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
+    private void olderReleases() {
+        int page = history.pageIndex();
+        ReleaseHistoryPager.Request request = history.older();
+        render();
+        scrollToHistoryOnPageChange(page);
+        if (request == null) return;
+        historyRequest = request;
+        historyNetwork.execute(() -> {
+            GitHubReleaseRepository.HistoryPage result = GitHubReleaseRepository.historyPage(request.page());
+            main.post(() -> {
+                if (binding == null) return;
+                // Observe any worker refresh or channel change before accepting the response.
+                synchronized (UpdateStateStore.class) {
+                    history.update(state.releaseHistory(), state.candidate(), state.channelRevision(), state.devUpdates());
+                }
+                historyRequest = null;
+                int currentPage = history.pageIndex();
+                history.finish(request, result);
+                render();
+                scrollToHistoryOnPageChange(currentPage);
+            });
+        });
+    }
+
+    private void scrollToHistoryOnPageChange(int page) {
+        if (page != history.pageIndex()) {
+            binding.getRoot().smoothScrollTo(0, binding.releaseNotesCard.getTop());
+        }
+    }
+
+    private void renderHistoryControls() {
+        boolean loading = history.loading();
+        binding.historyNewer.setVisibility(history.hasNewer() ? View.VISIBLE : View.GONE);
+        binding.historyNewer.setEnabled(!loading);
+        binding.historyOlder.setVisibility(history.hasOlder() ? View.VISIBLE : View.GONE);
+        binding.historyOlder.setEnabled(!loading);
+        int status = 0;
+        if (loading) status = R.string.update_history_loading;
+        else if (history.failure() != null) status = error(history.failure());
+        else if (history.noOlderMatches()) status = R.string.update_history_no_matches;
+        CharSequence text = status == 0 ? "" : getText(status);
+        if (!text.equals(binding.historyStatus.getText())) binding.historyStatus.setText(text);
+        binding.historyStatus.setVisibility(status == 0 ? View.GONE : View.VISIBLE);
+    }
+
     private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate,
             boolean devUpdates) {
         if (historyDevUpdates != devUpdates) {
             historyDevUpdates = devUpdates;
             historyDisclosureOverrides.clear();
         }
-        binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
         if (history.isEmpty()) {
             if (!historyFingerprint.isEmpty()) binding.releaseHistoryList.removeAllViews();
             historyFingerprint = "";
@@ -318,23 +384,12 @@ public final class UpdatesActivity extends AppCompatActivity {
                 getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
     }
 
-    private void renderInstalledVersion(List<ReleaseHistoryItem> history) {
+    private void renderInstalledVersion() {
         String label = getString(R.string.update_installed_version,
                 BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
-        String timestamp = installedTimestamp(history);
-        if (timestamp.isEmpty()) {
-            timestamp = installedTimestamp(bundledHistory);
-        }
+        ReleaseHistoryItem installed = history.installed();
+        String timestamp = installed == null ? "" : releaseTimestamp(installed);
         binding.installedVersion.setText(withTimestamp(label, timestamp));
-    }
-
-    private String installedTimestamp(List<ReleaseHistoryItem> history) {
-        for (ReleaseHistoryItem item : history) {
-            if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
-                return releaseTimestamp(item);
-            }
-        }
-        return "";
     }
 
     private String releaseTimestamp(ReleaseHistoryItem item) {
@@ -456,6 +511,8 @@ public final class UpdatesActivity extends AppCompatActivity {
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
         network.shutdownNow();
+        historyNetwork.shutdownNow();
+        if (history != null && historyRequest != null) history.cancel(historyRequest);
         binding = null;
         super.onDestroy();
     }
