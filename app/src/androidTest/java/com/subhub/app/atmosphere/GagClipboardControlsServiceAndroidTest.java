@@ -39,8 +39,11 @@ public final class GagClipboardControlsServiceAndroidTest {
         assertEquals("Grant full photo access in the synthetic guest to isolate the controls from the permission prompt",
                 GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
         openFixture(true);
+        BySelector freshClip = By.pkg(APP).desc(GagEditorFixtureActivity.CLIPBOARD_TEXT);
+        await(freshClip);
         shell("input text Draft");
         assertEditor("Draft");
+        await(freshClip);
         openClipboard();
         UiObject2 firstEdit = openEditPopup();
         assertPopupAboveKeyboard(firstEdit);
@@ -51,6 +54,7 @@ public final class GagClipboardControlsServiceAndroidTest {
         await(popupInput().text(GagEditorFixtureActivity.CLIPBOARD_TEXT + letter));
         await(By.pkg(APP).text(label(android.R.string.cancel))).click();
         assertPopupClosed();
+        assertTrue(device().wait(Until.gone(freshClip), TIMEOUT));
         assertEditor("Draft");
 
         openClipboard();

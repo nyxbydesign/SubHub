@@ -3,7 +3,6 @@ package com.subhub.app.atmosphere;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -13,7 +12,6 @@ import android.widget.TextView;
 /** Shows the current character above the key without taking focus or intercepting touch. */
 final class GagKeyPreview {
     private final Rect visible = new Rect();
-    private final int[] position = new int[2];
     private final View.OnAttachStateChangeListener ownerAttachment = new View.OnAttachStateChangeListener() {
         @Override public void onViewAttachedToWindow(View view) {}
         @Override public void onViewDetachedFromWindow(View view) { dismiss(view); }
@@ -31,22 +29,12 @@ final class GagKeyPreview {
         }
         key.getWindowVisibleDisplayFrame(visible);
         int height = dp(key, 42);
-        key.getLocationOnScreen(position);
-        int screenX = position[0];
-        int screenY = position[1];
-        if (visible.width() <= 0 || screenY - height < visible.top) {
+        if (visible.width() <= 0 || visible.height() < height) {
             dismiss();
             return;
         }
         int width = Math.min(visible.width(), Math.max(key.getWidth(), dp(key, 44)));
-        int left = Math.max(visible.left, Math.min(screenX + (key.getWidth() - width) / 2,
-                visible.right - width));
-        int top = screenY - height;
-        if (Build.VERSION.SDK_INT < 29) {
-            key.getLocationInWindow(position);
-            left += position[0] - screenX;
-            top += position[1] - screenY;
-        }
+        var offset = GagKeyAlternativesPopup.above(key, visible, width, height, 0);
 
         boolean renewContent = label == null || label.getContext() != key.getContext()
                 || densityDpi != key.getResources().getDisplayMetrics().densityDpi
@@ -58,11 +46,11 @@ final class GagKeyPreview {
         label.setText(key.getText());
         try {
             if (move) {
-                popup.update(left, top, width, height);
+                popup.update(key, offset.x(), offset.y(), width, height);
             } else {
                 popup.setWidth(width);
                 popup.setHeight(height);
-                popup.showAtLocation(key, Gravity.TOP | Gravity.LEFT, left, top);
+                popup.showAsDropDown(key, offset.x(), offset.y(), Gravity.LEFT);
             }
             setOwner(key);
         } catch (WindowManager.BadTokenException | IllegalArgumentException detached) {
@@ -92,9 +80,6 @@ final class GagKeyPreview {
         popup.setEnterTransition(null);
         popup.setExitTransition(null);
         popup.setElevation(dp(key, 4));
-        if (Build.VERSION.SDK_INT >= 29) {
-            popup.setIsLaidOutInScreen(true);
-        }
     }
 
     void dismiss(View key) {

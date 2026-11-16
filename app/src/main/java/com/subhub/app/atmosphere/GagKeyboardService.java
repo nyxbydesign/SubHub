@@ -63,7 +63,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GagKeyboardService extends InputMethodService {
     private static final int MAX_WORD_LENGTH = 128;
     private static final int DELETE_CONFIRMATION_MS = 80;
-    private static final long DRAFT_IMAGE_PREVIEW_MS = 60_000L;
+    private static final long CLIPBOARD_OFFER_MS = 60_000L;
     private static final int DELETION_BURST_IDLE_MS = 320;
     private static final int DELETION_HISTORY_LIFETIME_MS = 60_000;
     private static final String[] LETTER_ROWS = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
@@ -104,6 +104,10 @@ public final class GagKeyboardService extends InputMethodService {
     private char pendingPunctuation;
     private int punctuationCursor = -1;
     private LinearLayout suggestionStrip;
+    private LinearLayout toolbar;
+    private LinearLayout keyRows;
+    private ImageButton clipboardButton;
+    private TextView clipboardChip;
     private RemoteFeature backend;
     private AutoCloseable configurationObserver;
     private SharedPreferences participation;
@@ -136,7 +140,9 @@ public final class GagKeyboardService extends InputMethodService {
                     new java.util.concurrent.ArrayBlockingQueue<>(1),
                     new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     private java.util.concurrent.Future<?> clipboardImageTask;
-    private View clipboardSuggestion;
+    private GagClipboard.Entry clipboardSuggestion;
+    private long clipboardOfferCandidateAt;
+    private long clipboardOfferedThrough;
     private boolean clipboardEditing;
     private boolean clipboardPastingImage;
     private long clipboardImageTimestamp;
@@ -694,6 +700,7 @@ public final class GagKeyboardService extends InputMethodService {
             return false;
         }
         long generation = suggestionGeneration;
+        bindSuggestionSlots(suggestionStrip, List.of(), null);
         bindDeletionAction(input, 0, GagDeletionHistory.Action.UNDO, R.string.gag_keyboard_undo, undo, generation);
         bindDeletionAction(input, 1, GagDeletionHistory.Action.REDO, R.string.gag_keyboard_redo, redo, generation);
         return true;
@@ -776,6 +783,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     @Override public View onCreateInputView() {
+        clearClipboardSuggestion();
         dismissKeyPopups();
         closeClipboard();
         Context theme = new ContextThemeWrapper(this, android.R.style.Theme_Material);
@@ -794,6 +802,10 @@ public final class GagKeyboardService extends InputMethodService {
         keyboardHost = surface;
         clipboardPanel = null;
         surface.addView(keyboard, new LinearLayout.LayoutParams(-1, -2));
+        renderToolbar();
+        keyRows = new LinearLayout(keyboard.getContext());
+        keyRows.setOrientation(LinearLayout.VERTICAL);
+        keyboard.addView(keyRows, new LinearLayout.LayoutParams(-1, -2));
         surface.setOnApplyWindowInsetsListener((view, insets) -> {
             view.post(() -> reserveNavigationBar(view, insets));
             return insets;
@@ -846,18 +858,21 @@ public final class GagKeyboardService extends InputMethodService {
     private void renderKeys(int editorAction) {
         dismissKeyPopups();
         if (repeatingDelete != null) repeatingDelete.cancelRepeat();
-        keyboard.removeAllViews();
+        keyRows.removeAllViews();
         letters.clear();
         shiftKey = null;
+        toolbar.setVisibility(page == Page.EMOJI ? View.GONE : View.VISIBLE);
+        clipboardButton.setVisibility(editorAllowed ? View.VISIBLE : View.INVISIBLE);
         if (page == Page.EMOJI) {
+            clearClipboardSuggestion();
             int height = dp(compact() ? 25 : 43) + 4 * dp(compact() ? 39 : 64.3f);
             GagEmojiPicker picker = new GagEmojiPicker(keyboard.getContext(),
                     getSharedPreferences(GagEmojiPicker.PREFS, MODE_PRIVATE), emojiCatalog, compact(),
                     this::insertEmoji, this::closeEmojiPicker);
-            keyboard.addView(picker, new LinearLayout.LayoutParams(-1, height));
+            keyRows.addView(picker, new LinearLayout.LayoutParams(-1, height));
             return;
         }
-        renderToolbar();
+        scheduleSuggestions();
         if (page == Page.NUMBERS) {
             renderNumberKeys(editorAction);
             return;
@@ -1047,27 +1062,38 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void renderToolbar() {
-        LinearLayout tools = row();
+        LinearLayout tools = new LinearLayout(keyboard.getContext());
+        toolbar = tools;
+        keyboard.addView(toolbar, new LinearLayout.LayoutParams(-1, -2));
         tools.setGravity(Gravity.CENTER_VERTICAL);
+        tools.setBaselineAligned(false);
+        tools.setMotionEventSplittingEnabled(true);
         int height = dp(compact() ? 25 : 43);
-        if (editorAllowed) {
-            int gutter = dp(44);
-            ImageButton clipboardButton = new ImageButton(tools.getContext());
-            clipboardButton.setImageResource(R.drawable.ic_gag_clipboard);
-            clipboardButton.setContentDescription(getString(R.string.gag_keyboard_clipboard));
-            clipboardButton.setScaleType(android.widget.ImageView.ScaleType.CENTER);
-            clipboardButton.setBackground(keyFace(MODIFIER_SURFACE, 7));
-            clipboardButton.setPadding(0, 0, 0, 0);
-            clipboardButton.setOnClickListener(view -> showClipboard());
-            tools.addView(clipboardButton, new LinearLayout.LayoutParams(gutter, height));
-        }
+        int gutter = dp(44);
+        clipboardButton = new ImageButton(tools.getContext());
+        clipboardButton.setImageResource(R.drawable.ic_gag_clipboard);
+        clipboardButton.setContentDescription(getString(R.string.gag_keyboard_clipboard));
+        clipboardButton.setScaleType(android.widget.ImageView.ScaleType.CENTER);
+        clipboardButton.setBackground(keyFace(MODIFIER_SURFACE, 7));
+        clipboardButton.setPadding(0, 0, 0, 0);
+        clipboardButton.setOnClickListener(view -> showClipboard());
+        tools.addView(clipboardButton, new LinearLayout.LayoutParams(gutter, height));
         suggestionStrip = new LinearLayout(tools.getContext());
         // Keep all three equal-width slots even when their candidate is absent.
         suggestionStrip.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         tools.addView(suggestionStrip, new LinearLayout.LayoutParams(0, height, 1));
-        // Reserve the same width opposite the button to keep the middle candidate centered.
-        if (editorAllowed) tools.addView(new Space(tools.getContext()),
-                new LinearLayout.LayoutParams(dp(44), height));
+        // The clipboard chip occupies the existing opposite gutter without replacing any suggestions.
+        clipboardChip = clipboardLabel(tools.getContext(), "", 13);
+        clipboardChip.setGravity(Gravity.CENTER);
+        clipboardChip.setSingleLine();
+        clipboardChip.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        clipboardChip.setPadding(dp(4), 0, dp(4), 0);
+        clipboardChip.setBackground(keyFace(MODIFIER_SURFACE, 7));
+        clipboardChip.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        clipboardChip.setSaveEnabled(false);
+        clipboardChip.setVisibility(View.INVISIBLE);
+        clipboardChip.setTag("gag_clipboard_suggestion");
+        tools.addView(clipboardChip, new LinearLayout.LayoutParams(gutter, height));
         for (int index = 0; index < 3; index++) {
             TextView choice = new TextView(tools.getContext());
             choice.setTextColor(LABEL_COLOR);
@@ -1094,7 +1120,6 @@ public final class GagKeyboardService extends InputMethodService {
             });
             suggestionStrip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
         }
-        scheduleSuggestions();
     }
 
     /** Rank zero owns the middle physical slot, including when either side is blank. */
@@ -1139,7 +1164,8 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean clipboardAllowed() {
-        return clipboardVisible && editorAllowed && clipboard.allows(getCurrentInputConnection());
+        return clipboardVisible && editorAllowed && clipboard.allows(getCurrentInputConnection())
+                && GagEditorPolicy.allowsReplacement(getCurrentInputEditorInfo(), getPackageName());
     }
 
     private void startScreenshotClipboard() {
@@ -1224,7 +1250,10 @@ public final class GagKeyboardService extends InputMethodService {
         boolean removed = clipboard.retainScreenshots(result.eligible());
         long now = System.currentTimeMillis();
         long elapsed = android.os.SystemClock.elapsedRealtime();
-        for (var item : result.imported()) clipboard.rememberScreenshot(item, now, elapsed);
+        for (var item : result.imported()) {
+            clipboard.rememberScreenshot(item, now, elapsed);
+            clipboardOfferCandidateAt = Math.max(clipboardOfferCandidateAt, item.media().savedAt());
+        }
         if (removed || !result.imported().isEmpty()) refreshClipboard();
     }
 
@@ -1256,22 +1285,27 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void captureClipboard() {
         if (!clipboardAllowed()) { stopClipboard(); return; }
-        if (clipboardManager != null) try {
-            if (GagClipboard.accepts(clipboardManager.getPrimaryClipDescription())) {
-                ClipData clip = clipboardManager.getPrimaryClip();
-                long copied = clip == null ? 0 : clip.getDescription().getTimestamp();
-                if (clipboard.eligibleTimestamp(copied)) {
-                    String text = GagClipboard.plainText(clip);
-                    if (text != null) {
-                        clipboard.remember(text, copied, System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime());
-                    } else {
-                        Uri uri = GagClipboard.imageUri(clip);
-                        if (uri != null) captureClipboardImage(clip, uri, copied);
-                    }
-                }
+        if (clipboardManager != null) {
+            ClipData clip = null;
+            try {
+                if (GagClipboard.accepts(clipboardManager.getPrimaryClipDescription())) clip = clipboardManager.getPrimaryClip();
+            } catch (SecurityException ignored) {
+                // The current profile or window can deny access to the system clipboard.
             }
-        } catch (SecurityException ignored) {
-            // Android can deny clipboard access for the current profile or window.
+            long copied = clip == null ? 0 : clip.getDescription().getTimestamp();
+            String text = GagClipboard.plainText(clip);
+            Uri image = GagClipboard.imageUri(clip);
+            if (!clipboard.eligibleTimestamp(copied) || (text == null && image == null)) {
+                cancelClipboardImage();
+                clipboardOfferCandidateAt = 0;
+            } else if (text != null) {
+                cancelClipboardImage();
+                clipboard.remember(text, copied, System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime());
+                clipboardOfferCandidateAt = copied;
+            } else {
+                if (copied != clipboardImageTimestamp) clipboardOfferCandidateAt = 0;
+                captureClipboardImage(clip, image, copied);
+            }
         }
         refreshClipboard();
     }
@@ -1292,6 +1326,7 @@ public final class GagKeyboardService extends InputMethodService {
                     clipboardImageTask = null;
                     if (image == null) { clipboardImageTimestamp = 0L; return; }
                     clipboard.remember(image, copied, System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime());
+                    clipboardOfferCandidateAt = Math.max(clipboardOfferCandidateAt, copied);
                     refreshClipboard();
                 });
             });
@@ -1307,6 +1342,7 @@ public final class GagKeyboardService extends InputMethodService {
         android.app.Dialog ime = getWindow();
         android.view.Window window = ime == null ? null : ime.getWindow();
         if (window == null) return;
+        clearClipboardSuggestion();
         clipboardConnection = getCurrentInputConnection();
         clipboardPanel = new LinearLayout(keyboard.getContext());
         clipboardMenu = new GagKeyAlternativesPopup(clipboardPanel);
@@ -1335,6 +1371,7 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardEditing = false;
         updateClipboardWindowSecurity();
         keyboard.setVisibility(View.VISIBLE);
+        if (clipboardVisible) scheduleSuggestions();
     }
 
     private void updateClipboardWindowSecurity() {
@@ -1363,8 +1400,8 @@ public final class GagKeyboardService extends InputMethodService {
             nextExpiry = Math.min(nextExpiry, entry.expiresAt());
             if (newestRecent == null && !entry.pinned()) newestRecent = entry;
         }
-        if (newestRecent != null && newestRecent.image() != null) {
-            long previewExpires = draftImagePreviewExpiry(newestRecent);
+        if (newestRecent != null) {
+            long previewExpires = clipboardOfferExpiry(newestRecent);
             if (previewExpires > now) nextExpiry = Math.min(nextExpiry, previewExpires);
         }
         if (nextExpiry != Long.MAX_VALUE) main.postDelayed(expireClipboard, Math.max(1L, nextExpiry - now));
@@ -1373,10 +1410,7 @@ public final class GagKeyboardService extends InputMethodService {
             return;
         }
         if (clipboardPanel == null) {
-            if (canSuggest() && word.length() == 0 && (clipboardSuggestion != null
-                    || canOfferClipboardSuggestion(newestRecent, getCurrentInputEditorInfo(), false, now)
-                    || isEmptyEditor(getCurrentInputConnection())))
-                scheduleSuggestions();
+            refreshClipboardSuggestion(newestRecent, now);
             return;
         }
         clipboardMenu.dismiss();
@@ -1437,7 +1471,7 @@ public final class GagKeyboardService extends InputMethodService {
                     continue;
                 }
                 GagClipboard.Entry entry = entries.get(start + column);
-                View card = clipboardPreview(row, entry, false);
+                View card = clipboardPreview(row.getContext(), entry, clipboardTitle(entry));
                 card.setTag("gag_clipboard_card");
                 bindClipboardCard(card, panel, input, entry);
                 row.addView(card, cardSize);
@@ -1535,20 +1569,16 @@ public final class GagKeyboardService extends InputMethodService {
         return entry.image() == null ? GagClipboard.previewText(entry.text()) : getString(R.string.gag_clipboard_image);
     }
 
-    private View clipboardPreview(View parent, GagClipboard.Entry entry, boolean compact) {
-        return clipboardPreview(parent.getContext(), entry, clipboardTitle(entry), compact);
-    }
-
-    static LinearLayout clipboardPreview(Context context, GagClipboard.Entry entry, String title, boolean compact) {
+    static LinearLayout clipboardPreview(Context context, GagClipboard.Entry entry, String title) {
         float density = context.getResources().getDisplayMetrics().density;
         LinearLayout card = new LinearLayout(context);
-        card.setOrientation(compact ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        card.setGravity(compact ? Gravity.CENTER_VERTICAL : Gravity.TOP);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.TOP);
         int horizontal = Math.round(8 * density);
-        int vertical = Math.round((compact ? 2 : 6) * density);
+        int vertical = Math.round(6 * density);
         card.setPadding(horizontal, vertical, horizontal, vertical);
         GradientDrawable surface = new GradientDrawable();
-        surface.setColor(compact ? MODIFIER_SURFACE : 0xff292929);
+        surface.setColor(0xff292929);
         surface.setCornerRadius(9 * density);
         card.setBackground(surface);
         card.setFocusable(true);
@@ -1560,16 +1590,12 @@ public final class GagKeyboardService extends InputMethodService {
             image.setImageBitmap(entry.image().thumbnail());
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            LinearLayout.LayoutParams dimensions = compact
-                    ? new LinearLayout.LayoutParams(Math.round(30 * density), Math.round(24 * density))
-                    : new LinearLayout.LayoutParams(-1, 0, 1);
-            if (compact) dimensions.setMarginEnd(horizontal);
-            card.addView(image, dimensions);
+            card.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
         }
         TextView label = clipboardLabel(context, title, 14);
-        label.setMaxLines(compact || entry.image() != null ? 1 : 3);
+        label.setMaxLines(entry.image() != null ? 1 : 3);
         label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(label, new LinearLayout.LayoutParams(compact ? -2 : -1, -2));
+        card.addView(label, new LinearLayout.LayoutParams(-1, -2));
         return card;
     }
 
@@ -1654,49 +1680,51 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearClipboardSuggestion() {
         if (clipboardSuggestion == null) return;
-        if (clipboardSuggestion.getParent() instanceof LinearLayout strip) strip.removeView(clipboardSuggestion);
+        clipboardChip.setVisibility(View.INVISIBLE);
+        clipboardChip.setText(null);
+        clipboardChip.setContentDescription(null);
+        clipboardChip.setCompoundDrawablesRelative(null, null, null, null);
+        clipboardChip.setOnClickListener(null);
         clipboardSuggestion = null;
         updateClipboardWindowSecurity();
     }
 
-    private boolean showClipboardSuggestion(InputConnection input) {
-        if (!GagScreenshotClipboard.enabled(this)) clipboard.retainScreenshots(java.util.Set.of());
-        if (!clipboardAllowed()) return false;
-        long now = android.os.SystemClock.elapsedRealtime();
-        List<GagClipboard.Entry> entries = clipboard.recentEntries(now);
-        if (entries.isEmpty()) return false;
-        GagClipboard.Entry latest = entries.get(0);
-        if (!canOfferClipboardSuggestion(latest, getCurrentInputEditorInfo(), isEmptyEditor(input), now)) return false;
+    private void refreshClipboardSuggestion(GagClipboard.Entry latest, long now) {
+        if (clipboardChip == null || page == Page.EMOJI) return;
+        EditorInfo editor = getCurrentInputEditorInfo();
+        boolean eligible = latest != null && latest.copiedAt() == clipboardOfferCandidateAt
+                && canOfferClipboardSuggestion(latest, editor, now);
+        if (eligible && latest == clipboardSuggestion) return;
         clearClipboardSuggestion();
-        View preview = clipboardPreview(suggestionStrip, latest, true);
-        preview.setTag("gag_clipboard_suggestion");
-        long generation = suggestionGeneration;
-        preview.setOnClickListener(view -> {
-            if (generation == suggestionGeneration && view == clipboardSuggestion
-                    && canOfferClipboardSuggestion(latest, getCurrentInputEditorInfo(), isEmptyEditor(input),
-                            android.os.SystemClock.elapsedRealtime()))
-                pasteClipboard(null, input, latest);
-        });
-        clipboardSuggestion = preview;
+        if (!eligible || latest.copiedAt() <= clipboardOfferedThrough) return;
+        clipboardSuggestion = latest;
+        clipboardOfferedThrough = latest.copiedAt();
         updateClipboardWindowSecurity();
-        placeClipboardSuggestion(suggestionStrip, preview);
-        return true;
+        clipboardChip.setContentDescription(clipboardTitle(latest));
+        if (latest.image() == null) clipboardChip.setText(clipboardTitle(latest));
+        else {
+            var thumbnail = new android.graphics.drawable.BitmapDrawable(getResources(), latest.image().thumbnail());
+            thumbnail.setBounds(0, 0, dp(24), dp(20));
+            clipboardChip.setCompoundDrawablesRelative(null, thumbnail, null, null);
+        }
+        InputConnection input = getCurrentInputConnection();
+        clipboardChip.setOnClickListener(view -> {
+            long elapsed = android.os.SystemClock.elapsedRealtime();
+            if (clipboardSuggestion != latest || !clipboardAllowed() || !clipboard.allows(input)
+                    || !canOfferClipboardSuggestion(latest, getCurrentInputEditorInfo(), elapsed)) return;
+            clearClipboardSuggestion();
+            pasteClipboard(null, input, latest);
+        });
+        clipboardChip.setVisibility(View.VISIBLE);
     }
 
-    static void placeClipboardSuggestion(LinearLayout strip, View preview) {
-        strip.setGravity(Gravity.CENTER);
-        for (int index = 0; index < 3; index++) strip.getChildAt(index).setVisibility(View.GONE);
-        strip.addView(preview, new LinearLayout.LayoutParams(-2, -1));
+    static boolean canOfferClipboardSuggestion(GagClipboard.Entry entry, EditorInfo editor, long now) {
+        return entry != null && !entry.pinned() && now < clipboardOfferExpiry(entry)
+                && (entry.image() == null || entry.image().supports(editor));
     }
 
-    static boolean canOfferClipboardSuggestion(GagClipboard.Entry entry, EditorInfo editor, boolean empty, long now) {
-        if (entry == null || entry.expiresAt() <= now) return false;
-        if (entry.image() == null) return empty;
-        return entry.image().supports(editor) && (empty || now < draftImagePreviewExpiry(entry));
-    }
-
-    private static long draftImagePreviewExpiry(GagClipboard.Entry entry) {
-        return entry.expiresAt() - GagClipboard.LIFETIME_MS + DRAFT_IMAGE_PREVIEW_MS;
+    private static long clipboardOfferExpiry(GagClipboard.Entry entry) {
+        return entry.expiresAt() - GagClipboard.LIFETIME_MS + CLIPBOARD_OFFER_MS;
     }
 
     private void loadLexicon() {
@@ -1718,19 +1746,27 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean canSuggest() {
-        return editorAllowed && suggestionStrip != null && page == Page.LETTERS;
+        return editorAllowed && suggestionStrip != null && page == Page.LETTERS && clipboardPanel == null;
     }
 
     private void scheduleSuggestions() { scheduleSuggestions(-1); }
 
     private void scheduleSuggestions(int cursor) {
-        clearSuggestions();
-        if (!canSuggest() && !canShowDeletionActions()) return;
+        invalidateSuggestionRequest();
+        if (!canSuggest() && !canShowDeletionActions()) {
+            if (suggestionStrip != null) bindSuggestionSlots(suggestionStrip, List.of(), null);
+            return;
+        }
         committedCursor = cursor;
         main.postDelayed(requestSuggestions, 45);
     }
 
     private void clearSuggestions() {
+        invalidateSuggestionRequest();
+        if (suggestionStrip != null) bindSuggestionSlots(suggestionStrip, List.of(), null);
+    }
+
+    private void invalidateSuggestionRequest() {
         pendingDelete = null;
         main.removeCallbacks(checkDeleteSuggestions);
         committedCursor = -1;
@@ -1740,21 +1776,23 @@ public final class GagKeyboardService extends InputMethodService {
             suggestionTask.cancel(false);
             suggestionTask = null;
         }
-        clearClipboardSuggestion();
-        if (suggestionStrip != null) bindSuggestionSlots(suggestionStrip, List.of(), null);
     }
 
     private void requestSuggestions() {
         InputConnection input = getCurrentInputConnection();
-        if (input == null || showDeletionActions(input) || !canSuggest()) return;
+        if (input == null) { clearSuggestions(); return; }
+        if (showDeletionActions(input)) return;
+        if (!canSuggest()) { clearSuggestions(); return; }
         int cursor = committedCursor;
         String token = cursor < 0 ? word.toString() : readCommittedPrefix(input, cursor);
         long generation = suggestionGeneration;
         long epoch = editorEpoch;
         if (token.isEmpty()) {
-            if (showClipboardSuggestion(input)) return;
             GagSuggestionContext context = GagSuggestionContext.read(input);
-            if (context == null || (cursor >= 0 && context.cursor() >= 0 && context.cursor() != cursor)) return;
+            if (context == null || (cursor >= 0 && context.cursor() >= 0 && context.cursor() != cursor)) {
+                clearSuggestions();
+                return;
+            }
             String before = context.before();
             if (suggestionSpace != null && suggestionSpace.matches(input)) before += " ";
             List<String> candidates = nextWords(before);
@@ -1788,10 +1826,9 @@ public final class GagKeyboardService extends InputMethodService {
                 if (generation != suggestionGeneration || epoch != editorEpoch
                         || input != getCurrentInputConnection()
                         || !canSuggest()) return;
-                if (cursor >= 0 && !token.equals(readCommittedPrefix(input, cursor))) return;
+                if (cursor >= 0 && !token.equals(readCommittedPrefix(input, cursor))) { clearSuggestions(); return; }
                 List<String> candidates = phraseRepairAllowed() && phrase != null
                         ? GagLexicon.prioritizePhrase(token, known, singleWords, phrase) : singleWords;
-                if (candidates.isEmpty()) return;
                 bindSuggestionSlots(suggestionStrip, candidates,
                         candidate -> acceptSuggestion(generation, epoch, input, cursor, token, candidate));
             });
@@ -2089,7 +2126,7 @@ public final class GagKeyboardService extends InputMethodService {
         LinearLayout row = new LinearLayout(keyboard.getContext());
         row.setBaselineAligned(false);
         row.setMotionEventSplittingEnabled(true);
-        keyboard.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        keyRows.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
     }
 

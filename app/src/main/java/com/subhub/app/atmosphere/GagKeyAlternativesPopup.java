@@ -92,31 +92,31 @@ final class GagKeyAlternativesPopup {
         panel.setOutsideTouchable(true);
         panel.setAnimationStyle(0);
         panel.setElevation(dp(6));
-        int[] keyOnScreen = new int[2];
-        key.getLocationOnScreen(keyOnScreen);
-        int left = Math.max(window.left, Math.min(keyOnScreen[0] + (key.getWidth() - width) / 2,
-                window.right - width));
-        int top = Math.max(window.top, Math.min(keyOnScreen[1] - height - dp(4), window.bottom - height));
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
-            panel.setIsLaidOutInScreen(true);
-        } else {
-            int[] keyInWindow = new int[2];
-            key.getLocationInWindow(keyInWindow);
-            left += keyInWindow[0] - keyOnScreen[0];
-            top += keyInWindow[1] - keyOnScreen[1];
-        }
+        var offset = above(key, window, width, height, dp(4));
         heldKey = key;
         popup = panel;
         panel.setOnDismissListener(() -> {
             if (popup == panel) clear();
         });
         try {
-            panel.showAtLocation(keyboard, Gravity.TOP | Gravity.LEFT, left, top);
-        } catch (WindowManager.BadTokenException detached) {
+            panel.showAsDropDown(key, offset.x(), offset.y(), Gravity.LEFT);
+        } catch (WindowManager.BadTokenException | IllegalArgumentException detached) {
             dismiss();
             return false;
         }
         return true;
+    }
+
+    record Offset(int x, int y) { }
+
+    /** PopupWindow translates offsets from the anchor's left and bottom into the IME window. */
+    static Offset above(View anchor, Rect visible, int width, int height, int gap) {
+        int[] position = new int[2];
+        anchor.getLocationOnScreen(position);
+        int left = Math.max(visible.left, Math.min(position[0] + (anchor.getWidth() - width) / 2,
+                visible.right - width));
+        int top = Math.max(visible.top, Math.min(position[1] - height - gap, visible.bottom - height));
+        return new Offset(left - position[0], top - position[1] - anchor.getHeight());
     }
 
     private void styleOption(Button button) {
