@@ -81,9 +81,6 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
         list.setLayoutParams(new LayoutParams(-1, 0, 1));
     }
 
-    public void bind(AppCompatActivity activity, BooleanSupplier editable, Runnable changed) {
-        bind(activity, activity.getApplicationContext(), editable, changed);
-    }
     public void bind(AppCompatActivity activity, Context source, BooleanSupplier editable, Runnable changed) {
         if (host != null) host.getLifecycle().removeObserver(this);
         if (jobs != null) jobs.cancel("included-app-selector");

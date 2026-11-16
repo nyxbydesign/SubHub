@@ -32,6 +32,7 @@ import com.subhub.app.people.*;
 import com.subhub.app.popup.PopupStormActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsActivity;
+import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import org.json.*;
 import org.junit.*;
@@ -322,21 +323,6 @@ public class RemoteEditorAndroidTest {
             assertNull(feature.store.latestCommand(peer.identity, generation));
         }
     }
-    @Test public void dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly()throws Exception {
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_unknown)));assertNotNull(find(a.body,context.getString(R.string.role_stale_data)));});
-        }
-        JSONObject metrics=new JSONObject().put("service_ms",3_661_000).put("assessed_EUR",123).put("photos",4).put("videos",5).put("limit_stops",2);
-        source.publish(source.peers(false).get(0).identity,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25").put("zone",JSONObject.NULL).put("metrics",metrics),false,1);
-        String dom=source.peers(false).get(0).identity;feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));feature.store.putMetadata(peer.identity,generation,"confirmed_DAILY",Long.toString(System.currentTimeMillis()));
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{View daily=a.body.findViewWithTag("remote_stats_DAILY");assertNotNull(daily);assertFalse(daily instanceof Button);});
-            await(()->{AtomicReference<Boolean> rendered=new AtomicReference<>(false);page.onActivity(a->rendered.set(find(a.body,"2026-10-25")!=null));return rendered.get();});
-            page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_time,1L,1L,1L)));assertNotNull(find(a.body,"1.23 EUR"));assertNotNull(find(a.body,context.getString(R.string.daily_photos)));assertNotNull(find(a.body,context.getString(R.string.daily_videos)));assertNotNull(find(a.body,context.getString(R.string.remote_unknown_zone)));assertNull(find(a.body,context.getString(R.string.remote_incomplete)));});
-            File directory=new File(context.getFilesDir(),"remote-editor-evidence");directory.mkdirs();assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(new File(directory,"daily-stats.png")));
-        }
-    }
-
     @Test public void pairedCensorSettingsOmitPeerAppsAndPopupActions() {
         try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
             page.onActivity(activity -> {
@@ -494,18 +480,6 @@ public class RemoteEditorAndroidTest {
     }
 
 
-    @Test public void statisticsRetainSelectedPageAndExpire()throws Exception {
-        feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()));
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(a.body.findViewWithTag("remote_stats_DAILY"));assertNotNull(a.body.findViewWithTag("remote_stats_APP_USAGE"));assertNotNull(a.body.findViewWithTag("remote_stats_RUNTIME"));android.widget.ScrollView scroll=statsScroll(a);scroll.scrollTo(0,200);});
-            page.recreate();
-            await(()->{AtomicReference<Boolean> restored=new AtomicReference<>(false);page.onActivity(a->restored.set(statsScroll(a).getScrollY()>0));return restored.get();});
-            page.onActivity(a->assertEquals(View.GONE,a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()));
-            feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()-91_000));
-            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(a.body.findViewWithTag("remote_freshness_RUNTIME")!=null&&a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()==View.VISIBLE));return found.get();});
-        }
-    }
-
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
         try (ActivityScenario<SettingsActivity> page = ActivityScenario.launch(pairedIntent(SettingsActivity.class))) {
@@ -513,7 +487,9 @@ public class RemoteEditorAndroidTest {
             inspectLayout(page, "contract-censor");
         }
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
-        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
+        try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(pairedIntent(StatsActivity.class))) {
+            inspectLayout(page, "stats");
+        }
     }
     @androidx.annotation.RequiresApi(29)
     private <T extends Activity> void inspectLayout(ActivityScenario<T> page,String name)throws Exception {
@@ -676,21 +652,87 @@ public class RemoteEditorAndroidTest {
         assertEquals(before,local.getAll());
     }
     @Test public void sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals() throws Exception {
-        String dom=source.peers(false).get(0).identity;
-        source.publish(dom,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25")
-                .put("zone",JSONObject.NULL).put("metrics",new JSONObject().put("service_ms",3661000)),false,1);
-        feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));
-        Map<String,?> before=new HashMap<>(context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
-        try(ActivityScenario<com.subhub.app.stats.StatsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.stats.StatsActivity.class)
-                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            page.onActivity(a->{assertNotNull(a.findViewById(R.id.daily_statistics_panel));
-                assertEquals(View.GONE,a.findViewById(R.id.bottom_navigation).getVisibility());
-                assertNotNull(find(a.findViewById(R.id.stats_lifetime_summary),context.getString(R.string.role_unknown_data)));});
+        var local = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0);
+        Map<String, ?> before = new HashMap<>(local.getAll());
+        try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(pairedIntent(StatsActivity.class))) {
+            await(() -> statsContains(page, R.string.daily_unavailable) && statsContains(page, R.string.role_stale_data));
+            page.onActivity(a -> {
+                assertNotNull(a.findViewById(R.id.daily_statistics_panel));
+                assertEquals(View.GONE, a.findViewById(R.id.bottom_navigation).getVisibility());
+                assertNotNull(find(a.findViewById(R.id.stats_lifetime_summary), a.getString(R.string.role_unknown_data)));
+            });
+            String day = java.time.LocalDate.now().toString();
+            String dom = source.peers(false).get(0).identity;
+            JSONObject metrics = new JSONObject().put("service_ms", 3_661_000).put("assessed_EUR", 123)
+                    .put("photos", 4).put("videos", 5).put("limit_stops", 2);
+            source.publish(dom, generation, RemoteProtocol.Stream.DAILY, day, new JSONObject()
+                    .put("schema", 1).put("day", day).put("zone", JSONObject.NULL).put("metrics", metrics), false, 1);
+            feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.DAILY));
+            source.publish(dom, generation, RemoteProtocol.Stream.STATS, "summary",
+                    CachedPeerReadModelAndroidTest.summary(), false, 1);
+            feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.STATS));
+            feature.store.putMetadata(peer.identity, generation, "confirmed_STATS", Long.toString(System.currentTimeMillis()));
+
+            await(() -> dailyMetricEndsWith(page, com.subhub.app.stats.StatsSnapshot.formatDuration(3661)));
+            await(() -> statsContains(page, R.string.profile_stats_feature_totals)
+                    && !statsContains(page, R.string.role_stale_data));
+            assertFalse(statsContains(page, R.string.daily_unavailable));
+            checkDailyMetric(page, R.string.daily_assessed_eur, com.subhub.app.penance.WalletCurrency.format("EUR", 123) + " EUR");
+            var counts = java.text.NumberFormat.getIntegerInstance();
+            checkDailyMetric(page, R.string.daily_photos, counts.format(4));
+            checkDailyMetric(page, R.string.daily_videos, counts.format(5));
+            File directory = new File(context.getFilesDir(), "remote-editor-evidence");
+            directory.mkdirs();
+            assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+                    .takeScreenshot(new File(directory, "daily-stats.png")));
+
+            page.onActivity(a -> {
+                ScrollView scroll = statsScroll(a);
+                scroll.scrollTo(0, 200);
+                assertTrue(scroll.getScrollY() > 0);
+            });
             page.recreate();
-            page.onActivity(a->assertNotNull(a.findViewById(R.id.daily_statistics_panel)));
+            await(() -> statsView(page, a -> statsScroll(a).getScrollY() > 0) && dailyMetricEndsWith(page, counts.format(5)));
+            feature.store.putMetadata(peer.identity, generation, "confirmed_STATS",
+                    Long.toString(System.currentTimeMillis() - 31 * 60_000));
+            await(() -> statsContains(page, R.string.role_stale_data));
         }
-        assertEquals(before,context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
+        assertEquals(before, local.getAll());
     }
+
+    private static boolean statsView(ActivityScenario<StatsActivity> page, java.util.function.Predicate<StatsActivity> check) {
+        AtomicReference<Boolean> found = new AtomicReference<>();
+        page.onActivity(activity -> found.set(check.test(activity)));
+        return found.get();
+    }
+
+    private static boolean statsContains(ActivityScenario<StatsActivity> page, int label) {
+        return statsView(page, a -> {
+            View view = find(statsScroll(a), a.getString(label));
+            return view != null && view.isShown();
+        });
+    }
+
+    private static boolean dailyMetricEndsWith(ActivityScenario<StatsActivity> page, String value) {
+        return statsView(page, a -> {
+            TextView result = a.findViewById(R.id.daily_day_summary);
+            return result != null && result.getText().toString().endsWith(" · " + value);
+        });
+    }
+
+    private void checkDailyMetric(ActivityScenario<StatsActivity> page, int label, String value) throws Exception {
+        page.onActivity(a -> {
+            Spinner filter = a.findViewById(R.id.daily_metric_filter);
+            for (int position = 0; position < filter.getCount(); position++) {
+                if (!a.getString(label).equals(filter.getItemAtPosition(position))) continue;
+                filter.setSelection(position);
+                return;
+            }
+            fail("Missing daily metric");
+        });
+        await(() -> dailyMetricEndsWith(page, value));
+    }
+
     @Test public void sharedWhispersEnableIsQueuedWithoutChangingTheDomModule() throws Exception {
         JSONObject saved=nativeToggle(com.subhub.app.subliminal.SubliminalSettingsActivity.class,R.id.switch_whispers);
         assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_subliminal_enabled"));
@@ -747,7 +789,11 @@ public class RemoteEditorAndroidTest {
         assertEquals(generation,feature.store.peer(peer.identity,generation).generation);
     }
 
-    private static android.widget.ScrollView statsScroll(RemoteStatsActivity activity){View view=activity.body;while(view.getParent() instanceof View){view=(View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}throw new AssertionError("Statistics scroll unavailable");}
+    private static ScrollView statsScroll(StatsActivity activity) {
+        ScrollView scroll = activity.findViewById(R.id.role_page_scroll);
+        assertNotNull(scroll);
+        return scroll;
+    }
     private void tapView(View view)throws Exception {
         assertNotNull("Native tap target is missing",view);
         android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();

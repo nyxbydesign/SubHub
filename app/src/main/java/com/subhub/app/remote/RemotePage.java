@@ -72,10 +72,6 @@ public abstract class RemotePage extends AppCompatActivity {
         com.subhub.app.util.InputBounds.limit(editor,maximum);editor.setText(value);
         editor.setSaveEnabled(false);editor.setSingleLine(false);target.addView(editor,new LinearLayout.LayoutParams(-1,-2));return editor;
     }
-    protected void target(){
-        text(body,peer.name,true);
-        text(body,ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
-    }
     protected String observed(RemoteProtocol.Stream stream) {
         long time=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));
         return time==0?getString(R.string.remote_unknown):java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(time));

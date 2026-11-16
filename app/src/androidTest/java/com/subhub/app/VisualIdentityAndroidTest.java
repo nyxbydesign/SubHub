@@ -107,8 +107,8 @@ public final class VisualIdentityAndroidTest {
 
     @Test public void secondaryPagesUseReadableLayoutsAndFullTouchTargets() throws Exception {
         for (String page : new String[] {"help.HelpActivity", "help.PermissionSetupActivity",
-                "settings.SetupAppsActivity", "people.LocalAppsActivity", "people.ServiceDurationActivity", "security.AuthenticatorActivity",
-                "privacy.PrivacyActivity", "stats.StatsActivity", "stats.AchievementsActivity",
+                "people.LocalAppsActivity", "people.ServiceDurationActivity", "security.AuthenticatorActivity",
+                "stats.StatsActivity", "stats.AchievementsActivity",
                 "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
                 "capture.CustomImagesActivity", "capture.ExportActivity",
                 "capture.export.ExportAppearanceActivity",
