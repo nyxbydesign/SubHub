@@ -96,12 +96,26 @@ public final class GagSuggestionServiceAndroidTest {
             acceptHello();
             keyDescription(R.string.gag_keyboard_symbols);
             if (!pair.equals("()")) keyDescription(R.string.gag_keyboard_more_symbols);
-            key(pair.substring(0, 1));
+            String opener = pair.substring(0, 1);
+            key(opener);
             assertText("hello" + pair);
+            keyDescription(R.string.gag_keyboard_delete);
+            assertText("hello");
+            key(opener);
             keyDescription(R.string.gag_keyboard_letters);
             key("x");
-            assertText("hello" + pair.substring(0, 1) + "x" + pair.substring(1));
+            assertText("hello" + opener + "x" + pair.substring(1));
         }
+
+        openEditor(false);
+        keyDescription(R.string.gag_keyboard_symbols);
+        key(")");
+        assertText(")");
+        assertTrue(device().pressKeyCode(android.view.KeyEvent.KEYCODE_DPAD_LEFT));
+        key("(");
+        assertText("())");
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText(")");
     }
 
     @Test public void emptyBackspaceRestoresTheIdleSuggestionStrip() throws Exception {

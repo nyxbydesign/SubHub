@@ -100,6 +100,7 @@ public final class GagKeyboardService extends InputMethodService {
     private int observedComposingStart = -1;
     private int committedCursor = -1;
     private GagSuggestionSpace suggestionSpace;
+    private PendingBracket pendingBracket;
     private char pendingPunctuation;
     private int punctuationCursor = -1;
     private LinearLayout suggestionStrip;
@@ -282,6 +283,9 @@ public final class GagKeyboardService extends InputMethodService {
         if (suggestionSpace != null
                 && !suggestionSpace.atSelection(getCurrentInputConnection(), newStart, newEnd))
             suggestionSpace = null;
+        if (pendingBracket != null
+                && pendingBracket.cursorMoved(getCurrentInputConnection(), oldStart, oldEnd, newStart, newEnd))
+            pendingBracket = null;
         if (clipboardManager != null && !clipboard.allows(getCurrentInputConnection()))
             stopClipboard();
         if (word.length() > 0 && (composingStart < 0 || newStart != newEnd || newEnd != composingEnd)) {
@@ -424,6 +428,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearPendingSpace() {
         suggestionSpace = null;
+        pendingBracket = null;
         pendingPunctuation = 0;
         punctuationCursor = -1;
     }
@@ -478,13 +483,31 @@ public final class GagKeyboardService extends InputMethodService {
             if (!completeWord(input, typed, null)) return false;
             try {
                 // Zero places the cursor before the added closer.
-                input.commitText(closing, 0);
+                if (input.commitText(closing, 0)) {
+                    GagDeleteSuggestion.Snapshot position = GagDeleteSuggestion.editorSnapshot(input);
+                    if (position != null && position.left().endsWith(typed) && position.right().startsWith(closing))
+                        pendingBracket = new PendingBracket(input, position);
+                }
             } catch (RuntimeException unavailable) {
                 // The typed opener was already committed.
             }
             return true;
         } finally {
             if (batching) input.endBatchEdit();
+        }
+    }
+
+    private record PendingBracket(InputConnection connection, GagDeleteSuggestion.Snapshot position) {
+        boolean cursorMoved(InputConnection current, int oldStart, int oldEnd, int newStart, int newEnd) {
+            int cursor = position.cursor();
+            // The opener and its auto-closer share the same post-edit caret. Ignore queued
+            // selection updates from before that caret was reached.
+            return current != connection || (oldStart == cursor && oldEnd == cursor
+                    && (newStart != cursor || newEnd != cursor));
+        }
+
+        boolean matches(InputConnection current) {
+            return current == connection && position.equals(GagDeleteSuggestion.editorSnapshot(current));
         }
     }
 
@@ -534,11 +557,17 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void backspace() {
+        PendingBracket bracket = pendingBracket;
         clearPendingSpace();
         resetOpening(false);
         refreshReplacementAuthority();
         InputConnection input = getCurrentInputConnection();
         if (input == null) return;
+        if (editorAllowed && word.length() == 0 && bracket != null && bracket.matches(input)
+                && input.deleteSurroundingText(1, 1)) {
+            showDeleteSuggestions(input, bracket.position().cursor() - 1);
+            return;
+        }
         trackDeletion(input);
         if (word.length() > 0) {
             int length = word.length();
