@@ -93,6 +93,15 @@
         <item name="android:textSize">@dimen/ui_text_body</item>
     </style>
 
+    <style name="ThemeOverlay.SubHub.GagPairDialog" parent="ThemeOverlay.SubHub.AlertDialog">
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.SubHub.GagPairSave</item>
+    </style>
+
+    <style name="Widget.SubHub.GagPairSave" parent="Widget.SubHub.DialogButton">
+        <item name="android:background">@drawable/bg_primary_button</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
     <style name="Widget.SubHub.Snackbar" parent="Widget.MaterialComponents.Snackbar">
         <item name="android:background">@drawable/bg_notice</item>
         <item name="backgroundTint">@color/dialog_surface</item>

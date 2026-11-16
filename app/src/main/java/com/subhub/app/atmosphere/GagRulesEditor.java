@@ -214,12 +214,13 @@ final class GagRulesEditor {
         Capability capability = FeatureEditorSession.gagCapability(activity);
         GagWordPairs.Rule rule = pairs.get(existing);
         if (!canEditPair(capability, rule) || existing != null && rule == null) { updateFields(); return; }
-        View form = activity.getLayoutInflater().inflate(R.layout.dialog_gag_word_pair, null);
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_SubHub_GagPairDialog);
+        View form = android.view.LayoutInflater.from(builder.getContext()).inflate(R.layout.dialog_gag_word_pair, null);
         EditText source = form.findViewById(R.id.gag_pair_source);
         EditText replacement = form.findViewById(R.id.gag_pair_replacement);
         StateToggle sensitive = form.findViewById(R.id.gag_pair_case_sensitive);
         boolean optionsAllowed = capability.supports(Capability.PAIR_OPTIONS);
-        sensitive.setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
+        form.findViewById(R.id.gag_pair_case_row).setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
         form.findViewById(R.id.gag_pair_options_hint).setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
         if (restored != null) {
             source.setText(restored.getString("source"));
@@ -230,8 +231,7 @@ final class GagRulesEditor {
             replacement.setText(String.join("\n", rule.options()));
             sensitive.setChecked(rule.caseSensitive());
         }
-        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity)
-                .setTitle(existing == null ? R.string.gag_add_word_pair : R.string.gag_edit_word_pair)
+        builder.setTitle(existing == null ? R.string.gag_add_word_pair : R.string.gag_edit_word_pair)
                 .setView(form)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.gag_save_word_pair, null);

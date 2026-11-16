@@ -19,6 +19,7 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.InputDevice;
@@ -29,6 +30,7 @@ import android.widget.EditText;
 import android.widget.CompoundButton;
 import android.widget.SeekBar;
 import android.widget.Spinner;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -49,10 +51,12 @@ import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
 import com.subhub.app.util.PrimaryHeader;
+import com.subhub.app.util.StateToggle;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import org.json.JSONObject;
 import org.junit.*;
 import org.junit.rules.TestName;
@@ -359,6 +363,12 @@ public final class DummySubPreviewAndroidTest {
             instrumentation.waitForIdleSync();
             tapTag("atmosphere_header:gag");
             onView(withId(R.id.gag_add_pair)).perform(revealAboveNavigation(), click());
+            onView(withText(R.string.gag_add_word_pair)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()));
+            onView(withId(R.id.gag_pair_source)).inRoot(isDialog()).check(matches(withText("")));
+            onView(withId(R.id.gag_pair_replacement)).inRoot(isDialog()).check(matches(withText("")));
+            onView(withId(R.id.gag_pair_case_sensitive)).inRoot(isDialog()).check(matches(
+                    androidx.test.espresso.matcher.ViewMatchers.isNotChecked()));
+            captureGagPairDialog(device, "gag-add-replacement");
             saveGagPair(device, "alpha", "first phrase");
             assertSavedGagPairs(Map.of("alpha", "first phrase"));
 
@@ -423,10 +433,43 @@ public final class DummySubPreviewAndroidTest {
 
             onView(withContentDescription(description)).perform(revealAboveNavigation(), click());
             onView(withId(R.id.gag_pair_replacement)).inRoot(isDialog()).check(matches(withText("Goddess\nDemoness")));
-            onView(withId(R.id.gag_pair_case_sensitive)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()));
-            device.waitForIdle();
-            capture(recreated.get(), "gag-pair-options");
+            captureGagPairDialog(device, "gag-pair-options");
             onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click());
+        }
+    }
+
+    private void captureGagPairDialog(UiDevice device, String name) throws Exception {
+        device.waitForIdle();
+        var dialog = isDialog();
+        AtomicReference<View> root = new AtomicReference<>();
+        onView(withId(R.id.gag_pair_source)).inRoot(dialog).check(matches(isCompletelyDisplayed()))
+                .check((view, missing) -> root.set(view.getRootView()));
+        onView(withId(R.id.gag_pair_replacement)).inRoot(dialog).check(matches(isCompletelyDisplayed()));
+        for (int label : new int[] {R.string.gag_pair_source, R.string.gag_pair_replacement, R.string.gag_one_per_line,
+                R.string.gag_save_word_pair, android.R.string.cancel}) {
+            onView(withText(label)).inRoot(dialog).check(matches(isCompletelyDisplayed()))
+                    .check((view, missing) -> assertDialogTextFits((TextView) view));
+        }
+        onView(withId(R.id.gag_pair_case_sensitive)).inRoot(dialog).check(matches(isCompletelyDisplayed()))
+                .check((view, missing) -> {
+                    StateToggle toggle = (StateToggle) view;
+                    assertDialogTextFits(toggle);
+                    assertTrue(toggle.getWidth() - toggle.getPaddingLeft() - toggle.getPaddingRight() > toggle.getSwitchMinWidth());
+                    Paint status = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    status.setTextSize(12 * toggle.getResources().getDisplayMetrics().scaledDensity);
+                    assertTrue(status.measureText(toggle.getTextOn().toString()) < toggle.getSwitchMinWidth());
+                    assertTrue(status.measureText(toggle.getTextOff().toString()) < toggle.getSwitchMinWidth());
+                });
+        capture(root::get, name);
+    }
+
+    private static void assertDialogTextFits(TextView text) {
+        var layout = text.getLayout();
+        assertNotNull(layout);
+        int width = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+        for (int line = 0; line < layout.getLineCount(); line++) {
+            assertEquals(text.getText().toString(), 0, layout.getEllipsisCount(line));
+            assertTrue(text.getText().toString(), layout.getLineMax(line) <= width + 1);
         }
     }
 
@@ -1309,10 +1352,14 @@ public final class DummySubPreviewAndroidTest {
     }
 
     private void capture(Activity activity, String name) throws Exception {
+        capture(() -> activity.getWindow().getDecorView(), name);
+    }
+
+    private void capture(Supplier<View> view, String name) throws Exception {
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
             instrumentation.runOnMainSync(() -> {
-                View root = activity.getWindow().getDecorView(); assertTrue(root.isHardwareAccelerated());
+                View root = view.get(); assertTrue(root.isHardwareAccelerated());
                 root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown); root.invalidate();
             });
             assertTrue("Fresh native frame", frame.await(5, java.util.concurrent.TimeUnit.SECONDS));
