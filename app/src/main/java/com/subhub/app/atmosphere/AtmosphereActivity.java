@@ -8,7 +8,10 @@ import com.subhub.app.capture.CensorImageEditor;
 import com.subhub.app.configuration.FeatureEditorActivity;
 import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.databinding.ActivityAtmosphereBinding;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.popup.PopupStormEditorPanel;
+import com.subhub.app.remote.RemoteUi;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.InputFocusPolicy;
@@ -22,6 +25,7 @@ public final class AtmosphereActivity extends FeatureEditorActivity {
     private ActivityAtmosphereBinding binding;
     private AtmosphereEditorPanels panels;
     private CensorImageEditor.Picker images;
+    private AutoCloseable consentObserver;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -65,9 +69,22 @@ public final class AtmosphereActivity extends FeatureEditorActivity {
         SubHubNavigation.bind(this, root, SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
         panels.resume();
+        if (FeatureEditorSession.remote(this) && !FeatureEditorSession.internal(this)) {
+            PersonId target = PersonRoutes.requireId(getIntent());
+            consentObserver = RemoteUi.observeRuntime(person -> {
+                if (target.equals(person) && consentObserver != null && !isFinishing()) {
+                    panels.refreshAccess();
+                }
+            });
+        }
     }
 
     @Override protected void onPause() {
+        if (consentObserver != null) {
+            try { consentObserver.close(); }
+            catch (Exception ignored) { /* Runtime observation ends with this page. */ }
+            consentObserver = null;
+        }
         if (panels != null) panels.pause();
         super.onPause();
     }

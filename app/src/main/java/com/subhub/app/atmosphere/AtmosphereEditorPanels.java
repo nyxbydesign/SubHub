@@ -113,9 +113,13 @@ final class AtmosphereEditorPanels implements AutoCloseable {
 
     void resume() {
         resumed = true;
-        for (Effect effect : Effect.values()) refreshAccess(effect);
+        refreshAccess();
         if (open == Effect.WHISPERS && whispers != null) whispers.resume();
         if (open == Effect.POPUP && popup != null) popup.resume();
+    }
+
+    void refreshAccess() {
+        for (Effect effect : Effect.values()) refreshAccess(effect);
     }
 
     void pause() {
