@@ -148,12 +148,8 @@ public class TaskPeerAndroidTest {
     private void pair() throws Exception {
         long now = System.currentTimeMillis(); PairingInvite invite = PairingInvite.create(domId, "fixture", now);
         generation = invite.id;
-        peerMethod("saveInvite", new Class<?>[]{PairingInvite.class}, invite);
-        peerMethod("bindInvite", new Class<?>[]{String.class, String.class, String.class, long.class}, generation, subId, invite.tokenHash(), now + 1);
-        peerMethod("approveInvite", new Class<?>[]{String.class, String.class, String.class, long.class}, generation, subId, "Synthetic Sub", now + 1);
-        peerMethod("acceptInvite", new Class<?>[]{PairingInvite.class, String.class}, invite, "Synthetic Dom");
-        peerMethod("activate", new Class<?>[]{String.class, String.class}, subId, generation);
-        peerMethod("activate", new Class<?>[]{String.class, String.class}, domId, generation);
+        TimedPairingFixture.activeDom(store, invite, subId, "Synthetic Sub");
+        TimedPairingFixture.activeSub(store, invite, subId, "Synthetic Dom");
         domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
         domScope = subId + "_" + generation; subScope = domId + "_" + generation;
         ownedScopes.add(domScope); ownedScopes.add(subScope);

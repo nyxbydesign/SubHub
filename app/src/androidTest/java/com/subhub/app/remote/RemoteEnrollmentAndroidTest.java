@@ -116,10 +116,13 @@ public class RemoteEnrollmentAndroidTest {
         PairingInvite retained=PairingInvite.create(endpoint.localIdentity(),endpoint.inviteRoute(),original.wall);
         PairingLifecycleClock.Source seedClock=new PairingLifecycleClock.Source(){public FormalRelationshipClock.Sample observe(){return original;}public FormalRelationshipClock.Sample transition(FormalRelationshipClock.Sample observed){return original;}};
         feature.submit(()->{
-            if("legacy".equals(state))feature.store.saveInvite(retained);else feature.store.saveTimedInvite(retained,original,seedClock);
+            if ("legacy".equals(state)) {
+                RetainedPairingFixture.invitation(feature.store, retained, other.localIdentity(), "Synthetic Sub", other.inviteRoute(), false);
+            } else {
+                feature.store.saveTimedInvite(retained,original,seedClock);
+            }
             if(!"missing".equals(state))new RemoteSecrets(context).savePending(retained);
-            if("legacy".equals(state)){feature.store.bindInvite(retained.id,other.localIdentity(),retained.tokenHash(),original.wall);feature.store.describeCandidate(retained.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());}
-            else if("missing".equals(state)||"uncertain".equals(state)||(state.startsWith("approved")||"revoked-timed".equals(state))){feature.store.bindTimedInvite(retained.id,other.localIdentity(),retained.tokenHash(),original,seedClock);feature.store.describeCandidate(retained.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());}
+            if("missing".equals(state)||"uncertain".equals(state)||(state.startsWith("approved")||"revoked-timed".equals(state))){feature.store.bindTimedInvite(retained.id,other.localIdentity(),retained.tokenHash(),original,seedClock);feature.store.describeCandidate(retained.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());}
             if(state.startsWith("approved")||"revoked-timed".equals(state)){
                 long advance="approved-expired".equals(state)?PairingInvite.LIFETIME_MILLIS-1000:100;
                 FormalRelationshipClock.Sample approved=new FormalRelationshipClock.Sample(original.wall+advance,original.elapsed+advance,original.boot);
@@ -242,9 +245,16 @@ public class RemoteEnrollmentAndroidTest {
         }finally{People.installConnectionUi(prior);}
     }
     @Test public void activationBeforeRetirementWinsWithoutChangingActiveRows() throws Exception {
-        configureDom();PeerTransport endpoint=endpoint();PairingInvite invite=feature.submit(()->legacy(endpoint,1)).get(15,TimeUnit.SECONDS);
+        configureDom();PeerTransport endpoint=endpoint();
+        PairingInvite invite = PairingInvite.create(endpoint.localIdentity(), endpoint.inviteRoute(), System.currentTimeMillis());
+        feature.submit(()->{
+            TimedPairingFixture.stageDom(feature.store, invite, other.localIdentity(), "Synthetic Sub", other.inviteRoute());
+            new RemoteSecrets(context).savePending(invite);
+            return null;
+        }).get(15,TimeUnit.SECONDS);
         List<String> observed=feature.store.creationGenerations();blockOutgoing(other.localIdentity(),invite.id);
-        feature.submit(()->{feature.store.activate(other.localIdentity(),invite.id);return null;}).get(15,TimeUnit.SECONDS);String active=generationSnapshot(invite.id);
+        feature.submit(()->TimedPairingFixture.activate(feature.store, invite, other.localIdentity())).get(15,TimeUnit.SECONDS);
+        String active=generationSnapshot(invite.id);
         List<String> retired=feature.submit(()->feature.store.retirePendingInvitations(observed,null,fixtureClock.observe(),fixtureClock,ignored->{})).get(15,TimeUnit.SECONDS);
         assertTrue(retired.isEmpty());assertEquals(active,generationSnapshot(invite.id));assertEquals(RemoteStore.State.ACTIVE,feature.store.peer(other.localIdentity(),invite.id).state);
         PairingInvite ready=feature.ensureInvitation().get(15,TimeUnit.SECONDS);assertNotEquals(invite.id,ready.id);assertEquals(active,generationSnapshot(invite.id));feature.cancel(ready.id);
@@ -287,10 +297,12 @@ public class RemoteEnrollmentAndroidTest {
     private PeerTransport endpoint() throws Exception {java.lang.reflect.Field field=RemoteFeature.class.getDeclaredField("endpoint");field.setAccessible(true);return (PeerTransport)field.get(feature);}
     private void blockOutgoing(String identity,String generation) throws Exception {java.lang.reflect.Field field=RemoteFeature.class.getDeclaredField("busy");field.setAccessible(true);((Set<String>)field.get(feature)).add(identity+":"+generation);}
     private PairingInvite legacy(PeerTransport endpoint,int state) throws Exception {
-        PairingInvite invite=PairingInvite.create(endpoint.localIdentity(),endpoint.inviteRoute(),System.currentTimeMillis()-1000);feature.store.saveInvite(invite);
-        if(state!=0){feature.store.bindInvite(invite.id,other.localIdentity(),invite.tokenHash(),System.currentTimeMillis());feature.store.describeCandidate(invite.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());feature.store.approveInvite(invite.id,other.localIdentity(),"Synthetic Sub",System.currentTimeMillis());
+        PairingInvite invite=PairingInvite.create(endpoint.localIdentity(),endpoint.inviteRoute(),System.currentTimeMillis()-1000);
+        RetainedPairingFixture.invitation(feature.store, invite, state == 0 ? null : other.localIdentity(),
+                state == 0 ? null : "Synthetic Sub", state == 0 ? null : other.inviteRoute(), state != 0);
+        if(state!=0){
             if(state==2)feature.store.revoke(other.localIdentity(),invite.id);
-            if(state==3){blockOutgoing(other.localIdentity(),invite.id);feature.store.activate(other.localIdentity(),invite.id);}
+            if(state==3){blockOutgoing(other.localIdentity(),invite.id);RetainedPairingFixture.activateRetainedPeer(feature.store, other.localIdentity(), invite.id);}
             if(state==2||state==3)feature.store.authorityTransition("owned-legacy-orphan",invite.id,db->{db.execSQL("UPDATE invites SET consumed=0 WHERE id=?",new Object[]{invite.id});return null;});
         }
         new RemoteSecrets(context).savePending(invite);return invite;

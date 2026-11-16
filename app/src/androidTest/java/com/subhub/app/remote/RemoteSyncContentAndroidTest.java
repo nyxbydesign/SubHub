@@ -26,9 +26,8 @@ public class RemoteSyncContentAndroidTest {
         subName="sync-content-sub-"+UUID.randomUUID()+".db";
         dom=new RemoteStore(context,domName);sub=new RemoteStore(context,subName);
         PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;
-        dom.saveInvite(invite);dom.bindInvite(invite.id,SUB,invite.tokenHash(),1001);
-        sub.acceptInvite(invite,"Dom");dom.approveInvite(invite.id,SUB,"Sub",1001);
-        dom.activate(SUB,invite.id);sub.activate(DOM,invite.id);
+        TimedPairingFixture.activeDom(dom, invite, SUB, "Sub");
+        TimedPairingFixture.activeSub(sub, invite, SUB, "Dom");
     }
     @After public void cleanup() {
         dom.close();sub.close();context.deleteDatabase(domName);context.deleteDatabase(subName);

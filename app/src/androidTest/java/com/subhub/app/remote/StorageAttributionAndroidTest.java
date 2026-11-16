@@ -49,8 +49,8 @@ public class StorageAttributionAndroidTest {
         RemoteStore local=new RemoteStore(context,names[0]),sub=new RemoteStore(context,names[1]),dom=new RemoteStore(context,names[2]);
         try {
             PairingInvite invite=PairingInvite.create(DOM,"fixture",System.currentTimeMillis());String generation=invite.id;
-            dom.saveInvite(invite);dom.bindInvite(generation,SUB,invite.tokenHash(),System.currentTimeMillis());dom.approveInvite(generation,SUB,"Synthetic Sub",System.currentTimeMillis());dom.activate(SUB,generation);
-            sub.acceptInvite(invite,"Synthetic Dom");sub.activate(DOM,generation);
+            TimedPairingFixture.activeDom(dom, invite, SUB, "Synthetic Sub");
+            TimedPairingFixture.activeSub(sub, invite, SUB, "Synthetic Dom");
             long started=System.nanoTime();
             seed(local.getWritableDatabase(),null,null,true,false);seed(sub.getWritableDatabase(),DOM,generation,true,true);seed(dom.getWritableDatabase(),SUB,generation,false,false);
             report.put("seedMillis",(System.nanoTime()-started)/1000000L);

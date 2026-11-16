@@ -81,9 +81,8 @@ public final class RemoteSessionControlPeerAndroidTest {
             assertNotNull(dom.peer(st.localIdentity(), generation)); assertNotNull(sub.peer(dt.localIdentity(), generation));
         } else {
             PairingInvite invite = PairingInvite.create(dt.localIdentity(), dt.inviteRoute(), 1000); generation = invite.id;
-            dom.saveInvite(invite); dom.bindInvite(invite.id, st.localIdentity(), invite.tokenHash(), 1001);
-            sub.acceptInvite(invite, "Synthetic Dom"); dom.approveInvite(invite.id, st.localIdentity(), "Synthetic Sub", 1001);
-            dom.activate(st.localIdentity(), generation); sub.activate(dt.localIdentity(), generation);
+            TimedPairingFixture.activeDom(dom, invite, st.localIdentity(), "Synthetic Sub");
+            TimedPairingFixture.activeSub(sub, invite, st.localIdentity(), "Synthetic Dom");
             dom.putMetadata(st.localIdentity(), generation, "session_control_version", "1");
             sub.putMetadata(dt.localIdentity(), generation, "session_control_version", "1");
             if (crashFixture != null) assertTrue(crashFixture.edit().putString("generation", generation).commit());

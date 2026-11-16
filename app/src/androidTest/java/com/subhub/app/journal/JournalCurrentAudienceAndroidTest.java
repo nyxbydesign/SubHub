@@ -23,6 +23,7 @@ import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.remote.RemoteSession;
 import com.subhub.app.remote.RemoteStore;
+import com.subhub.app.remote.TimedPairingFixture;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderPresentationAndroidTest;
@@ -81,13 +82,8 @@ public final class JournalCurrentAudienceAndroidTest {
     }
     private void pair() throws Exception {
         unlockDom(); PairingInvite invite = PairingInvite.create(dt.localIdentity(), dt.inviteRoute(), System.currentTimeMillis());
-        storage(dom,"saveInvite",new Class<?>[]{PairingInvite.class},invite);
-        storage(dom,"bindInvite",new Class<?>[]{String.class,String.class,String.class,long.class},invite.id,st.localIdentity(),invite.tokenHash(),System.currentTimeMillis());
-        storage(dom,"describeCandidate",new Class<?>[]{String.class,String.class,String.class,String.class},invite.id,st.localIdentity(),"Synthetic Sub",st.inviteRoute());
-        storage(dom,"approveInvite",new Class<?>[]{String.class,String.class,String.class,long.class},invite.id,st.localIdentity(),"Synthetic Sub",System.currentTimeMillis());
-        storage(sub,"acceptInvite",new Class<?>[]{PairingInvite.class,String.class},invite,"Synthetic Dom");
-        storage(dom,"activate",new Class<?>[]{String.class,String.class},st.localIdentity(),invite.id);
-        storage(sub,"activate",new Class<?>[]{String.class,String.class},dt.localIdentity(),invite.id);
+        TimedPairingFixture.activeDom(dom, invite, st.localIdentity(), "Synthetic Sub", st.inviteRoute());
+        TimedPairingFixture.activeSub(sub, invite, st.localIdentity(), "Synthetic Dom");
         dp=dom.peer(st.localIdentity(),invite.id);sp=sub.peer(dt.localIdentity(),invite.id);
         assertEquals(RemoteStore.State.ACTIVE,dp.state);assertEquals(RemoteStore.State.ACTIVE,sp.state);
     }

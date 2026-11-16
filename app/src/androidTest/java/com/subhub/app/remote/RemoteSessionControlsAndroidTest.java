@@ -122,9 +122,8 @@ public class RemoteSessionControlsAndroidTest {
         feature = new RemoteFeature(context, new RemoteStore(context, database + ".db"));
         source = new RemoteStore(context, database + "-source.db");
         PairingInvite invite = PairingInvite.create(DOM, "fixture", 1000);
-        feature.store.saveInvite(invite); feature.store.bindInvite(invite.id, SUB, invite.tokenHash(), 1001);
-        feature.store.approveInvite(invite.id, SUB, "Fixture Sub", 1001); feature.store.activate(SUB, invite.id);
-        source.acceptInvite(invite, "Dom"); source.activate(DOM, invite.id); peer = feature.store.peer(SUB, invite.id);
+        TimedPairingFixture.activeDom(feature.store, invite, SUB, "Fixture Sub");
+        TimedPairingFixture.activeSub(source, invite, SUB, "Dom"); peer = feature.store.peer(SUB, invite.id);
         source.publish(DOM, invite.id, RemoteProtocol.Stream.BASELINE, "active", RemoteConfigurationAndroidTest.configuration(), false, 1);
         feature.store.receive(SUB, source.nextBatch(DOM, invite.id, RemoteProtocol.Stream.BASELINE));
         singleton = RemoteFeature.class.getDeclaredField("instance"); singleton.setAccessible(true);

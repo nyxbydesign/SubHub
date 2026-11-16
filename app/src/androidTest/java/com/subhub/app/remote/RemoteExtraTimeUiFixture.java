@@ -133,9 +133,8 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         RemoteStore ds = store("dom"), ss = store("sub");
         long now = System.currentTimeMillis();
         PairingInvite invite = PairingInvite.create(domIdentity, "fixture", now); generation = invite.id;
-        ds.saveInvite(invite); ds.bindInvite(generation, subIdentity, invite.tokenHash(), now + 1);
-        ss.acceptInvite(invite, "Morgan"); ds.approveInvite(generation, subIdentity, "Alex", now + 1);
-        ds.activate(subIdentity, generation); ss.activate(domIdentity, generation);
+        TimedPairingFixture.activeDom(ds, invite, subIdentity, "Alex");
+        TimedPairingFixture.activeSub(ss, invite, subIdentity, "Morgan");
         ds.putMetadata(subIdentity, generation, "extra_time_version", "1");
         ss.putMetadata(domIdentity, generation, "extra_time_version", "1");
         bindContinuity(ds); bindContinuity(ss);
