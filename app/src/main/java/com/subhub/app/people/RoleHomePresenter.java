@@ -487,7 +487,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private void favoriteOverview(PersonSnapshot person) {
         LinearLayout card = OverviewUi.card(domFavorite);
         card.setTag("home_favorite:" + person.id.value());
-        card.setBackgroundResource(R.drawable.bg_home_favorite);
+        card.setBackgroundResource(R.drawable.bg_home_composition_person);
         OverviewUi.heading(card, R.string.home_favorite_title, R.string.overview_view_profile, () -> openPerson(person));
         LinearLayout identity = identityHeader(card, person, true);
         identity.setTag("home_favorite_identity:" + person.id.value());

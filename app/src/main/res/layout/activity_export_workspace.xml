@@ -3,7 +3,7 @@
     <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:clipToPadding="false">
         <LinearLayout android:id="@+id/export_page" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingHorizontal="@dimen/page_margin" android:paddingTop="@dimen/primary_header_top" android:paddingBottom="32dp">
             <include layout="@layout/view_secondary_header" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="@dimen/ui_gap_group" android:padding="12dp" android:background="@drawable/bg_wallet_balance">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="@dimen/ui_gap_group" android:padding="12dp" android:background="@drawable/bg_header_card">
                 <FrameLayout android:id="@+id/export_preview_stage" android:layout_width="match_parent" android:layout_height="230dp" android:background="@drawable/bg_card" android:clipToOutline="true">
                     <ImageView android:id="@+id/export_preview_image" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="@string/export_preview" android:visibility="gone" />
                     <LinearLayout android:id="@+id/export_preview_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:orientation="vertical">
