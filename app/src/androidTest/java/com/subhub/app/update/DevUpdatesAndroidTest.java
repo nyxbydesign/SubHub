@@ -277,6 +277,34 @@ public final class DevUpdatesAndroidTest {
                 activity.getString(R.string.update_last_checked, clock)), summary.getText());
     }
 
+    @Test public void releaseHistoryReusesDecodedListUntilStoredHistoryChanges() {
+        assertTrue(state.releaseHistory().isEmpty());
+        UpdateStateStore writer = new UpdateStateStore(context);
+        ReleaseHistoryItem stable = historyItem("99.0.0", "2099-01-01", false);
+        ReleaseHistoryItem development = historyItem("99.0.0-dev.1", "2099-01-03", true);
+        writer.setReleaseHistory(List.of(development, stable));
+
+        List<ReleaseHistoryItem> initial = state.releaseHistory();
+        assertEquals(2, initial.size());
+        assertEquals(development.tag, initial.get(0).tag);
+        assertEquals(stable.tag, initial.get(1).tag);
+        assertSame(initial, state.releaseHistory());
+        assertThrows(UnsupportedOperationException.class, () -> initial.add(stable));
+
+        writer.setReleaseHistory(List.of(stable));
+        List<ReleaseHistoryItem> refreshed = state.releaseHistory();
+        assertEquals(1, refreshed.size());
+        assertEquals(stable.tag, refreshed.get(0).tag);
+        assertSame(refreshed, state.releaseHistory());
+
+        preferences.edit().putString("release_history", "{malformed").apply();
+        assertTrue(state.releaseHistory().isEmpty());
+        writer.setReleaseHistory(List.of(development));
+        assertEquals(development.tag, state.releaseHistory().get(0).tag);
+        preferences.edit().remove("release_history").apply();
+        assertTrue(state.releaseHistory().isEmpty());
+    }
+
     @Test public void developmentSwitchFiltersCachedAndRefreshedHistoryImmediately() throws Exception {
         ReleaseHistoryItem stable = historyItem("99.0.0", "2099-01-01", false);
         ReleaseHistoryItem installed = historyItem(BuildConfig.VERSION_NAME, "2099-01-02", true);
