@@ -89,34 +89,35 @@ public final class ReleaseHistoryCatalogTest {
         }
         List<ReleaseHistoryItem> catalog = ReleaseHistoryItem.decode(
                 ReleaseHistoryItem.encode(ReleaseHistoryCatalog.merge(feed, null)));
-        List<ReleaseHistoryItem> stableRows = ReleaseHistoryCatalog.visible(catalog, false, installed.versionName);
+        List<ReleaseHistoryItem> stableRows = ReleaseHistoryCatalog.forDisplay(catalog, false, installed.versionName);
         assertEquals(List.of(stable.tag, installed.tag), stableRows.stream().map(row -> row.tag).toList());
-        List<ReleaseHistoryItem> devRows = ReleaseHistoryCatalog.visible(catalog, true, installed.versionName);
-        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, devRows.size());
+        List<ReleaseHistoryItem> devRows = ReleaseHistoryCatalog.forDisplay(catalog, true, installed.versionName);
+        assertEquals(feed.size(), devRows.size());
         assertEquals("v0.7.0-dev.22", devRows.get(0).tag);
-        assertTrue(devRows.stream().allMatch(row -> row.prerelease));
+        assertTrue(devRows.contains(stableRows.get(0)));
     }
 
     @Test public void installedDevStaysVisibleWithMissingNotesOrAnOlderReleaseDate() {
         List<ReleaseHistoryItem> feed = new ArrayList<>();
-        for (int index = 0; index < ReleaseHistoryCatalog.MAX_ITEMS + 1; index++) {
+        for (int index = 0; index < ReleaseHistoryCatalog.PAGE_SIZE + 1; index++) {
             String name = "0.7." + index;
             feed.add(item(name, "v" + name, "Stable", "2026-11-13", false));
         }
         String version = "0.7.0-dev.18";
         List<ReleaseHistoryItem> catalog = ReleaseHistoryCatalog.merge(feed, null);
-        List<ReleaseHistoryItem> visible = ReleaseHistoryCatalog.visible(catalog, false, version);
-        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, visible.size());
-        ReleaseHistoryItem installed = visible.get(visible.size() - 1);
+        List<ReleaseHistoryItem> visible = ReleaseHistoryCatalog.forDisplay(catalog, false, version);
+        assertEquals(feed.size() + 1, visible.size());
+        ReleaseHistoryItem installed = visible.get(ReleaseHistoryCatalog.PAGE_SIZE - 1);
         assertTrue(ReleaseHistoryCatalog.isInstalled(installed, version));
         assertTrue(installed.notes.isEmpty());
         assertTrue(installed.publishedAt.isEmpty());
         assertEquals("v0.7.16", visible.get(0).tag);
         ReleaseHistoryItem known = item(version, "v" + version, "Cached notes", "2026-11-10", true);
-        visible = ReleaseHistoryCatalog.visible(ReleaseHistoryCatalog.merge(List.of(known), catalog), false, version);
-        assertEquals(ReleaseHistoryCatalog.MAX_ITEMS, visible.size());
-        assertEquals(known, visible.get(visible.size() - 1));
-        assertTrue(ReleaseHistoryCatalog.visible(List.of(known), false, "0.7.0").isEmpty());
+        visible = ReleaseHistoryCatalog.forDisplay(ReleaseHistoryCatalog.merge(List.of(known), catalog), false, version);
+        assertEquals(feed.size() + 1, visible.size());
+        assertEquals(known, visible.get(ReleaseHistoryCatalog.PAGE_SIZE - 1));
+        assertEquals("v0.7.0", visible.get(visible.size() - 1).tag);
+        assertTrue(ReleaseHistoryCatalog.forDisplay(List.of(known), false, "0.7.0").isEmpty());
     }
 
     private static ReleaseHistoryItem item(String version, String tag, String notes,

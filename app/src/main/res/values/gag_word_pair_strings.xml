@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gag_word_pairs">Word replacements</string>
+    <string name="gag_add_word_pair">Add replacement</string>
+    <string name="gag_edit_word_pair">Edit replacement</string>
+    <string name="gag_remove_word_pair">Remove</string>
+    <string name="gag_save_word_pair">Save</string>
+    <string name="gag_pair_source">Word to replace</string>
+    <string name="gag_pair_replacement">Replace with</string>
+    <string name="gag_pair_source_invalid">Enter one word.</string>
+    <string name="gag_pair_replacement_invalid">Enter a replacement.</string>
+    <string name="gag_pair_duplicate">This word already has a replacement.</string>
+    <string name="gag_pair_shared_conflict">Remove individually configured words from this list.</string>
+    <string name="gag_pairs_too_long">Shorten the replacements or remove a pair.</string>
+    <string name="gag_pairs_required">Add at least one replacement.</string>
+    <string name="gag_pairs_update_required">Update the paired app to use per-word replacements.</string>
+    <string name="gag_legacy_shared_words">Words with shared replacements</string>
+    <string name="gag_pair_row">%1$s → %2$s</string>
+    <string name="gag_pair_row_accessibility">%1$s becomes %2$s</string>
+</resources>

@@ -5,6 +5,7 @@ import com.subhub.app.commitment.PactDuration;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.configuration.ConfigurationSettingCatalog;
 import com.subhub.app.remote.GagContractFields;
+import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.settings.SettingsRepository;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -232,16 +233,35 @@ public final class InternalConfigurationStore {
         if (knownValid == null || !presets.equals(knownValid.get(PRESETS))) validatePresets(presets.get("looks_v1"));
         result.put(PRESETS, Collections.unmodifiableMap(new LinkedHashMap<>(presets)));
         Map<String, ?> gag = source.get(GagContractFields.SECTION);
-        if (gag != null) result.put(GagContractFields.SECTION, validatedGag(new JSONObject(gag)));
+        if (gag != null) result.put(GagContractFields.SECTION, validatedGag(decodedGag(gag)));
         return Collections.unmodifiableMap(result);
+    }
+
+    private static JSONObject decodedGag(Map<String, ?> values) {
+        try {
+            JSONObject rules = new JSONObject(values);
+            if (rules.has(GagContractFields.PAIRS)) {
+                // Demo records store scalar values, so retain the authored pairs as canonical JSON.
+                if (!(rules.get(GagContractFields.PAIRS) instanceof String encoded))
+                    throw new IllegalArgumentException("Invalid Demo Gag pairs");
+                rules.put(GagContractFields.PAIRS, new JSONObject(encoded));
+            }
+            return rules;
+        } catch (JSONException invalid) {
+            throw new IllegalArgumentException("Invalid Demo Gag rules", invalid);
+        }
     }
 
     private static Map<String, Object> validatedGag(JSONObject rules) {
         try {
             GagContractFields.validate(rules);
-            return Map.of("enabled", rules.getBoolean("enabled"), "mode", rules.getString("mode"),
+            Map<String, Object> values = Map.of("enabled", rules.getBoolean("enabled"), "mode", rules.getString("mode"),
                     "interval", rules.getInt("interval"), "words", rules.getString("words"),
                     "replacements", rules.getString("replacements"));
+            if (!GagContractFields.needsPairs(rules)) return values;
+            Map<String, Object> withPairs = new LinkedHashMap<>(values);
+            withPairs.put(GagContractFields.PAIRS, RemoteProtocol.canonical(rules.getJSONObject(GagContractFields.PAIRS)));
+            return Collections.unmodifiableMap(withPairs);
         } catch (JSONException invalid) {
             throw new IllegalArgumentException("Invalid Demo Gag rules", invalid);
         }
@@ -324,7 +344,7 @@ public final class InternalConfigurationStore {
 
         public synchronized JSONObject gagRules() throws JSONException {
             Map<String, Object> rules = sections.get(GagContractFields.SECTION);
-            return rules == null ? GagContractFields.defaults() : new JSONObject(rules);
+            return rules == null ? GagContractFields.defaults() : decodedGag(rules);
         }
 
         public synchronized void editGagRules(JSONObject rules) {

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="@dimen/ui_control_padding"
+    android:paddingBottom="@dimen/ui_gap_group">
+
+    <TextView
+        style="@style/Widget.SubHub.FieldLabel"
+        android:labelFor="@+id/gag_pair_source"
+        android:text="@string/gag_pair_source" />
+
+    <EditText
+        android:id="@id/gag_pair_source"
+        style="@style/Widget.SubHub.Input"
+        android:imeOptions="actionNext|flagNoPersonalizedLearning"
+        android:importantForAutofill="no"
+        android:inputType="textNoSuggestions"
+        android:maxLength="128"
+        android:maxLines="1" />
+
+    <TextView
+        style="@style/Widget.SubHub.FieldLabel"
+        android:labelFor="@+id/gag_pair_replacement"
+        android:text="@string/gag_pair_replacement" />
+
+    <EditText
+        android:id="@id/gag_pair_replacement"
+        style="@style/Widget.SubHub.Input"
+        android:imeOptions="actionDone|flagNoPersonalizedLearning"
+        android:importantForAutofill="no"
+        android:inputType="textNoSuggestions"
+        android:maxLength="2048"
+        android:maxLines="1" />
+</LinearLayout>

@@ -2,6 +2,7 @@ package com.subhub.app.remote;
 
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.configuration.ConfigurationSettingCatalog;
+import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -60,6 +61,51 @@ public final class RemoteConfigurationCompatibilityTest {
         assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
         gag.put("words", "fixture").remove("replacements");
         assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+    }
+
+    @Test public void perWordRulesNeedTheAdditiveCapabilityAndCanWorkWithoutASharedPool() throws Exception {
+        JSONObject value = GagContractFields.forPeer(configuration(), true, false);
+        assertFalse(GagContractFields.needsPairs(GagContractFields.section(value)));
+        JSONObject pairs = new JSONObject().put("one", "first").put("two", "second phrase");
+        GagContractFields.section(value).put("enabled", true).put("mode", "MATCH").put("replacements", "")
+                .put(GagContractFields.PAIRS, pairs);
+        assertNotNull(RemoteConfiguration.active(value));
+        assertThrows(SecurityException.class, () -> GagContractFields.forPeer(value, true, false, true));
+        assertThrows(SecurityException.class, () -> GagContractFields.forPeer(value, false, false, false));
+        assertEquals(RemoteProtocol.canonical(value),
+                RemoteProtocol.canonical(GagContractFields.forPeer(value, true, true, true)));
+    }
+
+    @Test public void invalidPerWordRulesNeverBecomeAConfiguration() throws Exception {
+        JSONObject value = GagContractFields.forPeer(configuration(), true, false);
+        JSONObject gag = GagContractFields.section(value).put("mode", "MATCH");
+        for (JSONObject invalid : new JSONObject[] {new JSONObject(), new JSONObject().put("a b", "one"),
+                new JSONObject().put("one", 1), new JSONObject().put("one", "\n"),
+                new JSONObject().put("one", "first").put("ONE", "second")}) {
+            gag.put(GagContractFields.PAIRS, invalid);
+            assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+        }
+        gag.put("words", "One").put(GagContractFields.PAIRS, new JSONObject().put("one", "first"));
+        assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(value));
+    }
+
+    @Test public void detectsPairedConfigurationInBothTransfersWithoutFlaggingLegacyBatches() throws Exception {
+        JSONObject legacy = GagContractFields.forPeer(configuration(), true, false);
+        JSONObject paired = new JSONObject(legacy.toString());
+        GagContractFields.section(paired).put(GagContractFields.PAIRS, new JSONObject().put("one", "two"));
+        for (RemoteProtocol.Stream stream : List.of(RemoteProtocol.Stream.BASELINE, RemoteProtocol.Stream.CONFIGURATION)) {
+            assertTrue(GagContractFields.containsRules(batch(stream, legacy)));
+            assertFalse(GagContractFields.containsPairs(batch(stream, legacy)));
+            assertTrue(GagContractFields.containsPairs(batch(stream, paired)));
+        }
+        assertFalse(GagContractFields.containsPairs(batch(RemoteProtocol.Stream.STATS, paired)));
+    }
+
+    private static RemoteProtocol.Batch batch(RemoteProtocol.Stream stream, JSONObject configuration) throws Exception {
+        boolean command = stream == RemoteProtocol.Stream.CONFIGURATION;
+        JSONObject payload = command ? new JSONObject().put("configuration", configuration) : configuration;
+        return new RemoteProtocol.Batch("generation", stream, 0, 1, List.of(new RemoteProtocol.Change(1,
+                command ? "desired" : "active", RemoteProtocol.canonical(payload), false, 1000)));
     }
 
     private static JSONObject configuration() throws Exception {

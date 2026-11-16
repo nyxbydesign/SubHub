@@ -254,6 +254,14 @@ public final class FeatureEditorSession {
                 &&canEdit(activity,GagContractFields.SECTION);
     }
 
+    public static boolean canEditGagPairs(AppCompatActivity activity) {
+        return canEditGag(activity) && supportsGagPairs(scope(activity));
+    }
+
+    private static boolean supportsGagPairs(FeatureEditorSession scope) {
+        return scope.internal || GagContractFields.pairsSupported(scope.feature.store, scope.peer);
+    }
+
     public static JSONObject gagRules(AppCompatActivity activity) throws Exception {
         if(!canEditGag(activity))throw new SecurityException("Gag editor unavailable");
         FeatureEditorSession scope = scope(activity);
@@ -269,6 +277,9 @@ public final class FeatureEditorSession {
             scope.internalDraft.editGagRules(rules);
             return;
         }
+        if ((GagContractFields.needsPairs(GagContractFields.section(scope.document))
+                || GagContractFields.needsPairs(rules)) && !supportsGagPairs(scope))
+            throw new SecurityException("Update the paired app for per-word replacements");
         scope.document.getJSONObject("contract").getJSONObject("sections")
                 .put(GagContractFields.SECTION,GagContractFields.validate(rules));
     }
