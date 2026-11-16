@@ -94,6 +94,7 @@ public class WalletUiRefinementAndroidTest {
                         assertEquals(
                                 Arrays.asList(
                                         "wallet:rules",
+                                        "wallet:limits",
                                         "wallet:pause",
                                         "wallet:paypal",
                                         "wallet:corrections"),
@@ -157,7 +158,8 @@ public class WalletUiRefinementAndroidTest {
             scenario.onActivity(
                     a -> {
                         View root = a.findViewById(android.R.id.content);
-                        for (String key : Arrays.asList("rules", "pause", "paypal", "corrections"))
+                        for (String key :
+                                Arrays.asList("rules", "limits", "pause", "paypal", "corrections"))
                             assertFalse(root.findViewWithTag("wallet:" + key).isShown());
                         assertTrue(a.findViewById(R.id.wallet_history_list).isShown());
                         assertFalse(a.findViewById(R.id.paypal_client_id).isEnabled());

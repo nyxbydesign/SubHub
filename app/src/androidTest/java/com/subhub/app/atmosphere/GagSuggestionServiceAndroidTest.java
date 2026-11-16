@@ -353,7 +353,8 @@ public final class GagSuggestionServiceAndroidTest {
                 + " --ez " + GagEditorFixtureActivity.WATCH_SEPARATOR_BATCH + " " + watchSeparatorBatch);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
-        await(By.pkg("com.subhub.app").text("q"));
+        assertNotNull("The fixture editor opened, but Gag did not show its letter keyboard",
+                device().wait(Until.findObject(By.pkg("com.subhub.app").text("q")), TIMEOUT_MS));
         assertText(selectDeletionText ? GagEditorFixtureActivity.DELETION_TEXT : middle ? " next" : "");
     }
 
