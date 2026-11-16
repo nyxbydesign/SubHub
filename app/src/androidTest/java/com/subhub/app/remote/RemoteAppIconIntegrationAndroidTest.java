@@ -218,6 +218,49 @@ public final class RemoteAppIconIntegrationAndroidTest extends LinkingFixture {
         }
     }
 
+    @Test public void downloadedIconDrawsOnTheFirstFrameAfterAnOfflineCacheReopen() throws Exception {
+        RemoteAppIcon bare = RemoteUi.appIcon(context, SUB, generation, PACKAGE);
+        assertNull(bare.descriptor);
+        receivePng(png());
+        RemoteAppIcon downloaded = icons.identity(SUB, generation, PACKAGE);
+        assertNotNull(downloaded.descriptor);
+
+        installed.close();
+        installed = null;
+        icons.close();
+        Context owned = new ContextWrapper(context) {
+            @Override public Context getApplicationContext() { return this; }
+            @Override public File getCacheDir() { return cacheRoot; }
+        };
+        icons = new RemoteAppIconIntegration(owned, store, iconWorker, () -> { });
+        store.onRevoked(icons::revoked);
+        icons.refresh();
+        installed = installIconProvider(icons);
+        assertEquals(downloaded, icons.identity(SUB, generation, PACKAGE));
+
+        InstrumentationRegistry.getInstrumentation().getUiAutomation(android.app.UiAutomation.FLAG_DONT_USE_ACCESSIBILITY);
+        CountDownLatch painted = new CountDownLatch(1);
+        AtomicReference<Integer> firstPixel = new AtomicReference<>();
+        try (var page = androidx.test.core.app.ActivityScenario.launch(com.subhub.app.help.HelpActivity.class)) {
+            page.onActivity(activity -> {
+                android.widget.ImageView icon = new android.widget.ImageView(activity) {
+                    @Override protected void onDraw(android.graphics.Canvas canvas) {
+                        super.onDraw(canvas);
+                        int pixel = getDrawable() instanceof android.graphics.drawable.BitmapDrawable bitmap
+                                ? bitmap.getBitmap().getPixel(2, 2) : Color.TRANSPARENT;
+                        if (firstPixel.compareAndSet(null, pixel)) painted.countDown();
+                    }
+                };
+                RemoteUi.bindAppIcon(icon, bare, com.subhub.app.R.drawable.ic_settings_apps);
+                activity.setContentView(icon);
+            });
+            assertTrue("First frame not drawn", painted.await(5, TimeUnit.SECONDS));
+            assertEquals(Color.MAGENTA, firstPixel.get().intValue());
+        }
+        store.revoke(SUB, generation);
+        assertNull(icons.preview(downloaded));
+    }
+
     @androidx.test.filters.SdkSuppress(minSdkVersion=30)
     @Test public void recordRemovalAndDomLockCannotRenewCachedImageAuthority()throws Exception{
         enableFeature();
