@@ -17,8 +17,8 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(226, len(selected))
-            self.assertEqual(226, len(set(selected)))
+            self.assertEqual(228, len(selected))
+            self.assertEqual(228, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
             self.assertEqual(27, len(inventory))
             self.assertEqual(17, len(inventory["com.subhub.app.service.AccessibilityServiceConnectionTest"]["selectedMethods"]))
@@ -28,11 +28,12 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             self.assertEqual(3, len(inventory["com.subhub.app.overlay.LegacyRenderDependenciesAndroidTest"]["selectedMethods"]))
             self.assertEqual(7, len(inventory["com.subhub.app.runtime.DeviceStartResultRegistryAndroidTest"]["selectedMethods"]))
             self.assertEqual(15, len(inventory["com.subhub.app.service.RuntimeCaptureHostAndroidTest"]["selectedMethods"]))
-            self.assertEqual(24, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
+            self.assertEqual(26, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
             preview = inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]
             for section in ("censor", "limits", "wallet", "atmosphere", "apps", "duration"):
                 self.assertIn(section + "EditorRecreatesAndRejectsForgedTargets", preview)
             self.assertIn("profileAuthorityRejectsForgeryAndLiveEditorRevocation", preview)
+            self.assertIn("gagWordPairsSaveThroughTheSharedEditorAndSurviveRecreation", preview)
             self.assertNotIn("nativeEditorsRecreateWithoutAutosaveAndRejectStaleOrForgedTargets", preview)
             self.assertEqual(6, len(inventory["com.subhub.app.remote.RemoteEditorAndroidTest"]["selectedMethods"]))
             self.assertEqual(3, len(inventory["com.subhub.app.people.PersonRefreshAndroidTest"]["selectedMethods"]))
