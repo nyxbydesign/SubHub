@@ -1,5 +1,4 @@
 <resources>
-    <string name="privacy_title">Privacy</string>
     <string name="privacy_discreet_name">Screen Filter</string>
     <string name="privacy_discreet_heading">Keep things discreet</string>
     <string name="privacy_discreet_mode">Discreet Mode</string>

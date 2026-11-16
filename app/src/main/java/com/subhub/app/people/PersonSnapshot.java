@@ -38,7 +38,6 @@ public final class PersonSnapshot {
     public final PersonId contractDomId;
     public final PeerContact contractDomContact;
     public final java.util.Map<String, Boolean> featureConsent;
-    public final boolean consentHardcoreOverride;
 
     public PersonSnapshot(PersonId id, String name, String device, String contractName,
             String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
@@ -78,7 +77,7 @@ public final class PersonSnapshot {
         this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt,
                 capabilities, sections, allowances, currency, protectedSeconds, activityEvents, tributeCents,
                 sessions, serviceActive, sync, sessionIdentity, additionOrder, ProfileData.empty(name),
-                Collections.emptyMap(), false, null, null, null);
+                Collections.emptyMap(), null, null, null);
     }
 
     private PersonSnapshot(PersonId id, String name, String device, String contractName,
@@ -86,12 +85,12 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
-            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
+            ProfileData profile, java.util.Map<String, Boolean> featureConsent,
             ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact) {
         this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt, capabilities,
                 sections, allowances, currency, protectedSeconds, activityEvents, tributeCents, sessions,
                 serviceActive, sync, sessionIdentity, additionOrder, profile, featureConsent,
-                consentHardcoreOverride, contractDom, contractDomId, contractDomContact, lastSyncedAt, 0);
+                contractDom, contractDomId, contractDomContact, lastSyncedAt, 0);
     }
 
     private PersonSnapshot(PersonId id, String name, String device, String contractName,
@@ -99,7 +98,7 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
-            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
+            ProfileData profile, java.util.Map<String, Boolean> featureConsent,
             ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact, long lastContactAt, long lastOnlineAt) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
@@ -132,18 +131,13 @@ public final class PersonSnapshot {
             throw new IllegalArgumentException("Counterpart contact identity differs");
         this.contractDomContact = contractDomContact;
         this.featureConsent = Collections.unmodifiableMap(new java.util.LinkedHashMap<>(featureConsent));
-        this.consentHardcoreOverride = consentHardcoreOverride;
     }
 
     public PersonSnapshot withProfile(ProfileData value, java.util.Map<String, Boolean> consent) {
-        return withProfile(value, consent, false);
-    }
-
-    public PersonSnapshot withProfile(ProfileData value, java.util.Map<String, Boolean> consent, boolean hardcoreOverride) {
         return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact, lastContactAt, lastOnlineAt);
+                value, consent, contractDom, contractDomId, contractDomContact, lastContactAt, lastOnlineAt);
     }
 
     public PersonSnapshot withContractDom(ProfileData value) {
@@ -159,21 +153,21 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact, lastContactAt, lastOnlineAt);
+                profile, featureConsent, java.util.Objects.requireNonNull(value), target, contact, lastContactAt, lastOnlineAt);
     }
 
     public PersonSnapshot withLastContactAt(long contact) {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact, contact, lastOnlineAt);
+                profile, featureConsent, contractDom, contractDomId, contractDomContact, contact, lastOnlineAt);
     }
 
     public PersonSnapshot withLastOnlineAt(long observed) {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact,
+                profile, featureConsent, contractDom, contractDomId, contractDomContact,
                 lastContactAt, observed);
     }
 

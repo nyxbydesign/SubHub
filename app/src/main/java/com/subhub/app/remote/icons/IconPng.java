@@ -2,6 +2,7 @@ package com.subhub.app.remote.icons;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.util.RemoteAppIcon;
 import java.io.ByteArrayOutputStream;
 import java.util.zip.DataFormatException;
@@ -11,7 +12,28 @@ import java.util.zip.Inflater;
 final class IconPng {
     private IconPng() { }
 
+    static RemoteAppIcon.Descriptor descriptor(byte[] png) {
+        if (png.length < 57 || number(png, 0) != 0x89504e47 || number(png, 4) != 0x0d0a1a0a)
+            throw new IllegalArgumentException("Invalid cached PNG header");
+        return new RemoteAppIcon.Descriptor(RemoteProtocol.sha256(png), png.length, number(png, 16), number(png, 20));
+    }
+
+    /** A validated 64px preview caps 256 entries at 4 MiB. */
+    static Bitmap preview(RemoteAppIcon icon, byte[] png) {
+        Bitmap bitmap = decode(icon, png);
+        int edge = Math.max(bitmap.getWidth(), bitmap.getHeight());
+        if (edge <= 64) return bitmap;
+        Bitmap small = Bitmap.createScaledBitmap(bitmap, Math.max(1, bitmap.getWidth() * 64 / edge),
+                Math.max(1, bitmap.getHeight() * 64 / edge), true);
+        if (small != bitmap) bitmap.recycle();
+        return small;
+    }
+
     static void validate(RemoteAppIcon icon, byte[] png) {
+        decode(icon, png).recycle();
+    }
+
+    private static Bitmap decode(RemoteAppIcon icon, byte[] png) {
         validatePixels(icon, png);
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
@@ -23,10 +45,11 @@ final class IconPng {
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         Bitmap bitmap = BitmapFactory.decodeByteArray(png, 0, png.length, options);
         if (bitmap == null) throw new IllegalArgumentException("Invalid PNG pixels");
-        try {
-            if (bitmap.getWidth() != icon.descriptor.width || bitmap.getHeight() != icon.descriptor.height)
-                throw new IllegalArgumentException("Invalid PNG pixels");
-        } finally { bitmap.recycle(); }
+        if (bitmap.getWidth() != icon.descriptor.width || bitmap.getHeight() != icon.descriptor.height) {
+            bitmap.recycle();
+            throw new IllegalArgumentException("Invalid PNG pixels");
+        }
+        return bitmap;
     }
 
     /** BitmapFactory can return partial pixels after a decode error; prove the complete stream first. */

@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.GlobalSettingsActivity;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
@@ -18,10 +19,29 @@ import static org.junit.Assert.*;
 public class PrivacyAndroidTest {
     @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-    @Test public void subCanChangeLocalPrivacyFromSettingsAndDirectPage() throws Exception {
+    @Test public void subCanChangeLocalPrivacyFromSettings() throws Exception {
         try (LocalPrivacyFixture fixture = new LocalPrivacyFixture()) {
-            assertSubPrivacyTaps(com.subhub.app.settings.GlobalSettingsActivity.class);
-            assertSubPrivacyTaps(PrivacyActivity.class);
+            PrivacyManager privacy = new PrivacyManager(context);
+            // The app is already unlocked, as it must be before its privacy settings are reachable.
+            assertTrue(privacy.setAppLock(true)); PrivacyLifecycle.unlock();
+            try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                page.onActivity(a -> {
+                    assertFalse(a.isFinishing()); assertFalse(ControllerPinManager.isDomModeActive());
+                    assertEquals(1f, a.findViewById(R.id.privacy_discreet_toggle).getAlpha(), 0f);
+                    assertEquals(1f, a.findViewById(R.id.privacy_lock_toggle).getAlpha(), 0f);
+                });
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_lock_toggle))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+                assertFalse(privacy.isAppLockEnabled()); assertFalse(ControllerPinManager.isDomModeActive());
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+                assertTrue(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
+                page.recreate();
+                page.onActivity(a -> assertTrue(((android.widget.CompoundButton) a.findViewById(R.id.privacy_discreet_toggle)).isChecked()));
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+                assertFalse(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
+            }
         }
     }
     @Test public void subCannotEnableAppLockWithoutAvailableDeviceAuthentication() throws Exception {
@@ -29,7 +49,7 @@ public class PrivacyAndroidTest {
                 .canAuthenticate(AppUnlockActivity.AUTHENTICATORS)
                 != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS);
         try (LocalPrivacyFixture fixture = new LocalPrivacyFixture();
-                ActivityScenario<PrivacyActivity> page = ActivityScenario.launch(PrivacyActivity.class)) {
+                ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_lock_toggle))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
             page.onActivity(a -> {
@@ -38,29 +58,6 @@ public class PrivacyAndroidTest {
                 assertFalse(ControllerPinManager.isDomModeActive());
                 assertFalse(a.isFinishing());
             });
-        }
-    }
-    private <T extends Activity> void assertSubPrivacyTaps(Class<T> screen) {
-        PrivacyManager privacy = new PrivacyManager(context);
-        // The app is already unlocked, as it must be before its privacy settings are reachable.
-        assertTrue(privacy.setAppLock(true)); PrivacyLifecycle.unlock();
-        try (ActivityScenario<T> page = ActivityScenario.launch(screen)) {
-            page.onActivity(a -> {
-                assertFalse(a.isFinishing()); assertFalse(ControllerPinManager.isDomModeActive());
-                assertEquals(1f, a.findViewById(R.id.privacy_discreet_toggle).getAlpha(), 0f);
-                assertEquals(1f, a.findViewById(R.id.privacy_lock_toggle).getAlpha(), 0f);
-            });
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_lock_toggle))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
-            assertFalse(privacy.isAppLockEnabled()); assertFalse(ControllerPinManager.isDomModeActive());
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
-            assertTrue(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
-            page.recreate();
-            page.onActivity(a -> assertTrue(((android.widget.CompoundButton) a.findViewById(R.id.privacy_discreet_toggle)).isChecked()));
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
-            assertFalse(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
         }
     }
     private final class LocalPrivacyFixture implements AutoCloseable {

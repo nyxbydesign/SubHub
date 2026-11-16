@@ -254,6 +254,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             String position=before.substring(6);long boundary="MAX".equals(position)?Long.MAX_VALUE:cursor(position);
             synchronized(store){return localPage(boundary,before,limit);}
         }
+        RemoteUi.prepareCachedAppIcons();
         DomSubjectScope scope = readScope();
         Page result;
         synchronized (store) {
@@ -360,6 +361,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         if (PersonId.LOCAL.equals(person)) {
             synchronized (store) { return localPage(Long.MAX_VALUE, "local:MAX", limit).entries; }
         }
+        RemoteUi.prepareCachedAppIcons();
         DomSubjectScope scope = readScope();
         List<ActivityEntry> result = Collections.emptyList();
         synchronized (store) {

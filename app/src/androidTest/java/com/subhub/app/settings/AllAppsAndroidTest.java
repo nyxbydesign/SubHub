@@ -8,6 +8,9 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.people.LocalAppsActivity;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.security.ControllerPinManager;
 import java.util.*;
 import org.junit.*;
@@ -52,7 +55,8 @@ public final class AllAppsAndroidTest {
         assertEquals(installed, scope.getIncludedPackages());
     }
     @Test public void sharedSelectorPersistsAllAndManualSelectionAcrossRecreation() {
-        try (ActivityScenario<SetupAppsActivity> page = ActivityScenario.launch(SetupAppsActivity.class)) {
+        try (ActivityScenario<LocalAppsActivity> page = ActivityScenario.launch(new Intent(context, LocalAppsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             awaitReady(page);
             page.onActivity(a -> ((CompoundButton) a.findViewById(R.id.all_apps)).setChecked(true));
             assertTrue(new AppModeManager(context).isAllApps());
@@ -78,7 +82,7 @@ public final class AllAppsAndroidTest {
             });
         }
     }
-    private static void awaitReady(ActivityScenario<SetupAppsActivity> page) {
+    private static void awaitReady(ActivityScenario<LocalAppsActivity> page) {
         long end = SystemClock.uptimeMillis() + 8000;
         java.util.concurrent.atomic.AtomicBoolean ready = new java.util.concurrent.atomic.AtomicBoolean();
         do {

@@ -50,9 +50,8 @@ public final class SubSessionNotificationsAndroidTest {
         nativeSession = RemoteSessionNative.installFixture(context, () -> statistics);
         dom = new RemoteStore(context, prefix + "dom.db"); sub = new RemoteStore(context, prefix + "sub.db");
         PairingInvite invite = PairingInvite.create(DOM, "ticket", 1000); generation = invite.id;
-        dom.saveInvite(invite); dom.bindInvite(generation, SUB, invite.tokenHash(), 1001);
-        dom.approveInvite(generation, SUB, "Sub", 1001); dom.activate(SUB, generation);
-        sub.acceptInvite(invite, "Dom"); sub.activate(DOM, generation);
+        TimedPairingFixture.activeDom(dom, invite, SUB, "Sub");
+        TimedPairingFixture.activeSub(sub, invite, SUB, "Dom");
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
         RemoteSessionCommands.Request request = RemoteSessionCommands.Request.start("owned-start", DOM, SUB, generation,
                 1, 0, now.wall, now.wall + 120000, RuntimeSessionIdentity.observe(context, now).idleFence,

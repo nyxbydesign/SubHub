@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="@dimen/ui_card_padding"
+        android:paddingTop="@dimen/ui_gap_group"
+        android:paddingBottom="@dimen/ui_gap_group">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_overview_card"
+            android:orientation="vertical"
+            android:padding="@dimen/ui_card_padding">
+
+            <TextView
+                style="@style/Widget.SubHub.FieldLabel"
+                android:layout_marginTop="0dp"
+                android:labelFor="@+id/gag_pair_source"
+                android:text="@string/gag_pair_source" />
+
+            <EditText
+                android:id="@id/gag_pair_source"
+                style="@style/Widget.SubHub.Input"
+                android:imeOptions="actionNext|flagNoPersonalizedLearning"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
+                android:maxLength="128"
+                android:maxLines="1" />
+
+            <TextView
+                style="@style/Widget.SubHub.FieldLabel"
+                android:layout_marginTop="@dimen/ui_gap_section"
+                android:labelFor="@+id/gag_pair_replacement"
+                android:text="@string/gag_pair_replacement" />
+
+            <EditText
+                android:id="@id/gag_pair_replacement"
+                style="@style/Widget.SubHub.Input"
+                android:gravity="top|start"
+                android:imeOptions="flagNoPersonalizedLearning"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:maxLength="2048"
+                android:minLines="3"
+                android:maxLines="6" />
+
+            <TextView
+                android:id="@+id/gag_pair_options_hint"
+                style="@style/Widget.SubHub.FieldHelp"
+                android:text="@string/gag_one_per_line" />
+        </LinearLayout>
+
+        <com.subhub.app.util.StateToggle
+            android:id="@+id/gag_pair_case_sensitive"
+            style="@style/Widget.SubHub.SettingsToggle"
+            android:layout_marginTop="@dimen/ui_gap_control"
+            android:text="@string/gag_pair_case_sensitive" />
+    </LinearLayout>
+</ScrollView>

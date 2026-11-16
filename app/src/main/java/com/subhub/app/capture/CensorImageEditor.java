@@ -2,6 +2,7 @@ package com.subhub.app.capture;
 
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Bundle;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -10,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -37,17 +39,58 @@ public final class CensorImageEditor implements AutoCloseable {
     private final List<Bitmap> thumbnails = new ArrayList<>();
     private boolean closed;
     private boolean importing;
+    private final Picker sharedPicker;
+
+    /** Registers before onStart even when the image editor appears later in an inline panel. */
+    public static final class Picker {
+        private static final String WORKSPACE = "artwork_picker_workspace";
+        private final ActivityResultLauncher<String[]> launcher;
+        private ActivityResultCallback<List<Uri>> receiver;
+        private List<Uri> pending;
+        private long workspace;
+
+        public Picker(AppCompatActivity activity, String key, Bundle state) {
+            workspace = state == null ? -1 : state.getLong(WORKSPACE, -1);
+            launcher = activity.getActivityResultRegistry().register(key, activity,
+                    new ActivityResultContracts.OpenMultipleDocuments(), result -> {
+                        if (workspace != ControllerPinManager.domWorkspaceRevision()) return;
+                        if (receiver == null) pending = result;
+                        else receiver.onActivityResult(result);
+                    });
+        }
+
+        public void saveState(Bundle state) { state.putLong(WORKSPACE, workspace); }
+
+        private void bind(ActivityResultCallback<List<Uri>> receiver) {
+            this.receiver = receiver;
+            if (pending != null && workspace == ControllerPinManager.domWorkspaceRevision()) {
+                receiver.onActivityResult(pending);
+            }
+            pending = null;
+        }
+
+        private void launch(String[] mimeTypes) {
+            workspace = ControllerPinManager.domWorkspaceRevision();
+            launcher.launch(mimeTypes);
+        }
+    }
 
     public CensorImageEditor(
             AppCompatActivity activity, Button add, TextView status, LinearLayout list) {
         this(activity, add, status, list, "censor");
     }
     public CensorImageEditor(AppCompatActivity activity, Button add, TextView status, LinearLayout list, String group) {
+        this(activity, add, status, list, group, null);
+    }
+
+    public CensorImageEditor(AppCompatActivity activity, Button add, TextView status, LinearLayout list,
+            String group, Picker sharedPicker) {
         artGroup = group;
         this.activity = activity;
         this.add = add;
         this.status = status;
         this.list = list;
+        this.sharedPicker = sharedPicker;
         app = com.subhub.app.configuration.FeatureEditorSession.context(activity);
         uiData = com.subhub.app.util.AsyncUiScope.forPage(activity);
         taskKey = "censor-images:" + System.identityHashCode(this) + ":";
@@ -57,13 +100,19 @@ public final class CensorImageEditor implements AutoCloseable {
                                 com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,
                                 android.content.Context.MODE_PRIVATE);
         list.getViewTreeObserver().addOnGlobalLayoutListener(visibilityChanged);
-        ActivityResultLauncher<String[]> picker =
-                activity.registerForActivityResult(
-                        new ActivityResultContracts.OpenMultipleDocuments(), this::importImages);
+        java.util.function.Consumer<String[]> launch;
+        if (sharedPicker == null) {
+            ActivityResultLauncher<String[]> picker = activity.registerForActivityResult(
+                    new ActivityResultContracts.OpenMultipleDocuments(), this::importImages);
+            launch = picker::launch;
+        } else {
+            sharedPicker.bind(this::importImages);
+            launch = sharedPicker::launch;
+        }
         add.setOnClickListener(
                 view -> {
                     if (!importing && com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup)) {
-                        picker.launch(new String[] {"image/*"});
+                        launch.accept(new String[] {"image/*"});
                     }
                 });
         list.post(this::refresh);
@@ -270,6 +319,7 @@ public final class CensorImageEditor implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        if (sharedPicker != null) sharedPicker.receiver = null;
         uiData.cancel(taskKey + "read");
         if (list.getViewTreeObserver().isAlive())
             list.getViewTreeObserver().removeOnGlobalLayoutListener(visibilityChanged);

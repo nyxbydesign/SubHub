@@ -66,8 +66,7 @@ public final class RemoteAppIconIntegrationAndroidTest extends LinkingFixture {
     @Before public void setupIcons()throws Exception{
         await(provider().snapshot());
         PairingInvite invite=PairingInvite.create(DOM,"owned fixture",System.currentTimeMillis());generation=invite.id;
-        store.saveInvite(invite);store.bindInvite(invite.id,SUB,invite.tokenHash(),System.currentTimeMillis());
-        store.approveInvite(invite.id,SUB,"Fixture Sub",System.currentTimeMillis());store.activate(SUB,invite.id);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Fixture Sub");
         peer=store.peer(SUB,generation);
         cacheRoot=new File(target.getCacheDir(),prefix+"icons");
         Context owned=new ContextWrapper(context){
@@ -217,6 +216,49 @@ public final class RemoteAppIconIntegrationAndroidTest extends LinkingFixture {
             assertEquals(SUB,revoked.peer);assertEquals(generation,revoked.generation);assertNull(revoked.descriptor);
             assertFalse(icons.current(peer));assertFalse(icons.mirrored(peer,PACKAGE));
         }
+    }
+
+    @Test public void downloadedIconDrawsOnTheFirstFrameAfterAnOfflineCacheReopen() throws Exception {
+        RemoteAppIcon bare = RemoteUi.appIcon(context, SUB, generation, PACKAGE);
+        assertNull(bare.descriptor);
+        receivePng(png());
+        RemoteAppIcon downloaded = icons.identity(SUB, generation, PACKAGE);
+        assertNotNull(downloaded.descriptor);
+
+        installed.close();
+        installed = null;
+        icons.close();
+        Context owned = new ContextWrapper(context) {
+            @Override public Context getApplicationContext() { return this; }
+            @Override public File getCacheDir() { return cacheRoot; }
+        };
+        icons = new RemoteAppIconIntegration(owned, store, iconWorker, () -> { });
+        store.onRevoked(icons::revoked);
+        icons.refresh();
+        installed = installIconProvider(icons);
+        assertEquals(downloaded, icons.identity(SUB, generation, PACKAGE));
+
+        InstrumentationRegistry.getInstrumentation().getUiAutomation(android.app.UiAutomation.FLAG_DONT_USE_ACCESSIBILITY);
+        CountDownLatch painted = new CountDownLatch(1);
+        AtomicReference<Integer> firstPixel = new AtomicReference<>();
+        try (var page = androidx.test.core.app.ActivityScenario.launch(com.subhub.app.help.HelpActivity.class)) {
+            page.onActivity(activity -> {
+                android.widget.ImageView icon = new android.widget.ImageView(activity) {
+                    @Override protected void onDraw(android.graphics.Canvas canvas) {
+                        super.onDraw(canvas);
+                        int pixel = getDrawable() instanceof android.graphics.drawable.BitmapDrawable bitmap
+                                ? bitmap.getBitmap().getPixel(2, 2) : Color.TRANSPARENT;
+                        if (firstPixel.compareAndSet(null, pixel)) painted.countDown();
+                    }
+                };
+                RemoteUi.bindAppIcon(icon, bare, com.subhub.app.R.drawable.ic_settings_apps);
+                activity.setContentView(icon);
+            });
+            assertTrue("First frame not drawn", painted.await(5, TimeUnit.SECONDS));
+            assertEquals(Color.MAGENTA, firstPixel.get().intValue());
+        }
+        store.revoke(SUB, generation);
+        assertNull(icons.preview(downloaded));
     }
 
     @androidx.test.filters.SdkSuppress(minSdkVersion=30)

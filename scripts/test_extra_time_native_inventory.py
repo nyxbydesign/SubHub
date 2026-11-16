@@ -42,8 +42,8 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual({
             "DurationChoicesAndroidTest": 2, "ServiceDurationRetentionAndroidTest": 3,
             "PersonRefreshAndroidTest": 3, "RemoteAppIconPresentationAndroidTest": 1,
-            "RemoteConfigurationAndroidTest": 5, "RemoteDurationAndroidTest": 1,
-            "RemoteEditorAndroidTest": 5, "RemoteSessionControlsAndroidTest": 4,
+            "RemoteConfigurationAndroidTest": 5, "RemoteDurationAndroidTest": 2,
+            "RemoteEditorAndroidTest": 4, "RemoteSessionControlsAndroidTest": 4,
             "LazySessionDurationAndroidTest": 5, "PageScrollViewAndroidTest": 3,
         }, {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.SUBHUB_PASS_NATIVE.items()})
         already_selected = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt"

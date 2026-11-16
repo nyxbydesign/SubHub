@@ -1103,30 +1103,6 @@ public final class RemoteStore extends SQLiteOpenHelper {
         return second!=null&&second.matches("[0-9a-f]{64}")&&java.security.MessageDigest.isEqual(first.getBytes(StandardCharsets.US_ASCII),second.getBytes(StandardCharsets.US_ASCII));
     }
 
-    // Storage-level retained-data adapters below are not live network admission paths.
-    void saveInvite(PairingInvite invite) {
-        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
-        newCommandTransition("invite-create",invite.id+":"+invite.tokenHash(),RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{ContentValues values = new ContentValues();
-        values.put("id", invite.id); values.put("token_hash", invite.tokenHash());
-        values.put("expires", invite.expiresAt);
-        db.insertOrThrow("invites", null, values);return null;});
-    }
-
-    String bindInvite(String id, String candidate, String tokenHash, long now) {
-        RemoteProtocol.identifier(id); RemoteProtocol.peerId(candidate);
-        return authorityTransition("invite-bind",id+":"+candidate+":"+tokenHash,db->{
-        try (Cursor c = db.rawQuery("SELECT token_hash,expires,candidate,consumed FROM invites WHERE id=?", new String[]{id})) {
-            if (!c.moveToFirst() || now <= 0 || now >= c.getLong(1) || c.getInt(3) != 0
-                    || !java.security.MessageDigest.isEqual(c.getString(0).getBytes(StandardCharsets.US_ASCII),
-                    tokenHash.getBytes(StandardCharsets.US_ASCII))
-                    || (!c.isNull(2) && !candidate.equals(c.getString(2)))) {
-                throw new SecurityException("Invitation unavailable");
-            }
-            db.execSQL("UPDATE invites SET candidate=? WHERE id=?", new Object[]{candidate, id});
-            return id;
-        }});
-    }
-
     synchronized void describeCandidate(String id,String candidate,String name,String route) {
         name=RemoteProtocol.deviceName(name);
         if (route == null || route.length()>4096) {
@@ -1152,82 +1128,6 @@ public final class RemoteStore extends SQLiteOpenHelper {
             while(c.moveToNext()) result.add(new Invitation(c.getString(0),c.getString(1),c.getString(2),c.getLong(3),c.getInt(4)!=0));
         }
         return result;
-    }
-
-    synchronized boolean approvedInvite(String id,String candidate,String tokenHash) {
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT token_hash FROM invites WHERE id=? AND candidate=? AND approved=1 AND consumed=1",new String[]{id,candidate})) {
-            Peer peer=peer(getReadableDatabase(),candidate,id);
-            return c.moveToFirst() && peer!=null && peer.localRole==RemoteProtocol.Role.DOM && peer.state!=State.REVOKED
-                    && java.security.MessageDigest.isEqual(c.getString(0).getBytes(StandardCharsets.US_ASCII),tokenHash.getBytes(StandardCharsets.US_ASCII));
-        }
-    }
-
-    void approveInvite(String id, String candidate, String name, long now) {
-        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
-        newCommandTransition("invite-approve",id+":"+candidate,RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
-        try (Cursor c = db.rawQuery("SELECT expires,candidate,consumed FROM invites WHERE id=?", new String[]{id})) {
-            if (!c.moveToFirst() || now <= 0 || now >= c.getLong(0) || !candidate.equals(c.getString(1))
-                    || c.getInt(2) != 0) throw new SecurityException("Invitation unavailable");
-            putPending(db, candidate, id, name, RemoteProtocol.Role.DOM);
-            db.execSQL("UPDATE invites SET approved=1,consumed=1 WHERE id=?", new Object[]{id});
-            return null;
-        }});
-    }
-
-    void acceptInvite(PairingInvite invite, String name) {
-        if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
-        newCommandTransition("invite-accept",invite.id+":"+invite.domIdentity+":"+invite.tokenHash(),RemoteProtocol.Role.SUB,LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
-            if (peer(db, invite.domIdentity, invite.id) != null) throw new SecurityException("Invitation already used");
-            putPending(db, invite.domIdentity, invite.id, name, RemoteProtocol.Role.SUB);
-            db.execSQL("UPDATE peers SET route=? WHERE peer=? AND generation=?",new Object[]{invite.route,invite.domIdentity,invite.id});
-            return null;
-        });
-    }
-
-    void activate(String identity, String generation) {
-        requireCallbackBoundary();
-        Peer existing=authorityRead(()->peer(identity,generation));
-        if(existing==null||existing.state==State.REVOKED)throw new SecurityException("Pairing unavailable");
-        Peer committed=existing.state==State.ACTIVE?existing:authorityTransition("peer-activate",identity+":"+generation,db->{
-            Peer current=peer(db,identity,generation);
-            if(current==null||current.state==State.REVOKED)throw new SecurityException("Pairing unavailable");
-            if(current.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
-            db.execSQL("UPDATE peers SET state='ACTIVE' WHERE peer=? AND generation=? AND state='PENDING'",new Object[]{identity,generation});
-            FormalRelationshipStore.mapPeer(db,identity,generation,false);return peer(db,identity,generation);
-        });
-        java.util.function.Consumer<Peer> listener;synchronized(this){listener=activated;}listener.accept(committed);
-    }
-
-    public void cancelInvite(String id) {
-        requireCallbackBoundary();final String invitation=RemoteProtocol.identifier(id);
-        List<Peer> cancelled=newCommandTransition("invite-cancel",invitation,RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
-            try(Cursor active=db.rawQuery("SELECT 1 FROM peers WHERE generation=? AND state='ACTIVE' LIMIT 1",new String[]{invitation})){
-                if(active.moveToFirst())throw new SecurityException("Active relationships require explicit unlink");
-            }
-            List<Peer> result=new ArrayList<>();
-            db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{invitation});
-            try(Cursor rows=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state='PENDING'",new String[]{invitation})){
-                while(rows.moveToNext())result.add(readPeer(rows));
-            }
-            for(Peer peer:result)revokeRows(db,peer.identity,peer.generation);return result;
-        });
-        java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}
-        for(Peer peer:cancelled)listener.accept(peer.identity,peer.generation);
-    }
-
-    boolean cancelPendingPeer(String identity,String generation) {
-        requireCallbackBoundary();RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
-        return pairingOperation(()->{
-            Peer current=authorityRead(()->peer(identity,generation));
-            if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state!=State.PENDING)return false;
-            boolean cancelled=newCommandTransition("pending-cancel",identity+":"+generation,RemoteProtocol.Role.SUB,LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
-                Peer exact=peer(db,identity,generation);
-                if(exact==null||exact.localRole!=RemoteProtocol.Role.SUB||exact.state!=State.PENDING)return false;
-                revokeRows(db,identity,generation);return true;
-            });
-            if(cancelled){java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}listener.accept(identity,generation);}
-            return cancelled;
-        });
     }
 
     synchronized void setRoute(String identity,String generation,String route) {
@@ -1627,7 +1527,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             doc=com.subhub.app.tasks.TaskContractFields.forPeer(doc,
                     "1".equals(metadata(identity,generation,"tasks_version","0")), true);
             doc=ExtraTimeContractFields.forPeer(doc,"1".equals(metadata(identity,generation,"extra_time_version","0")),true);
-            doc=GagContractFields.forPeer(doc,GagContractFields.supported(this,peer),true);
+            doc=GagContractFields.forPeer(doc, GagContractFields.capability(this, peer), true);
             long previous=Long.parseLong(metadata(identity,generation,"desired_revision","0"));
             if(previous!=expectedDesired || previous==Long.MAX_VALUE || expectedApplied<0)throw new IllegalStateException("Configuration changed; reload before saving");
             Command pending=latestCommand(identity,generation);if(pending!=null && pending.pending())throw new IllegalStateException("A configuration change is pending");

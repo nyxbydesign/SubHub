@@ -23,6 +23,7 @@ import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.people.*;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.SettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.StatsRepository;
 import com.google.zxing.*;
@@ -87,8 +88,7 @@ public class RemoteFlowAndroidTest {
         write("dom-state","baseline-synced");PersonSnapshot baseline=repository.load(id);assertEquals(2,baseline.allowances.size());assertNotEquals(baseline.allowances.get(0).dailyMinutes,baseline.allowances.get(1).dailyMinutes);
         assertEquals(42,feature.store.mirrored(sub.identity,sub.generation,RemoteProtocol.Stream.STATS,"summary").getLong("censors"));
         assertFalse(new AppModeManager(context).isArmed());
-        int existingArtwork=0;JSONArray baselineAssets=feature.contracts.current(sub).getJSONObject("contract").getJSONArray("assets");
-        for(int index=0;index<baselineAssets.length();index++)if(baselineAssets.getJSONObject(index).getString("path").startsWith("assets/censor/"))existingArtwork++;
+        int expectedArtwork=censorArtworkCount(feature.contracts.current(sub))+1;
         ContentValues values=new ContentValues();String name="subhub-flow-"+directory.getName()+".png";values.put(MediaStore.Images.Media.DISPLAY_NAME,name);values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/");
         try(android.database.Cursor existing=context.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 new String[]{MediaStore.Images.Media._ID},MediaStore.Images.Media.DISPLAY_NAME+"=?",new String[]{name},null)) {
@@ -96,9 +96,10 @@ public class RemoteFlowAndroidTest {
         }
         if(image==null){image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertNotNull(image);
             try(OutputStream output=context.getContentResolver().openOutputStream(image)){Bitmap bitmap=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xffd19bff);assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,output));bitmap.recycle();}}
-        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section","censor"))) {
-            awaitEditor(editor);write("dom-state","editor-open");name(editor,"Shared contract");
-            tap(editor,context.getString(R.string.remote_add_censor_image));
+        try(ActivityScenario<SettingsActivity> editor=openCensorEditor(id)) {
+            write("dom-state","editor-open");
+            onView(withId(R.id.radio_custom)).perform(scrollTo(),click());
+            onView(withId(R.id.button_add_censor_images)).perform(scrollTo(),click());
             device.waitForIdle();
             androidx.test.uiautomator.UiObject2 roots=device.wait(Until.findObject(By.desc("Show roots")),5000);assertNotNull(roots);roots.click();device.waitForIdle();
             androidx.test.uiautomator.UiObject2 recent=device.wait(Until.findObject(By.res("android:id/title").text("Recent")),5000);assertNotNull(recent);recent.click();
@@ -106,16 +107,23 @@ public class RemoteFlowAndroidTest {
             BySelector imageTile=By.descStartsWith(name+", ");
             if(!device.wait(Until.hasObject(imageTile),10_000)){device.dumpWindowHierarchy(new File(directory,"picker-failure.xml"));fail("Synthetic image tile not visible in document picker");}
             device.findObject(imageTile).click();assertTrue(device.wait(Until.gone(By.pkg("com.google.android.documentsui").depth(0)),5000));instrument.waitForIdleSync();
-            try { awaitText(editor,context.getString(R.string.remote_artwork_count,existingArtwork+1)); }
+            try {
+                await(()->{
+                    AtomicReference<Boolean> imported=new AtomicReference<>(false);
+                    editor.onActivity(activity->{
+                        TextView status=activity.findViewById(R.id.censor_images_status);
+                        imported.set(context.getString(R.string.custom_images_added,1).contentEquals(status.getText()));
+                    });
+                    return imported.get();
+                },15_000);
+            }
             catch(AssertionError failure) { capture("picker-return-failure.png");device.dumpWindowHierarchy(new File(directory,"picker-return-failure.xml"));throw failure; }
             write("dom-state","image-selected");
-            toggleFirst(editor,false);capture("remote-contract-editor.png");write("dom-state","automatic-sync-requested");
+            capture("remote-contract-editor.png");write("dom-state","automatic-sync-requested");
         }
         await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);if(command==null||command.state!=RemoteStore.CommandState.APPLIED)return false;
             JSONObject current=new JSONObject(command.body).getJSONObject("configuration");
-            return "Shared contract".equals(current.getJSONObject("contract").getString("name"))
-                    && !current.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_censor_enabled")
-                    && current.getJSONObject("contract").getJSONArray("assets").length()>0;},90_000);
+            return "custom".equals(censorStyle(current))&&censorArtworkCount(current)==expectedArtwork;},90_000);
         await(()->{try{return repository.load(id).can(PersonSnapshot.Capability.END_SESSION);}catch(Exception waiting){return false;}},90_000);
         new AppModeManager(context).setArmed(true);String expected=repository.load(id).sessionIdentity;assertFalse(expected.isEmpty());
         try(ActivityScenario<RemoteEndActivity> end=ActivityScenario.launch(new Intent(context,RemoteEndActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("expectedSession",expected))) {
@@ -137,12 +145,12 @@ public class RemoteFlowAndroidTest {
         }
         write("dom-state","ready-offline");
         await(()->"yes".equals(read("offline-confirmed")),60_000);
-        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section","censor"))) {
-            awaitEditor(editor);name(editor,"Queued offline");
+        try(ActivityScenario<SettingsActivity> editor=openCensorEditor(id)) {
+            onView(withId(R.id.radio_blur)).perform(scrollTo(),click());
         }
-        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").optString("name").equals("Queued offline")&&command.pending();},10_000);Thread.sleep(1500);
+        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&"blur".equals(censorStyle(new JSONObject(command.body).getJSONObject("configuration")))&&command.pending();},10_000);Thread.sleep(1500);
         assertTrue(feature.store.latestCommand(sub.identity,sub.generation).pending());write("dom-state","queued-offline");
-        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").optString("name").equals("Queued offline")&&command.state==RemoteStore.CommandState.APPLIED;},100_000);
+        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&"blur".equals(censorStyle(new JSONObject(command.body).getJSONObject("configuration")))&&command.state==RemoteStore.CommandState.APPLIED;},100_000);
         await(()->"second-applied".equals(read("sub-state")),60_000);
         try(ActivityScenario<RemoteConnectionActivity> connection=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()))) {
             tap(connection,context.getString(R.string.remote_unpair));await(()->feature.store.peer(sub.identity,sub.generation).state==RemoteStore.State.REVOKED,10_000);
@@ -229,12 +237,11 @@ public class RemoteFlowAndroidTest {
     private void subWaitForFirstApply()throws Exception {
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
             RemoteStore.Peer dom=peer(RemoteProtocol.Role.SUB);
-            await(()->!main.getBoolean("module_censor_enabled",true)
-                    && "Shared contract".equals(feature.contracts.current(dom).getJSONObject("contract").getString("name"))
+            await(()->"custom".equals(censorStyle(feature.contracts.current(dom)))
                     && !main.getString(com.subhub.app.capture.CustomImageManager.PACK_DIR_KEY,"").isEmpty(),90_000);
-            assertFalse(main.getBoolean("module_censor_enabled",true));assertEquals("kept-local",main.getString("paypal_secret_fixture",""));
+            assertTrue(main.getBoolean("module_censor_enabled",false));assertEquals("kept-local",main.getString("paypal_secret_fixture",""));
             String folder=main.getString(com.subhub.app.capture.CustomImageManager.PACK_DIR_KEY,"");File[] files=new File(folder).listFiles();assertNotNull(files);assertEquals(1,files.length);assertNotNull(android.graphics.BitmapFactory.decodeFile(files[0].getPath()));
-            assertEquals("Shared contract",feature.contracts.current(dom).getJSONObject("contract").getString("name"));
+            assertEquals("custom",censorStyle(feature.contracts.current(dom)));
             new AppModeManager(context).setArmed(true);String before=com.subhub.app.appmode.RuntimeSessionIdentity.current(context);assertFalse(before.isEmpty());feature.changed();write("sub-state","first-applied");
             await(()->!new AppModeManager(context).isArmed(),90_000);assertFalse(ControllerPinManager.verify(context,"2468"));assertEquals(com.subhub.app.security.KeyholderProvider.State.READY,People.keyholder().state());
             ControllerPinManager.enterSubMode();write("sub-state","awaiting-code");await(()->read("keyholder-code").matches("[0-9]{6}"),30_000);
@@ -246,10 +253,10 @@ public class RemoteFlowAndroidTest {
     @Test public void subResumesQueuedConfigurationAndRetainsItAfterRevocation()throws Exception {
         RemoteStore.Peer dom=peer(RemoteProtocol.Role.SUB);assertNotNull(dom);assertEquals(RemoteStore.State.ACTIVE,dom.state);
         try(ActivityScenario<RemoteConnectionActivity> connection=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(dom).value()))) {
-            feature.changed();await(()->"Queued offline".equals(feature.contracts.current(dom).getJSONObject("contract").getString("name")),90_000);
-            assertEquals("Queued offline",feature.contracts.current(dom).getJSONObject("contract").getString("name"));write("sub-state","second-applied");
+            feature.changed();await(()->"blur".equals(censorStyle(feature.contracts.current(dom))),90_000);
+            assertEquals("blur",censorStyle(feature.contracts.current(dom)));write("sub-state","second-applied");
             await(()->feature.store.peer(dom.identity,dom.generation).state==RemoteStore.State.REVOKED,90_000);
-            assertEquals("Queued offline",feature.contracts.localApplied().getJSONObject("contract").getString("name"));assertTrue(People.isLocalConfigurationAllowed());
+            assertEquals("blur",censorStyle(feature.contracts.localApplied()));assertTrue(People.isLocalConfigurationAllowed());
             assertEquals(com.subhub.app.security.KeyholderProvider.State.NONE,People.keyholder().state());assertNull(new RemoteSecrets(context).controllerSecret(RemoteProtocol.Role.SUB,dom.identity,dom.generation));assertTrue(ControllerPinManager.verify(context,"2468"));
             assertEquals("kept-local",context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).getString("paypal_secret_fixture",""));write("sub-state","complete");
         }
@@ -258,12 +265,27 @@ public class RemoteFlowAndroidTest {
         assertTrue(device.wait(Until.hasObject(By.text(context.getString(R.string.remote_pair_question))),5000));
         assertTrue(device.wait(Until.hasObject(By.res("android:id/button1")),5000));device.findObject(By.res("android:id/button1")).click();instrument.waitForIdleSync();
     }
-    private void awaitEditor(ActivityScenario<RemoteContractActivity> scenario)throws Exception {
-        await(()->{AtomicReference<Boolean> value=new AtomicReference<>(false);scenario.onActivity(activity->value.set(first(activity.findViewById(R.id.role_page_body),EditText.class)!=null));return value.get();},15_000);
+    private ActivityScenario<SettingsActivity> openCensorEditor(PersonId person) {
+        ActivityScenario<SettingsActivity> page=ActivityScenario.launch(new Intent(context,SettingsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,person.value()));
+        try {
+            onView(withId(R.id.button_appearance_details)).perform(scrollTo(),click());
+            return page;
+        } catch (RuntimeException|AssertionError failure) {
+            page.close();
+            throw failure;
+        }
     }
-    private void name(ActivityScenario<RemoteContractActivity> scenario,String value){scenario.onActivity(activity->{EditText name=first(activity.findViewById(R.id.role_page_body),EditText.class);assertNotNull(name);name.setText(value);});instrument.waitForIdleSync();}
-    private void toggleFirst(ActivityScenario<RemoteContractActivity> scenario,boolean desired)throws Exception {
-        AtomicReference<View> target=new AtomicReference<>();scenario.onActivity(activity->{Switch toggle=first(activity.findViewById(R.id.role_page_body),Switch.class);assertNotNull(toggle);if(toggle.isChecked()!=desired)target.set(toggle);});if(target.get()!=null)tapView(target.get());
+    private static String censorStyle(JSONObject configuration)throws JSONException {
+        return configuration.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").getString("censor_type");
+    }
+    private static int censorArtworkCount(JSONObject configuration)throws JSONException {
+        JSONArray assets=configuration.getJSONObject("contract").getJSONArray("assets");
+        int count=0;
+        for(int index=0;index<assets.length();index++) {
+            if(assets.getJSONObject(index).getString("path").startsWith("assets/censor/"))count++;
+        }
+        return count;
     }
     private <T extends Activity> void tap(ActivityScenario<T> scenario,String copy)throws Exception {
         AtomicReference<View> target=new AtomicReference<>();scenario.onActivity(activity->target.set(find(activity.findViewById(R.id.role_page_body),copy)));assertNotNull("Missing action: "+copy,target.get());tapView(target.get());

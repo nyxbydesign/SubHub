@@ -9,7 +9,7 @@ final class PersonPresentation {
     private PersonPresentation() { }
     static List<Object> contract(PersonSnapshot person) {
         List<Object> result = new ArrayList<>(Arrays.asList(person.name, person.capabilities,
-                person.featureConsent, person.consentHardcoreOverride, person.sync.runtime,
+                person.featureConsent, person.sync.runtime,
                 person.sync.contract, person.sync.hasPendingConfiguration()));
         for (PersonSnapshot.Section section : person.sections) {
             result.addAll(Arrays.asList(section.key, section.title, section.summary, section.details));

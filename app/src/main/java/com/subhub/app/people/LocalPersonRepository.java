@@ -87,8 +87,7 @@ public final class LocalPersonRepository implements PersonRepository {
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
                 capabilities, sections, allowances, wallet.getCurrency(),
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
-                stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
-                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context)), settings);
+                stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent()), settings);
     }
 
     public List<PersonSnapshot.Allowance> loadAllowances() {
@@ -105,7 +104,7 @@ public final class LocalPersonRepository implements PersonRepository {
                 localCapabilities(), List.of(), loadAllowances(), "", 0, 0, 0, 0, false,
                 new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
                         PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "", ""))
-                .withProfile(profile, localConsent(), SubFeaturePolicy.hardcoreOverride(context));
+                .withProfile(profile, localConsent());
         return withContractOwner(local, settings);
     }
 

@@ -121,13 +121,15 @@ public final class PublicFormIdentityAndroidTest {
     @Test public void publicEditorsShareInputAndSwitchStylesInBothControlStates() throws Exception {
         for (String name : new String[]{"appmode.AppModeActivity", "settings.GlobalSettingsActivity",
                 "settings.SettingsActivity", "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
-                "capture.export.ExportAppearanceActivity", "privacy.PrivacyActivity"}) {
+                "capture.export.ExportAppearanceActivity"}) {
             Class<? extends android.app.Activity> type = Class.forName("com.subhub.app." + name).asSubclass(android.app.Activity.class);
             try (ActivityScenario<? extends android.app.Activity> page = ActivityScenario.launch(type)) {
                 settle();
                 page.onActivity(a -> {
                     View advanced = a.findViewById(R.id.button_advanced_details);
                     if (advanced != null) advanced.performClick();
+                    View whispersAdvanced = a.findViewById(R.id.whispers_advanced_button);
+                    if (whispersAdvanced != null) whispersAdvanced.performClick();
                     View timing = a.findViewById(R.id.advanced_enabled);
                     if (timing instanceof StateToggle) ((StateToggle) timing).setChecked(true);
                     View custom = a.findViewById(R.id.pack_custom);

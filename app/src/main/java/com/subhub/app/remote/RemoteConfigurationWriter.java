@@ -60,7 +60,7 @@ public final class RemoteConfigurationWriter {
         }
     }
 
-    /** Returns false only while required content is still arriving. */
+    /** Returns false while required content or the paired app's capability is unavailable. */
     public synchronized boolean apply(RemoteStore.Peer peer,RemoteStore.Command command,RemoteAssets assets,Set<String> selectable) throws Exception {
         if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is pending");
         if(!command.pending())return true;
@@ -81,6 +81,7 @@ public final class RemoteConfigurationWriter {
                     throw new SecurityException("Pairing is no longer authorized");
                 RemoteStore.Command latest=store.command(peer.identity,peer.generation,command.id);
                 if(latest==null || !latest.pending())return true;
+                if (!GagContractFields.capability(store, current).supportsPairs(GagContractFields.section(doc))) return false;
                 if(GagContractFields.section(doc)!=null && !GagContractFields.supported(store,current)) {
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Gag is unsupported by the pairing");
                     return true;

@@ -76,13 +76,12 @@ public class ProfileDataTest {
                 java.util.Collections.emptySet(), java.util.Collections.emptyList(), java.util.Collections.emptyList(),
                 "EUR", 0, 0, 0, 0, false);
         java.util.Map<String, Boolean> consent = new java.util.LinkedHashMap<>(); consent.put("censor", false);
-        PersonSnapshot projected = original.withProfile(new ProfileData("Current name", "Current bio", ""), consent, true);
+        PersonSnapshot projected = original.withProfile(new ProfileData("Current name", "Current bio", ""), consent);
         consent.put("censor", true);
         assertEquals("Current name", projected.name);
         assertEquals("Current name", projected.profile.name);
         assertEquals("Earlier name", original.name);
         assertFalse(projected.featureConsent.get("censor"));
-        assertTrue(projected.consentHardcoreOverride);
         assertEquals(original.capabilities, projected.capabilities);
         assertThrows(UnsupportedOperationException.class, () -> projected.featureConsent.put("limits", true));
     }

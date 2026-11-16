@@ -71,34 +71,23 @@ public final class GagClipboardAndroidTest {
     @Test public void screenshotCaptureFollowsClipboardUseAndCurrentFullPhotoGrant() {
         withPhotoAccess((scoped, grants) -> {
             var prefs = GagScreenshotClipboard.preferences(scoped);
+            prefs.edit().putBoolean("retention", false).apply();
             String full = GagScreenshotClipboard.requestedPermissions()[0];
             grants.add(full);
             assertFalse(GagScreenshotClipboard.updateAccess(scoped));
             assertFalse(GagScreenshotClipboard.enabled(scoped));
-
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
-            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
 
             assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
             long beforeOpen = System.currentTimeMillis();
             assertTrue(GagScreenshotClipboard.updateAccess(scoped));
             assertTrue(GagScreenshotClipboard.enabled(scoped));
             assertTrue(prefs.getLong(GagScreenshotClipboard.ENABLED_SINCE, 0) >= beforeOpen);
-
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.enabled(scoped));
-            assertFalse(GagScreenshotClipboard.updateAccess(scoped));
         });
     }
 
     @Test public void deniedOrSelectedPhotoAccessDoesNotKeepPrompting() {
         withPhotoAccess((scoped, grants) -> {
             var prefs = GagScreenshotClipboard.preferences(scoped);
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, false).apply();
-            assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
-            prefs.edit().putBoolean(GagScreenshotClipboard.RETENTION, true).apply();
             assertTrue(GagScreenshotClipboard.onClipboardOpened(scoped));
             assertFalse(GagScreenshotClipboard.updateAccess(scoped));
             assertFalse(GagScreenshotClipboard.onClipboardOpened(scoped));
@@ -252,6 +241,71 @@ public final class GagClipboardAndroidTest {
                 "x".repeat(GagClipboard.MAX_TEXT_LENGTH + 1))));
     }
 
+    @Test public void longTextKeepsItsFullContentsAndUsesABoundedUnicodePreview() {
+        String emoji = "😀";
+        String text = "\n  " + emoji.repeat(257) + "x".repeat(GagClipboard.MAX_TEXT_LENGTH - 517);
+        assertEquals(GagClipboard.MAX_TEXT_LENGTH, text.length());
+        assertEquals(text, GagClipboard.plainText(ClipData.newPlainText("Fixture", text)));
+        GagClipboard history = new GagClipboard();
+        history.remember(text, 20, 20, 20);
+        GagClipboard.Entry entry = history.recentEntries(20).get(0);
+        assertEquals(text, entry.text());
+        assertEquals(emoji.repeat(256) + "…", GagClipboard.previewText(entry.text()));
+        assertEquals(emoji.repeat(256), GagClipboard.previewText(emoji.repeat(256)));
+    }
+
+    @Test public void loneImageChipCentersItsThumbnailAndLabelBetweenTheKeyboardGutters() {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        var context = instrumentation.getTargetContext();
+        GagClipboard clips = new GagClipboard();
+        clips.remember(screenshotImage(0xff9955cc), 20, 20, 20);
+        instrumentation.runOnMainSync(() -> {
+            float density = context.getResources().getDisplayMetrics().density;
+            int gutter = Math.round(44 * density);
+            int height = Math.round(43 * density);
+            var toolbar = new android.widget.LinearLayout(context);
+            var strip = new android.widget.LinearLayout(context);
+            for (int index = 0; index < 3; index++)
+                strip.addView(new TextView(context), new android.widget.LinearLayout.LayoutParams(0, -1, 1));
+            var navigation = new View(context);
+            toolbar.addView(navigation, new android.widget.LinearLayout.LayoutParams(gutter, height));
+            toolbar.addView(strip, new android.widget.LinearLayout.LayoutParams(0, height, 1));
+            toolbar.addView(new View(context), new android.widget.LinearLayout.LayoutParams(gutter, height));
+            var chip = GagKeyboardService.clipboardPreview(context, clips.entries(20).get(0), "Screenshot", true);
+            GagKeyboardService.placeClipboardSuggestion(strip, chip);
+            int width = Math.round(360 * density);
+            toolbar.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            toolbar.layout(0, 0, width, height);
+            assertTrue(Math.abs(2 * strip.getLeft() + chip.getLeft() + chip.getRight() - width) <= 1);
+            assertTrue("Tap bounds must exclude the clipboard navigation button",
+                    chip.getWidth() < strip.getWidth() && strip.getLeft() + chip.getLeft() >= navigation.getRight());
+            View thumbnail = chip.findViewWithTag("gag_clipboard_thumbnail");
+            assertNotNull(thumbnail);
+            TextView label = (TextView) chip.getChildAt(1);
+            assertEquals("Screenshot", label.getText().toString());
+            assertTrue(Math.abs(thumbnail.getLeft() + label.getRight() - chip.getWidth()) <= 1);
+        });
+    }
+
+    @Test public void freshImagesCanBeSuggestedOverADraftOnlyForCompatibleEditors() {
+        long copied = 20L;
+        GagClipboard clips = new GagClipboard();
+        clips.remember("Copied text", copied, copied, copied);
+        var text = clips.entries(copied).get(0);
+        clips.remember(screenshotImage(0xff9955cc), copied + 1, copied + 1, copied + 1);
+        var image = clips.entries(copied + 1).get(0);
+        var editor = new EditorInfo();
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, copied + 1));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, true, copied + 1));
+        editor.contentMimeTypes = new String[]{"image/*"};
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, copied + 1));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(image, editor, false, copied + 60_001L));
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(image, editor, true, copied + 60_001L));
+        assertFalse(GagKeyboardService.canOfferClipboardSuggestion(text, editor, false, copied + 1));
+        assertTrue(GagKeyboardService.canOfferClipboardSuggestion(text, editor, true, copied + 1));
+    }
+
     @Test public void sessionHistoryCapsExpiresAndDoesNotRenewOnRead() {
         assertEquals(21_600_000L, GagClipboard.LIFETIME_MS);
         GagClipboard clips = new GagClipboard();
@@ -392,5 +446,6 @@ public final class GagClipboardAndroidTest {
         assertEquals(text, GagClipboard.applyWords(text, word -> word));
         assertEquals("[don't],  [skip]\t[me]\n192.168.1.14",
                 GagClipboard.applyWords(text, word -> "[" + word + "]"));
+        assertNull(GagClipboard.applyWords("x ".repeat(100), word -> "x".repeat(2048)));
     }
 }

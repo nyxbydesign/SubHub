@@ -2,8 +2,6 @@ package com.subhub.app.atmosphere;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.Handler;
-import android.os.Looper;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -16,6 +14,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** Private keyboard suggestions. Only the IME may supply confirmed input from eligible editors. */
 public final class GagPersonalDictionary {
@@ -32,9 +33,20 @@ public final class GagPersonalDictionary {
     public GagPersonalDictionary(Context context) {
         synchronized (GagPersonalDictionary.class) {
             if (shared == null) shared = new Store(context.getApplicationContext()
-                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE), newWriter());
             store = shared;
         }
+    }
+
+    GagPersonalDictionary(SharedPreferences preferences, ScheduledThreadPoolExecutor writer) {
+        store = new Store(preferences, writer);
+    }
+
+    private static ScheduledThreadPoolExecutor newWriter() {
+        ScheduledThreadPoolExecutor writer = new ScheduledThreadPoolExecutor(1,
+                task -> new Thread(task, "gag-dictionary-write"));
+        writer.setRemoveOnCancelPolicy(true);
+        return writer;
     }
 
     public boolean isLearningEnabled() {
@@ -90,14 +102,15 @@ public final class GagPersonalDictionary {
 
     private static final class Store {
         private final SharedPreferences preferences;
-        private final Handler writer = new Handler(Looper.getMainLooper());
+        private final ScheduledThreadPoolExecutor writer;
         private final Model model = new Model();
         private boolean learning;
-        private boolean writeScheduled;
-        private final Runnable write = this::persistNow;
+        private ScheduledFuture<?> scheduled;
+        private long settingsRevision;
 
-        private Store(SharedPreferences preferences) {
+        private Store(SharedPreferences preferences, ScheduledThreadPoolExecutor writer) {
             this.preferences = preferences;
+            this.writer = writer;
             Map<String, ?> state = preferences.getAll();
             learning = !Boolean.FALSE.equals(state.get("learning"));
             model.restore(text(state, "words"), text(state, "openings"), text(state, "custom"));
@@ -109,19 +122,46 @@ public final class GagPersonalDictionary {
         }
 
         private void scheduleWrite() {
-            if (!writeScheduled) writeScheduled = writer.postDelayed(write, WRITE_DELAY_MS);
+            if (scheduled != null) return;
+            long revision = settingsRevision;
+            scheduled = writer.schedule(() -> persistLearned(revision), WRITE_DELAY_MS, TimeUnit.MILLISECONDS);
         }
 
-        private synchronized void persistNow() {
-            writer.removeCallbacks(write);
-            writeScheduled = false;
-            preferences.edit().putBoolean("learning", learning)
-                    .putString("words", encode(model.words))
-                    .putString("openings", encode(model.openings))
-                    .putString("custom", new JSONArray(model.custom.values()).toString())
-                    .apply();
+        private void persistLearned(long revision) {
+            Snapshot snapshot;
+            synchronized (this) {
+                if (revision != settingsRevision) return;
+                scheduled = null;
+                snapshot = snapshot();
+            }
+            SharedPreferences.Editor edit = encodeSnapshot(snapshot);
+            synchronized (this) {
+                // Explicit edits publish immediately. A snapshot prepared before one cannot replace it.
+                if (revision == settingsRevision) edit.apply();
+            }
+        }
+
+        private void persistNow() {
+            settingsRevision++;
+            if (scheduled != null) scheduled.cancel(false);
+            scheduled = null;
+            encodeSnapshot(snapshot()).apply();
+        }
+
+        private Snapshot snapshot() {
+            return new Snapshot(learning, List.copyOf(model.words.values()),
+                    List.copyOf(model.openings.values()), List.copyOf(model.custom.values()));
+        }
+
+        private SharedPreferences.Editor encodeSnapshot(Snapshot snapshot) {
+            return preferences.edit().putBoolean("learning", snapshot.learning())
+                    .putString("words", encode(snapshot.words()))
+                    .putString("openings", encode(snapshot.openings()))
+                    .putString("custom", new JSONArray(snapshot.custom()).toString());
         }
     }
+
+    private record Snapshot(boolean learning, List<Learned> words, List<Learned> openings, List<String> custom) {}
 
     static final class Model {
         private final Map<String, Learned> words = new LinkedHashMap<>();
@@ -277,9 +317,9 @@ public final class GagPersonalDictionary {
         entries.put(key, new Learned(text, previous == null ? 1 : Math.min(MAX_COUNT, previous.count + 1)));
     }
 
-    private static String encode(Map<String, Learned> entries) {
+    private static String encode(List<Learned> entries) {
         JSONArray result = new JSONArray();
-        for (Learned entry : entries.values()) result.put(new JSONArray().put(entry.text).put(entry.count));
+        for (Learned entry : entries) result.put(new JSONArray().put(entry.text).put(entry.count));
         return result.toString();
     }
 

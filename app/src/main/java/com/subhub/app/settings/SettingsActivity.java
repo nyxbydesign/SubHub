@@ -76,7 +76,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
+        if (FeatureEditorSession.remote(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
             FeatureEditorSession.leaveEditor(this);
@@ -90,13 +90,24 @@ public final class SettingsActivity extends AppCompatActivity {
         page.removeView(binding.censorFilterRules);
         page.addView(binding.censorFilterRules, page.indexOfChild(binding.censorAppearance));
         binding.censorFilterRules.removeView(binding.censorCaptureSection);
-        binding.censorFilterRules.addView(binding.censorCaptureSection);
-        com.subhub.app.people.PersonUi.row(page, R.drawable.ic_tab_export,
-                getString(R.string.export_workspace_title), "", () -> {
-                    if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")
-                            && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
-                        startActivity(new android.content.Intent(this, com.subhub.app.capture.ExportActivity.class));
-                }).setId(R.id.censor_photo_tools);
+        if (FeatureEditorSession.remote(this)) {
+            // Keep the paired editor's three primary groups directly reachable, before the long filter list.
+            int first = page.indexOfChild(binding.censorFilterRules);
+            page.removeView(binding.censorAppearance);
+            page.addView(binding.censorAppearance, first);
+            LinearLayout capture = com.subhub.app.people.PersonUi.card(page);
+            page.removeView(capture);
+            page.addView(capture, first + 1);
+            capture.addView(binding.censorCaptureSection, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            binding.censorFilterRules.addView(binding.censorCaptureSection);
+            com.subhub.app.people.PersonUi.row(page, R.drawable.ic_tab_export,
+                    getString(R.string.export_workspace_title), "", () -> {
+                        if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")
+                                && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
+                            startActivity(new android.content.Intent(this, com.subhub.app.capture.ExportActivity.class));
+                    }).setId(R.id.censor_photo_tools);
+        }
     }
 
     private void bindDisclosures() {
@@ -818,8 +829,8 @@ public final class SettingsActivity extends AppCompatActivity {
 
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+            super.onRestoreInstanceState(state);
     }
 
 }

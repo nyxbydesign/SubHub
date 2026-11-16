@@ -33,8 +33,9 @@ public final class OnboardingFlowTest {
         assertKind(sub, 2, 3, OnboardingPage.Kind.APPS);
         assertKind(sub, 2, 4, OnboardingPage.Kind.SECURITY);
         assertKind(sub, 2, 5, OnboardingPage.Kind.PERMISSIONS);
-        assertKind(sub, 1, 1, OnboardingPage.Kind.APPS);
-        assertKind(sub, 1, 2, OnboardingPage.Kind.APPS);
+        for (int step = 0; step <= 5; step++) {
+            assertEquals(OnboardingFlow.ROLE, OnboardingFlow.legacyPage(sub, 1, step));
+        }
         assertEquals(OnboardingFlow.ROLE, OnboardingFlow.legacyPage(sub, 2, 0));
     }
 

@@ -1341,6 +1341,8 @@ public final class RemoteFeature {
             @Override public int tasksVersion() { return 1; }
             @Override public int extraTimeVersion() { return ExtraTimePeer.VERSION; }
             @Override public boolean gagRulesSupported() { return true; }
+            @Override public boolean gagPairsSupported() { return true; }
+            @Override public boolean gagPairOptionsSupported() { return true; }
             @Override public void gagCapabilityChanged(RemoteStore.Peer peer) {
                 if (peer.localRole == RemoteProtocol.Role.SUB) invalidateGag();
             }
@@ -1383,7 +1385,10 @@ public final class RemoteFeature {
                     for(RemoteProtocol.Stream stream:new RemoteProtocol.Stream[]{RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE,RemoteProtocol.Stream.APP_CATALOG,RemoteProtocol.Stream.RUNTIME})
                         store.putMetadata(peer.identity,peer.generation,"unavailable_"+stream.name(),Boolean.toString(!available));
                 }
-                try{contracts.prepare(peer);store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","false");}
+                try {
+                    boolean available = contracts.prepare(peer);
+                    store.putMetadata(peer.identity, peer.generation, "unavailable_BASELINE", Boolean.toString(!available));
+                }
                 catch(Exception unavailable){store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","true");store.putMetadata(peer.identity,peer.generation,"contract_error","Contract data could not be refreshed");}
                 return null;});
             }

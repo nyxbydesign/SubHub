@@ -37,10 +37,10 @@ public final class FormalRelationshipCoordinatorAndroidTest extends FormalRelati
     @Test public void sharedAllocatorSeparatesNewPeerPhysicalRowidFromFormalOrder() {
         FormalRelationshipCoordinator engine=coordinator();FormalRelationshipCoordinator.InternalSnapshot s=engine.internalSnapshot();
         RelationshipUi.LocalReview local=engine.prepareLocal("local",s.dom,s.sub,s.changeCounter);
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);store.saveInvite(invite);store.bindInvite(invite.id,SUB,invite.tokenHash(),1001);store.approveInvite(invite.id,SUB,"Sub",1001);
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);TimedPairingFixture.stageDom(store, invite, SUB, "Sub", "");
         assertEquals(2,store.additionOrder(SUB,invite.id));
         try(Cursor row=db().rawQuery("SELECT rowid FROM peers",null)){assertTrue(row.moveToFirst());assertEquals(1,row.getLong(0));}
-        store.activate(SUB,invite.id);assertEquals(2,store.additionOrder(SUB,invite.id));
+        TimedPairingFixture.activate(store, invite, SUB);assertEquals(2,store.additionOrder(SUB,invite.id));
         assertEquals(RelationshipUi.OperationState.ACTIVE,engine.confirmLocal(local.operationId,local.requestDigest).state);
     }
     @Test public void concurrentLocalPreparationAndLegacyRemoteAcceptanceHaveOneWinner() throws Exception {
@@ -49,7 +49,7 @@ public final class FormalRelationshipCoordinatorAndroidTest extends FormalRelati
         PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);
         try {
             Future<Boolean> local=workers.submit(()->{start.await();try{engine.prepareLocal("race",s.dom,s.sub,s.changeCounter);return true;}catch(SecurityException|android.database.sqlite.SQLiteConstraintException refused){return false;}});
-            Future<Boolean> peer=workers.submit(()->{start.await();try{second.acceptInvite(invite,"Claim");return true;}catch(SecurityException|android.database.sqlite.SQLiteConstraintException refused){return false;}});
+            Future<Boolean> peer=workers.submit(()->{start.await();try{TimedPairingFixture.stageSub(second, invite, "Claim");return true;}catch(SecurityException|android.database.sqlite.SQLiteConstraintException refused){return false;}});
             start.countDown();assertNotEquals(local.get(),peer.get());assertEquals(1,count("formal_governing_slots"));
             assertEquals(1,count("peers")+count("formal_operations"));
         } finally {workers.shutdownNow();}

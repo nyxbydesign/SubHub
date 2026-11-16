@@ -69,6 +69,35 @@ public final class GitHubReleaseRepository {
         }
     }
 
+    record HistoryPage(List<ReleaseHistoryItem> items, boolean hasNext, Failure failure) {
+        private static HistoryPage failed(Failure failure) {
+            return new HistoryPage(List.of(), false, failure);
+        }
+    }
+
+    static HistoryPage historyPage(int page) {
+        return historyPage(RELEASES_URL, page);
+    }
+
+    static HistoryPage historyPage(String releasesUrl, int page) {
+        try {
+            // The feed uses numbered pages. Read the relation, while retaining our fixed endpoint.
+            HttpResponse response = get(releasesUrl + "&page=" + page, "", MAX_RESPONSE);
+            if (response.code == 429 || (response.code == 403 && "0".equals(response.rateRemaining))) {
+                return HistoryPage.failed(Failure.RATE_LIMITED);
+            }
+            if (response.code != HttpURLConnection.HTTP_OK) return HistoryPage.failed(Failure.SERVER);
+            List<ReleaseHistoryItem> items = ReleaseHistoryCatalog.fromReleases(
+                    parseReleases(new JSONArray(response.body)));
+            boolean hasNext = response.link != null && response.link.contains("rel=\"next\"");
+            return new HistoryPage(items, hasNext, null);
+        } catch (java.io.IOException exception) {
+            return HistoryPage.failed(Failure.OFFLINE);
+        } catch (Exception exception) {
+            return HistoryPage.failed(Failure.INVALID_RELEASE);
+        }
+    }
+
     public GitHubReleaseRepository(Context context) {
         this(context, RELEASES_URL, LATEST_STABLE_URL);
     }
@@ -257,13 +286,16 @@ public final class GitHubReleaseRepository {
         final String body;
         final String etag;
         final String rateRemaining;
+        final String link;
         final int bodyBytes;
         final String bodyDigest;
-        HttpResponse(int code, String body, String etag, String rateRemaining, int bodyBytes, String bodyDigest) {
+        HttpResponse(int code, String body, String etag, String rateRemaining, String link,
+                int bodyBytes, String bodyDigest) {
             this.code = code;
             this.body = body;
             this.etag = etag;
             this.rateRemaining = rateRemaining;
+            this.link = link;
             this.bodyBytes = bodyBytes;
             this.bodyDigest = bodyDigest;
         }
@@ -305,7 +337,7 @@ public final class GitHubReleaseRepository {
                 }
             }
             return new HttpResponse(code, body, connection.getHeaderField("ETag"),
-                    connection.getHeaderField("X-RateLimit-Remaining"), bodyBytes,
+                    connection.getHeaderField("X-RateLimit-Remaining"), connection.getHeaderField("Link"), bodyBytes,
                     digest == null ? "" : "sha256:" + LowercaseHex.encode(digest.digest()));
         } finally {
             connection.disconnect();

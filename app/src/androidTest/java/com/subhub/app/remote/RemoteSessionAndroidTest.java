@@ -50,9 +50,8 @@ public class RemoteSessionAndroidTest {
         dt=IrohPeerTransport.open(context,seed(),new String[0],10_000);
         st=IrohPeerTransport.open(context,seed(),new String[0],10_000);
         PairingInvite invite=PairingInvite.create(dt.localIdentity(),dt.inviteRoute(),1000);generation=invite.id;
-        dom.saveInvite(invite);dom.bindInvite(invite.id,st.localIdentity(),invite.tokenHash(),1001);
-        sub.acceptInvite(invite,"Dom");dom.approveInvite(invite.id,st.localIdentity(),"Sub",1001);
-        dom.activate(st.localIdentity(),generation);sub.activate(dt.localIdentity(),generation);
+        TimedPairingFixture.activeDom(dom, invite, st.localIdentity(), "Sub");
+        TimedPairingFixture.activeSub(sub, invite, st.localIdentity(), "Dom");
         root=new File(context.getCacheDir(),"remote-session-"+UUID.randomUUID());
         dh=new FixtureHooks(dom,new RemoteAssets(new File(root,"dom")));
         sh=new FixtureHooks(sub,new RemoteAssets(new File(root,"sub")));

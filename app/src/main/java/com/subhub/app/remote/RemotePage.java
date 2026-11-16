@@ -64,9 +64,6 @@ public abstract class RemotePage extends AppCompatActivity {
     protected void notice(int text){Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     protected TextView text(LinearLayout target,CharSequence value,boolean heading){return PersonUi.text(target,value,heading);}
     protected TextView button(LinearLayout target,int label,Runnable action){return PersonUi.action(target,label,action,false);}
-    protected EditText input(LinearLayout target,int label,String value) {
-        return input(target,label,value,com.subhub.app.util.InputBounds.DEFAULT_TEXT);
-    }
     protected EditText input(LinearLayout target,int label,String value,int maximum) {
         TextView caption = text(target, getString(label), false);
         EditText editor = new EditText(this);
@@ -74,10 +71,6 @@ public abstract class RemotePage extends AppCompatActivity {
         caption.setLabelFor(editor.getId());
         com.subhub.app.util.InputBounds.limit(editor,maximum);editor.setText(value);
         editor.setSaveEnabled(false);editor.setSingleLine(false);target.addView(editor,new LinearLayout.LayoutParams(-1,-2));return editor;
-    }
-    protected void target(){
-        text(body,peer.name,true);
-        text(body,ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
     }
     protected String observed(RemoteProtocol.Stream stream) {
         long time=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));

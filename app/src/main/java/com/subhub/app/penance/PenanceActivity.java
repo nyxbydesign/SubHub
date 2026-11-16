@@ -32,6 +32,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -43,6 +44,8 @@ public final class PenanceActivity extends AppCompatActivity {
     private Snackbar walletMessage;
     private PenanceManager manager;
     private PenanceRuleSettings ruleSettings;
+    private List<RuleFields> ruleFields;
+    private RuleFields taskFailureRule;
     private PayPalCredentialStore paypalCredentials;
     private PayPalOrdersClient paypalClient;
     private String activeClientMetadataId = "";
@@ -80,6 +83,22 @@ public final class PenanceActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         if (!FeatureEditorSession.attach(this, "wallet", savedInstanceState)) return;
         binding = ActivityPenanceBinding.inflate(getLayoutInflater());
+        taskFailureRule = new RuleFields(PenanceInfraction.TASK_FAILURE,
+                binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount, null);
+        ruleFields = List.of(
+                new RuleFields(PenanceInfraction.NEW_DETECTION,
+                        binding.ruleDetectionEnabled, binding.ruleDetectionAmount, binding.detectionBatch),
+                new RuleFields(PenanceInfraction.CENSORED_DWELL,
+                        binding.ruleDwellEnabled, binding.ruleDwellAmount, binding.dwellSeconds),
+                new RuleFields(PenanceInfraction.CENSORED_TAP,
+                        binding.ruleTapEnabled, binding.ruleTapAmount, null),
+                new RuleFields(PenanceInfraction.WATCHED_APP_OPEN,
+                        binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount, null),
+                new RuleFields(PenanceInfraction.EXTRA_TIME_REQUEST,
+                        binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount, null),
+                taskFailureRule,
+                new RuleFields(PenanceInfraction.TAMPER_ATTEMPT,
+                        binding.ruleTamperEnabled, binding.ruleTamperAmount, binding.tamperCooldownMinutes));
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
                 R.string.penance_title, 0);
@@ -387,21 +406,13 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void populateRules() {
         populatingRules = true;
-        populateRule(PenanceInfraction.NEW_DETECTION,
-                binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
-                binding.detectionBatch);
-        populateRule(PenanceInfraction.CENSORED_DWELL,
-                binding.ruleDwellEnabled, binding.ruleDwellAmount);
-        populateRule(PenanceInfraction.CENSORED_TAP,
-                binding.ruleTapEnabled, binding.ruleTapAmount);
-        populateRule(PenanceInfraction.WATCHED_APP_OPEN,
-                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
-        populateRule(PenanceInfraction.EXTRA_TIME_REQUEST,
-                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
-        populateRule(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
-        populateRule(PenanceInfraction.TAMPER_ATTEMPT,
-                binding.ruleTamperEnabled, binding.ruleTamperAmount,
-                binding.tamperCooldownMinutes);
+        for (RuleFields rule : ruleFields) {
+            rule.toggle.setChecked(ruleSettings.isInfractionEnabled(rule.infraction));
+            rule.amount.setText(decimalEuros(ruleSettings.getInfractionCents(rule.infraction)));
+            // Dwell timing is synchronized by toggle changes and the edit-state pass.
+            syncRuleInputState(rule,
+                    rule.infraction == PenanceInfraction.CENSORED_DWELL ? null : rule.timing);
+        }
         binding.dailyCap.setText(decimalEuros(ruleSettings.getDailyCapCents()));
         binding.weeklyCap.setText(decimalEuros(ruleSettings.getWeeklyCapCents()));
         binding.mercyMinutes.setText(String.valueOf(ruleSettings.getMercyMinutes()));
@@ -417,25 +428,14 @@ public final class PenanceActivity extends AppCompatActivity {
         syncPaidPauseInputs();
     }
 
-    private void populateRule(
-            PenanceInfraction infraction,
-            CompoundButton toggle, EditText amount, View... dependents) {
-        toggle.setChecked(ruleSettings.isInfractionEnabled(infraction));
-        amount.setText(decimalEuros(ruleSettings.getInfractionCents(infraction)));
-        syncRuleInputState(toggle, amount, dependents);
-    }
+    private record RuleFields(PenanceInfraction infraction, CompoundButton toggle, EditText amount,
+                              EditText timing) {}
 
     private void syncRuleInputStates() {
-        syncRuleInputState(binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
-        syncRuleInputState(binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
-                binding.detectionBatch);
-        syncRuleInputState(binding.ruleDwellEnabled, binding.ruleDwellAmount,
-                binding.dwellSeconds);
-        syncRuleInputState(binding.ruleTapEnabled, binding.ruleTapAmount);
-        syncRuleInputState(binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
-        syncRuleInputState(binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
-        syncRuleInputState(binding.ruleTamperEnabled, binding.ruleTamperAmount,
-                binding.tamperCooldownMinutes);
+        syncRuleInputState(taskFailureRule, taskFailureRule.timing);
+        for (RuleFields rule : ruleFields) {
+            if (rule != taskFailureRule) syncRuleInputState(rule, rule.timing);
+        }
         syncPaidPauseInputs();
     }
 
@@ -447,28 +447,14 @@ public final class PenanceActivity extends AppCompatActivity {
         binding.paidPauseMinutes.setEnabled(editable);
     }
 
-    private void syncRuleInputState(CompoundButton toggle, EditText amount, View... dependents) {
-        boolean ruleEnabled = toggle.isChecked();
-        boolean editable = ruleEnabled && FeatureEditorSession.canEdit(this, "wallet");
-        amount.setEnabled(editable);
-        if (dependents == null) return;
-        for (View dependent : dependents) {
-            dependent.setEnabled(editable);
-        }
+    private void syncRuleInputState(RuleFields rule, EditText timing) {
+        boolean editable = rule.toggle.isChecked() && FeatureEditorSession.canEdit(this, "wallet");
+        rule.amount.setEnabled(editable);
+        if (timing != null) timing.setEnabled(editable);
     }
 
     private void attachRuleMathListeners() {
-        attachRuleToggle(PenanceInfraction.NEW_DETECTION, binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
-                binding.detectionBatch);
-        attachRuleToggle(PenanceInfraction.CENSORED_DWELL, binding.ruleDwellEnabled, binding.ruleDwellAmount,
-                binding.dwellSeconds);
-        attachRuleToggle(PenanceInfraction.CENSORED_TAP, binding.ruleTapEnabled, binding.ruleTapAmount);
-        attachRuleToggle(PenanceInfraction.WATCHED_APP_OPEN, binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
-        attachRuleToggle(PenanceInfraction.EXTRA_TIME_REQUEST,
-                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
-        attachRuleToggle(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
-        attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
-                binding.tamperCooldownMinutes);
+        for (RuleFields rule : ruleFields) attachRuleToggle(rule);
         binding.paidPauseEnabled.setOnCheckedChangeListener((button, checked) -> {
             if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
                 populateRules();
@@ -501,14 +487,14 @@ public final class PenanceActivity extends AppCompatActivity {
         }
     }
 
-    private void attachRuleToggle(PenanceInfraction rule, CompoundButton toggle, EditText amount, View... dependents) {
-        toggle.setOnCheckedChangeListener((button, checked) -> {
+    private void attachRuleToggle(RuleFields rule) {
+        rule.toggle.setOnCheckedChangeListener((button, checked) -> {
             if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
                 populateRules();
                 return;
             }
-            if (!populatingRules && !checked) ruleSettings.disableInfraction(rule);
-            syncRuleInputState(toggle, amount, dependents);
+            if (!populatingRules && !checked) ruleSettings.disableInfraction(rule.infraction);
+            syncRuleInputState(rule, rule.timing);
             renderRuleMathPreview();
             scheduleRulesSave();
         });
@@ -570,22 +556,15 @@ public final class PenanceActivity extends AppCompatActivity {
         if (binding == null || populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return false;
         if (!dirtyRules) return true;
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
-        if (!readRule(rules, PenanceInfraction.NEW_DETECTION,
-                binding.ruleDetectionEnabled, binding.ruleDetectionAmount)
-                || !readRule(rules, PenanceInfraction.CENSORED_DWELL,
-                binding.ruleDwellEnabled, binding.ruleDwellAmount)
-                || !readRule(rules, PenanceInfraction.CENSORED_TAP,
-                binding.ruleTapEnabled, binding.ruleTapAmount)
-                || !readRule(rules, PenanceInfraction.WATCHED_APP_OPEN,
-                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount)
-                || !readRule(rules, PenanceInfraction.EXTRA_TIME_REQUEST,
-                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount)
-                || !readRule(rules, PenanceInfraction.TASK_FAILURE,
-                binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount)
-                || !readRule(rules, PenanceInfraction.TAMPER_ATTEMPT,
-                binding.ruleTamperEnabled, binding.ruleTamperAmount)) {
-            if (showInvalid) showMessage(R.string.penance_rules_invalid);
-            return false;
+        for (RuleFields rule : ruleFields) {
+            if (!rule.toggle.isChecked()) continue;
+            Integer amount = parseEuros(rule.amount.getText().toString());
+            if (amount == null || amount < PenancePolicy.MIN_STRIKE_CENTS
+                    || amount > PenancePolicy.MAX_STRIKE_CENTS) {
+                if (showInvalid) showMessage(R.string.penance_rules_invalid);
+                return false;
+            }
+            rules.put(rule.infraction, amount);
         }
         boolean enabled = !rules.isEmpty();
         Integer daily = parseEuros(binding.dailyCap.getText().toString());
@@ -603,7 +582,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 || detectionBatch == null
                 || tamperCooldown == null
                 || pausePrice == null || pauseMinutes == null
-                || (enabled && rules.isEmpty()) || daily < largestCost || weekly < daily
+                || daily < largestCost || weekly < daily
                 || daily > PenancePolicy.MAX_DAILY_CENTS
                 || weekly > PenancePolicy.MAX_WEEKLY_CENTS
                 || mercy < 0 || mercy > PenancePolicy.MAX_MERCY_MINUTES
@@ -627,17 +606,6 @@ public final class PenanceActivity extends AppCompatActivity {
         dirtyRules = false;
         if (!FeatureEditorSession.remote(this)) HardcoreAutoPayManager.schedule(this);
         render();
-        return true;
-    }
-
-    private boolean readRule(Map<PenanceInfraction, Integer> rules,
-            PenanceInfraction infraction,
-            CompoundButton toggle, EditText input) {
-        if (!toggle.isChecked()) return true;
-        Integer amount = parseEuros(input.getText().toString());
-        if (amount == null || amount < PenancePolicy.MIN_STRIKE_CENTS
-                || amount > PenancePolicy.MAX_STRIKE_CENTS) return false;
-        rules.put(infraction, amount);
         return true;
     }
 

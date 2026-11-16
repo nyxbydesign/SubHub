@@ -249,7 +249,7 @@ public final class OnboardingActivity extends PreferencePage {
         appSelection = new com.subhub.app.settings.AppSelectionPanel(this);
         apps.addView(appSelection, new LinearLayout.LayoutParams(-1, -1));
         appSelection.fillAvailableHeight();
-        appSelection.bind(this,
+        appSelection.bind(this, getApplicationContext(),
                 this::editableSetup,
                 this::saveDraft);
         appSelection.load();

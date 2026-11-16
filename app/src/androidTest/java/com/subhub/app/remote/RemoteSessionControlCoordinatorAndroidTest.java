@@ -63,8 +63,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         long now = System.currentTimeMillis();
         PairingInvite invite = PairingInvite.create(DOM, "fixture", now);
         generation = invite.id;
-        store.saveInvite(invite); store.bindInvite(generation, SUB, invite.tokenHash(), now);
-        store.approveInvite(generation, SUB, "Synthetic Sub", now); store.activate(SUB, generation);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Synthetic Sub");
         store.putMetadata(SUB, generation, "session_control_version", "1"); independent.getReadableDatabase();
         coordinator = new RemoteSessionControlCoordinator(context, store, DOM); state(true, 7, needsAction(), Reason.READINESS_REQUIRED);
     }
@@ -174,7 +173,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         main().edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit();
         String parent = String.join("", Collections.nCopies(64, "e"));
         PairingInvite governing = PairingInvite.create(parent, "fixture", System.currentTimeMillis());
-        store.acceptInvite(governing, "Synthetic Dom"); store.activate(parent, governing.id);
+        TimedPairingFixture.activeSub(store, governing, DOM, "Synthetic Dom");
         java.security.KeyStore keys = java.security.KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
         assertFalse(keys.containsAlias(wrappingAlias)); wrappingCreated = true;
         String secret = keyholder.provisionSub(store.peer(parent, governing.id), DOM);
@@ -213,7 +212,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         assertTrue(main().edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit());
         PairingInvite governing = PairingInvite.create(String.join("", Collections.nCopies(64, "e")), "fixture", System.currentTimeMillis());
         afterObservation = () -> {
-            independent.acceptInvite(governing, "Synthetic Dom"); independent.activate(governing.domIdentity, governing.id);
+            TimedPairingFixture.activeSub(independent, governing, DOM, "Synthetic Dom");
         };
         assertThrows(SecurityException.class, () -> coordinator.review(peer(), Action.STOP)); assertEquals(0, count());
         RemoteStore.Peer installed = independent.peer(governing.domIdentity, governing.id);

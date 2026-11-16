@@ -3,6 +3,129 @@
 User-facing changes from every tagged SubHub release.
 
 <details open>
+<summary><strong>SubHub 0.8.0</strong></summary>
+
+## What’s new in SubHub 0.8.0
+
+### New
+
+- **Edit Atmosphere inline in the contract** — Put the redesigned Whispers, Popup Storm, and Gagging editors into one accordion on paired and Demo Sub Contracts.
+- **Open Atmosphere on one screen** — Open a dedicated Atmosphere page from Contract with Whispers, Popup Storm, and Gagging panels.
+- **Assign replacements to individual Gagging words** — Let a Dom and Demo Sub configure an exact replacement for each matched word while retaining existing shared replacement lists.
+- **Page the full release history** — Browse older releases in Builds & Updates with page controls that preserve the selected development or stable history.
+- **Add Gagging word pairs and paged release history** — Gagging can save separate replacements for individual words, and Builds & Updates can browse older releases a page at a time.
+- **Add replacement options and case matching to Gagging words** — Give each Gagging word its own newline-separated replacement choices and case-sensitive switch, with only the controls for the selected mode on screen.
+
+### Fixed
+
+- **Restore and center Gagging keyboard suggestions** — Refresh suggestions after Backspace, offer common missing manual corrections, and place a compatible clipboard image at the center of the suggestion row.
+- **Edit Gagging clipboard text in a compact popup** — Open a floating Edit dialog above the keyboard, with Cancel and Save and isolated private input.
+- **Simplify navigation in paired contract editors** — Keep Manage apps above a compact contract preview, expose paired Censor Appearance and Capture before the filter list, keep Limits controls in view, and show the Gagging state in Atmosphere.
+- **Focus the clipboard popup when it opens** — Show the keyboard once the floating dialog receives input focus, so the saved text is ready to edit without an extra tap.
+- **Simplify the Builds and Updates status** — Place each update setting description under its title beside the toggle, and show one concise installed-version status with a local check time.
+- **Show local date and time for all Updates releases** — Installed, stable, and development release entries use the same local publication timestamp without a timezone suffix.
+- **Label stable releases in Updates** — Show Stable build alongside each regular stable release publication timestamp.
+- **Put paired Contract actions first** — Show editable app and feature groups before the read-only permissions summary on a paired Sub contract so its controls are easier to find on narrow screens.
+- **Keep long text in the Gagging clipboard** — Keep full plain-text clips up to 32,768 UTF-16 code units and show a short Unicode-safe preview in the keyboard.
+- **Integrate long clipboard text in Gagging** — Keep long plain-text clipboard entries available for paste with a compact Unicode-safe preview.
+- **Refresh Atmosphere when consent changes** — Update the open Atmosphere page when the paired Sub changes feature consent, so unavailable editors close immediately.
+- **Keep Gag suggestions active after automatic spacing** — Send the inserted separator and first character in the same editor batch after accepting a suggestion.
+- **Delete both brackets on immediate Gag Backspace** — Remove the just-inserted matching closer when Backspace deletes its opener with the caret still inside the pair.
+- **Keep Gag clipboard history always available** — Make Clipboard history automatic in eligible editors, including for users upgrading from the old Off setting, while retaining existing clears and photo permission.
+- **Expand release cards by default** — Open release cards by default and keep stable cards collapsed when Development updates is enabled.
+- **Preserve Gag automatic spacing across delayed editor updates** — Keep the pending separator when the editor briefly reports its pre-suggestion context.
+- **Keep the app selector bound during onboarding** — Pass the same application context that the retired selector overload supplied, preserving setup editability and draft saving.
+- **Show the paired session status once** — Keep the last observed session state visible above the controls and reserve the command status below them for pending actions and results.
+- **Integrate Gag keyboard and Clipboard fixes** — Bring the six approved keyboard changes onto current development and adopt the reviewed secure Clipboard editor theme so typing, clipboard history and editor spacing can be tested together.
+- **Integrate Gagging fixes with current development** — Bring the approved keyboard and Clipboard editor work onto current development together with the reviewed one-letter Lexicon optimization.
+- **Integrate Gagging, paired profiles, and Wallet updates** — Bring the Gagging updates, single paired-session status, first-paint app icons, and shared Wallet rule field bindings into development with the existing Wallet and People style cleanup.
+- **Polish the Gagging replacement dialog** — Group word and multiline replacements on a raised plum surface, keep the case-sensitive switch separate, and emphasize Save in the native action bar.
+- **Use the standard Settings switch row for Gagging** — Show Case sensitive with the usual Settings switch styling and spacing in the replacement dialog.
+
+### Faster & smoother
+
+- **Load the bundled Gagging dictionary faster** — Reuse the verified sorted order while loading the bundled word list.
+- **Render downloaded paired app icons on first paint** — Restore verified icons from private storage after a restart and prepare their preview pixels before icon-bearing rows draw.
+- **Save Gag learned words off the typing thread** — Coalesce learned-dictionary saves on a single background writer while keeping explicit privacy and custom-word edits immediately durable under the existing preference-write contract.
+- **Reuse the Gag character preview** — Reduce per-character allocations and move the active preview between overlapping keys in the same keyboard window.
+- **Reuse decoded Updates release history** — Keep release history current while avoiding repeated JSON parsing when the saved history has not changed.
+- **Recompress achievement badge drawables losslessly** — Reduce the combined achievement badge payload by 493,482 bytes (14.18%) while preserving every decoded RGBA pixel, including transparent pixel values.
+- **Cache one-letter keyboard suggestions** — Cache repeated one-letter suggestions and rank edits directly while preserving suggestion order, case, and dictionary loading.
+
+### Improved
+
+- **Retire the old paired Duration editor** — Keep paired session duration on the inline profile controls and reuse the existing Until released label.
+- **Retire the old paired Apps editor** — Keep selection in the shared Apps editor and individual allowances in Limits.
+- **Remove the obsolete paired Contract editor** — Keep paired artwork, settings, and layout coverage on the shared editors and remove the unreachable duplicate screen.
+- **Retire pre-connection setup and archive compatibility** — Start supported upgrades at the remote-connection era, restart obsolete setup drafts at role selection, and retire the unused import label.
+- **Remove the unused profile consent override field** — Remove the unused override from person snapshots and contract presentation while preserving the active consent enforcement and explicit choice status.
+- **Remove the retired editor preview switch** — Drop the constant-false read-only preview helper and its remaining Settings callers.
+- **Integrate the remote-era upgrade floor** — Retire pre-connection onboarding recovery and obsolete archive references while preserving activated settings for the first remote-enabled release.
+- **Retire the old paired Contract editor** — Keep paired editing on the live Apps, Duration, Settings, and inline Atmosphere routes.
+- **Integrate paired Contract editor retirement** — Keep active paired editing routes and native test coverage on the current development base.
+- **Remove obsolete Settings and Statistics routes** — Remove unused activity wrappers and layouts while preserving the active Statistics, app selection, Privacy, and paired editor flows.
+- **Remove clockless pairing fixture adapters** — Remove unused invitation writes that bypass pairing deadlines and keep synthetic Android relationships on the same timed transitions as live pairing.
+- **Centralize Wallet rule field bindings** — Use one ordered mapping to populate, listen to, synchronize, and save Wallet rules while preserving existing editor behavior.
+- **Reuse identical Wallet and People styles** — Use the same existing styles and card backgrounds when they resolve to identical Android resources.
+- **Remove unused Journal preview overload** — Remove the unreferenced preview factory overload and its forwarding constructor.
+
+### Documentation
+
+- **Rewrite the SubHub product overview** — Explain current workspaces, paired contracts, Tasks, Journal, privacy controls and supported installation and updates.
+- **Show paired app allowances** — Show the Sub Contract after it received the six phone-configured daily allowances in the paired review fixture.
+- **Show Contract controls at 320 dp** — Capture the paired Dom Contract with the phone-selected apps and the app management button visible at 320 dp.
+- **Integrate the current SubHub overview** — Refresh the product overview for the inline Atmosphere editors and preserve the supported upgrade guidance for applied settings and artwork.
+- **Refresh README screenshots** — Show the paired Sub Contract, Sub Profile, example Journal, and the real Pixel Activity view.
+- **Rebuild the SubHub README** — Replace the overview gallery with a guided walkthrough of the paired Dom and Sub workspaces, using emulator captures of the mirrored Contract, lifetime statistics, and sample content.
+
+### Build & release
+
+- **Align development updates with stable 0.7.4** — Allow stable 0.7.4 installations that opt into development updates to receive later signed builds as in-place updates.
+- **Register the paired Apps navigation witness** — Keep the paired Apps navigation regression in native source inventory so release checks recognize the test consistently.
+- **Register the paired icon index in safe compiler diagnostics** — Use a fixed diagnostic label for the new Java file so the production inventory stays complete without exposing paths or messages.
+- **Recognize Atmosphere compiler diagnostics** — Allowlist the new Atmosphere editor class labels so CI can identify failed source files while keeping raw compiler messages private.
+- **Register the Gagging and release history fixtures** — Register the new Android scenario and the exact source names in the existing CI inventories.
+
+### Quality
+
+- **Exercise the live paired Apps and Duration editors** — Open Apps through the paired Contract, verify that the existing allowance survives a new selection, and exercise the inline service duration controls through recreation.
+- **Verify paired navigation and legacy duration saves** — Reveal live paired controls above the bottom navigation before tapping, and verify that changing duration preserves the full configuration while respecting legacy wire capabilities.
+- **Keep the clipboard edit fixture focused on its popup** — Suppress the Android emulator copy overlay for the synthetic seed so the real first Clipboard tap reaches the keyboard during the Edit regression.
+- **Measure the keyboard window during clipboard edits** — Verify the floating editor relative to the Android input method window and report non-sensitive geometry if it does not settle.
+- **Check Updates switch labels on the live screen** — Observe the activity-bound accessibility labels on the actual screen and keep the enlarged narrow layout checks focused on geometry and drawn text.
+- **Exercise incomplete allowances through paired Limits** — Check that the live paired editor keeps an unfinished allowance across icon arrival and recreation, then saves one valid revision for the selected peer.
+- **Navigate to paired Limits through the live Contract tab** — Wait for the actual active profile layout and use its controls before exercising the selected peer allowance.
+- **Exercise paired autosave and Whispers on the live editors** — Check draft coalescing, pending revisions, cursor retention, and role revocation on the shared screens, then retire the old Atmosphere route alias.
+- **Verify paired artwork through shared Censor settings** — Import artwork through the actual Contract route and wait for the exact bytes on the paired device so a scalar settings revision cannot satisfy the artwork witness.
+- **Exercise offline paired edits on the shared editor** — Use the live settings and artwork picker to verify online apply, offline queueing, reconnection, and persistence after revocation.
+- **Repair the paired editor recovery fixtures** — Publish a distinct duration baseline to exercise the missing-data Retry action.
+- **Verify the full clipboard paste inside the editor** — Compare synthetic clipboard text against the editor buffer and expose a short result to Android accessibility.
+- **Use a multiline editor for long clipboard paste** — Allow the synthetic test editor to accept the entire clipboard fixture.
+- **Preserve picker-return state for paired artwork checks** — Record the focused screen, editor availability, and persisted asset count when the synthetic picker returns without the expected artwork command.
+- **Confirm the document selection before artwork assertions** — Select the synthetic image through DocumentsUI and observe the actual editor return after recreation.
+- **Verify queued artwork before and after acknowledgment** — Verify the picker result in the durable draft while the prior command is pending, then acknowledge that command and verify publication of both artwork references.
+- **Locate paired artwork in Downloads** — Put the synthetic document in Downloads and open that root directly so the real picker exercise can verify the queued artwork after recreation.
+- **Adjust progress meter inventory for retired Export layout** — Count the four remaining XML bars and keep the active Export workspace's programmatic meter covered.
+- **Cover per-word Gagging edits across recreation** — Exercise the shared Atmosphere editor on a synthetic Demo contract.
+- **Wait for editor window focus before opening Gag** — Request the keyboard when the synthetic editor window can serve input and identify startup failures separately from the Gag behavior assertions.
+- **Include Spending Limits in Wallet navigation expectations** — Assert all five Wallet sections in their existing order and verify Spending Limits remains hidden in Sub mode.
+- **Stabilize Gagging and Wallet Android fixtures** — Wait for the Gag editor window to gain focus before showing the keyboard, and verify Wallet's existing Spending limits section as part of the section order.
+- **Verify Gagging word pairs and release history paging** — Capture the saved Gagging word pairs and shared replacements from the synthetic Android editor, and check older and newer release pages after activity recreation.
+
+### Maintenance
+
+- **Integrate paired contract navigation and Updates timestamps**
+- **Integrate paired Contract actions and review screenshots** — Merge the verified changes from PR #210, keeping the paired actions ahead of the permissions summary.
+- **Integrate inline Atmosphere with paired Contract actions** — Merge PR #213 while keeping the shared Apps controls and inline Atmosphere editors above read-only permissions on a paired Contract, including when the editor becomes available after the summary.
+- **Integrate Atmosphere and README** — Publish the single-page Atmosphere editor and the refreshed SubHub overview together.
+- **Deps: Bump androidx.work:work-runtime from 2.11.2 to 2.12.0** — Bumps androidx.work:work-runtime from 2.11.2 to 2.12.0.
+- **Bring the Updates cache onto current development** — Keep the faster release-history read with the current WorkManager dependency.
+- **Align Android screen retirement with current development** — Keep the retired screens removed while retaining the published release-history cache.
+- **Bring paired icon first-paint caching onto current development** — Retain the cached first draw and integrate current paired fixtures, screen routes, and visual resources.
+
+</details>
+
+<details>
 <summary><strong>SubHub 0.7.4</strong></summary>
 
 ## What’s new in SubHub 0.7.4

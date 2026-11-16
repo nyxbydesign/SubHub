@@ -110,8 +110,9 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
             if (showingStop) stop();
             else request(RemoteSessionCommands.Action.START);
         });
-        status = PersonUi.text(controls, observed.serviceLabel, false);
+        status = PersonUi.text(controls, "", false);
         status.setTag("remote_session_status");
+        status.setVisibility(View.GONE);
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
         action.setEnabled(false);
         lifecycle.addObserver(this);
@@ -196,7 +197,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     }
 
     private String durationLabel(RemoteSessionCommands.Duration service) {
-        if (service.duration == -1) return activity.getResources().getStringArray(R.array.remote_duration_choices)[0];
+        if (service.duration == -1) return activity.getString(R.string.role_permanent_duration);
         return (service.duration == -2 ? service.minimum / 60_000 + "–" + service.maximum / 60_000
                 : Long.toString(service.duration / 60_000)) + " " + activity.getString(R.string.remote_minutes);
     }

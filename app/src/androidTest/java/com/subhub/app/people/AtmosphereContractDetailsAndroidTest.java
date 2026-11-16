@@ -405,6 +405,80 @@ public final class AtmosphereContractDetailsAndroidTest {
         }
     }
 
+    @Test public void pairedContractEditsPopupInlineAndHonorsTargetConsent() throws Exception {
+        readyUi(true);
+        try (RemoteExtraTimeUiFixture paired = RemoteExtraTimeUiFixture.setupSub(context)) {
+            paired.switchDom();
+            paired.seedAtmosphereContract();
+            Intent intent = new Intent(context, PersonActivity.class)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, paired.subPerson.value())
+                    .putExtra("person_section", "contracts");
+            Intent atmosphereRoute;
+            try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(intent)) {
+                await(page, a -> tagged(a, "person_section:atmosphere") != null);
+                page.onActivity(a -> {
+                    View editor = tagged(a, "person_section:atmosphere");
+                    View summary = tagged(a, "person_allowed_features");
+                    assertTrue(editor.isClickable());
+                    assertNotNull(summary);
+                    assertNull(tagged(a, "atmosphere_panel:subliminal"));
+                    ViewGroup body = a.findViewById(R.id.role_page_body);
+                    assertTrue(body.indexOfChild((View) editor.getParent().getParent())
+                            < body.indexOfChild((View) summary.getParent()));
+                });
+                android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+                Class<com.subhub.app.atmosphere.AtmosphereActivity> destination =
+                        com.subhub.app.atmosphere.AtmosphereActivity.class;
+                android.app.Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
+                        destination.getName(), null, false);
+                try {
+                    onView(withTagValue(is("person_section:atmosphere")))
+                            .perform(NativeUiActions.revealAboveNavigation(), click());
+                    Activity opened = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
+                    assertNotNull(opened);
+                    atmosphereRoute = new Intent(opened.getIntent());
+                    instrumentation.runOnMainSync(opened::finish);
+                    instrumentation.waitForIdleSync();
+                } finally {
+                    instrumentation.removeMonitor(monitor);
+                }
+            }
+            try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> page =
+                         ActivityScenario.launch(atmosphereRoute)) {
+                page.onActivity(a -> {
+                    View whispers = tagged(a, "atmosphere_panel:subliminal");
+                    assertEquals(View.VISIBLE, whispers.getVisibility());
+                    assertEquals(context.getString(R.string.sub_feature_disabled), text(whispers));
+                    assertNull(a.findViewById(R.id.switch_whispers));
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                });
+                onView(withTagValue(is("atmosphere_header:popup")))
+                        .perform(NativeUiActions.revealAboveNavigation(), click());
+                page.onActivity(a -> {
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:subliminal").getVisibility());
+                    assertEquals(View.VISIBLE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                    com.subhub.app.util.StateToggle popup = a.findViewById(R.id.switch_popup_storm);
+                    assertTrue(popup.isChecked());
+                    assertTrue(popup.isEnabled());
+                    assertEquals(View.VISIBLE, a.findViewById(R.id.dynamic_settings).getVisibility());
+                    assertEquals(View.GONE, a.findViewById(R.id.button_advanced_details).getVisibility());
+                    assertEquals(View.GONE, a.findViewById(R.id.button_preview).getVisibility());
+                });
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_popup_storm))
+                        .perform(NativeUiActions.revealAboveNavigation(), click());
+                page.recreate();
+                await(page, a -> tagged(a, "atmosphere_panel:popup") != null);
+                page.onActivity(a -> {
+                    assertEquals(View.VISIBLE, tagged(a, "atmosphere_panel:popup").getVisibility());
+                    assertEquals(View.GONE, tagged(a, "atmosphere_panel:subliminal").getVisibility());
+                    com.subhub.app.util.StateToggle popup = a.findViewById(R.id.switch_popup_storm);
+                    assertFalse(popup.isChecked());
+                    assertTrue(preferences.getBoolean(PopupStormSettings.K_ENABLED, false));
+                });
+            }
+        }
+    }
+
     @Test public void unknownContractHidesDetailsWhileStaleContractKeepsLabeledSavedValues() throws Exception {
         for (boolean dom : new boolean[]{false, true}) {
             for (PersonSnapshot.Freshness freshness : List.of(PersonSnapshot.Freshness.STALE, PersonSnapshot.Freshness.UNKNOWN)) {

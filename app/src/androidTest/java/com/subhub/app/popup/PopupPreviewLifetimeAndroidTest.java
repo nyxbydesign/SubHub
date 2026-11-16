@@ -51,18 +51,19 @@ public final class PopupPreviewLifetimeAndroidTest {
             home.onActivity(activity -> activity.startActivity(new android.content.Intent(activity,
                     com.subhub.app.atmosphere.AtmosphereActivity.class)));
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-            AtomicReference<PopupStormActivity> editor = new AtomicReference<>();
-            onView(withId(R.id.button_popup_storm))
+            AtomicReference<com.subhub.app.atmosphere.AtmosphereActivity> editor = new AtomicReference<>();
+            onView(withId(R.id.popup_storm_card))
                     .perform(NativeUiActions.revealAboveNavigation(), click());
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
                         .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
-                    if (activity instanceof PopupStormActivity) editor.set((PopupStormActivity) activity);
+                    if (activity instanceof com.subhub.app.atmosphere.AtmosphereActivity atmosphere)
+                        editor.set(atmosphere);
                 }
                 org.junit.Assert.assertNotNull("Natural navigation must reach the popup editor", editor.get());
-                editor.get().findViewById(R.id.button_preview).performClick();
             });
+            onView(withId(R.id.button_preview)).perform(NativeUiActions.revealAboveNavigation(), click());
             await(manager::isRunning, 3_000);
             await(() -> !manager.isPreviewing(), manager.remainingPreviewMillis() + 2_000);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
@@ -70,13 +71,6 @@ public final class PopupPreviewLifetimeAndroidTest {
                         androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
                         .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).contains(editor.get()));
                 editor.get().finish();
-            });
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-                        .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
-                    if (activity instanceof com.subhub.app.atmosphere.AtmosphereActivity) activity.finish();
-                }
             });
         }
     }

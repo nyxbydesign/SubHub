@@ -11,6 +11,9 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.people.LocalAppsActivity;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.security.ControllerPinManager;
 
 import org.junit.*;
@@ -18,12 +21,13 @@ import org.junit.*;
 import java.util.*;
 
 public class IncludedAppsAndroidTest {
+    private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+
     @Before
     public void fixture() {
-        Context c = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        ControllerPinManager.setPin(c, "2468");
+        ControllerPinManager.setPin(context, "2468");
         ControllerPinManager.enterDomMode();
-        new AppModeManager(c).save(false, Set.of());
+        new AppModeManager(context).save(false, Set.of());
     }
 
     @After
@@ -33,8 +37,9 @@ public class IncludedAppsAndroidTest {
 
     @Test
     public void recycledRowsKeepOnlyOneChoiceAndRespectRoleAndPackageBinding() {
-        try (ActivityScenario<SetupAppsActivity> scenario =
-                ActivityScenario.launch(SetupAppsActivity.class)) {
+        try (ActivityScenario<LocalAppsActivity> scenario =
+                ActivityScenario.launch(new Intent(context, LocalAppsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             scenario.onActivity(
                     a -> {
                         Set<String> chosen = new LinkedHashSet<>();
@@ -76,8 +81,9 @@ public class IncludedAppsAndroidTest {
 
     @Test
     public void oneChoiceFitsNarrowLargeTextAndRtlAtFullTouchSize() {
-        try (ActivityScenario<SetupAppsActivity> scenario =
-                ActivityScenario.launch(SetupAppsActivity.class)) {
+        try (ActivityScenario<LocalAppsActivity> scenario =
+                ActivityScenario.launch(new Intent(context, LocalAppsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             scenario.onActivity(
                     a -> {
                         for (float font : new float[] {1f, 1.7f, 2f})

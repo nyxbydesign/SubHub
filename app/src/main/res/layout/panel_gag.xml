@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/gag_rules_settings"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/ui_gap_section"
+        android:orientation="vertical">
+
+        <include
+            android:id="@+id/gag_enabled"
+            layout="@layout/view_form_toggle" />
+
+        <TextView
+            android:id="@+id/gag_rules_button"
+            style="@style/Widget.SubHub.OutlineAction"
+            android:text="@string/gag_when_to_replace" />
+
+        <LinearLayout
+            android:id="@+id/gag_rules_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+            <TextView
+                android:id="@+id/gag_rules_heading"
+                style="@style/Widget.SubHub.FieldLabel"
+                android:accessibilityHeading="true"
+                android:text="@string/gag_when_to_replace"
+                android:visibility="gone" />
+
+            <RadioGroup
+                android:id="@+id/gag_modes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/ui_gap_control"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:paddingVertical="@dimen/ui_gap_control">
+
+                <RadioButton
+                    android:id="@+id/gag_all"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/control_min_height"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_every_word" />
+
+                <RadioButton
+                    android:id="@+id/gag_every_n"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/control_min_height"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_every_n_words" />
+
+                <RadioButton
+                    android:id="@+id/gag_specific"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/control_min_height"
+                    android:paddingHorizontal="@dimen/ui_control_padding"
+                    android:text="@string/gag_specific_words" />
+            </RadioGroup>
+
+            <TextView
+                android:id="@+id/gag_rules_error"
+                style="@style/Widget.SubHub.FieldHelp"
+                android:accessibilityLiveRegion="polite"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/gag_interval_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:labelFor="@+id/gag_interval"
+                    android:text="@string/gag_interval" />
+
+                <EditText
+                    android:id="@id/gag_interval"
+                    style="@style/Widget.SubHub.Input"
+                    android:inputType="number"
+                    android:maxLength="3" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/gag_pairs_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/ui_gap_group"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:accessibilityHeading="true"
+                    android:text="@string/gag_word_pairs"
+                    tools:targetApi="p" />
+
+                <LinearLayout
+                    android:id="@+id/gag_pair_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/gag_add_pair"
+                    style="@style/Widget.SubHub.OutlineAction"
+                    android:text="@string/gag_add_word_pair" />
+
+                <TextView
+                    android:id="@+id/gag_pairs_update_required"
+                    style="@style/Widget.SubHub.FieldHelp"
+                    android:text="@string/gag_pairs_update_required"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/gag_words_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/ui_gap_group"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/gag_words_label"
+                    style="@style/Widget.SubHub.FieldLabel"
+                    android:labelFor="@+id/gag_words"
+                    android:text="@string/gag_words" />
+
+                <TextView
+                    style="@style/Widget.SubHub.FieldHelp"
+                    android:text="@string/gag_one_per_line" />
+
+                <EditText
+                    android:id="@id/gag_words"
+                    style="@style/Widget.SubHub.Input"
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine"
+                    android:maxLength="2048"
+                    android:maxLines="6"
+                    android:minLines="2" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/gag_shared_replacements_field"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/ui_gap_group"
+        android:orientation="vertical">
+
+        <TextView
+            style="@style/Widget.SubHub.FieldLabel"
+            android:accessibilityHeading="true"
+            android:labelFor="@+id/gag_replacements"
+            android:text="@string/gag_replacements" />
+
+        <TextView
+            style="@style/Widget.SubHub.FieldHelp"
+            android:text="@string/gag_one_per_line" />
+
+        <EditText
+            android:id="@id/gag_replacements"
+            style="@style/Widget.SubHub.Input"
+            android:gravity="top|start"
+            android:inputType="textMultiLine"
+            android:maxLength="2048"
+            android:maxLines="6"
+            android:minLines="2" />
+    </LinearLayout>
+</LinearLayout>

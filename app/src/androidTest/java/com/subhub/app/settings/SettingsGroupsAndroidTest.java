@@ -240,7 +240,6 @@ public class SettingsGroupsAndroidTest {
                     .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
             assertFalse(ControllerPinManager.isDomModeActive());
             onView(androidx.test.espresso.matcher.ViewMatchers.withText(android.R.string.cancel)).perform(click());
-            assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(InstrumentationRegistry.getInstrumentation().getTargetContext()));
         }
     }
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
@@ -306,7 +305,6 @@ public class SettingsGroupsAndroidTest {
             assertEquals("A detached observer must not finish the synthetic flow", revision,
                     settings.getLong("sub_feature_policy_revision", 0));
             assertFalse(new com.subhub.app.security.HardcoreModeManager(context).isRequested());
-            assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
         }
     }
 
