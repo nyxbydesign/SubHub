@@ -24,6 +24,8 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String SEED_LONG_CLIPBOARD = "gag_seed_long_clipboard";
     static final String DELETION_TEXT = "keep über café tail";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
+    private EditText editor;
+    private boolean keyboardRequested;
     private boolean seedClipboard;
 
     @Override protected void onCreate(Bundle state) {
@@ -34,7 +36,7 @@ public final class GagEditorFixtureActivity extends Activity {
         }
 
         boolean longClipboard = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false);
-        EditText editor = getIntent().getBooleanExtra(WATCH_SEPARATOR_BATCH, false)
+        editor = getIntent().getBooleanExtra(WATCH_SEPARATOR_BATCH, false)
                 ? new EditText(this) {
                     private boolean startsAfterHello;
 
@@ -69,11 +71,8 @@ public final class GagEditorFixtureActivity extends Activity {
         }
         setContentView(editor);
         editor.requestFocus();
-        editor.post(() -> {
-            if (selected) editor.setSelection(5, 14);
-            else editor.setSelection(0);
-            getSystemService(InputMethodManager.class).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
-        });
+        if (selected) editor.setSelection(5, 14);
+        else editor.setSelection(0);
     }
 
     static String longClipboardResult(CharSequence text) {
@@ -82,6 +81,15 @@ public final class GagEditorFixtureActivity extends Activity {
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && editor != null && !keyboardRequested) {
+            // Wait for window focus dispatch so the IME can serve the focused editor.
+            editor.post(() -> {
+                if (!keyboardRequested && editor.hasWindowFocus() && editor.hasFocus()) {
+                    keyboardRequested = getSystemService(InputMethodManager.class)
+                            .showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+                }
+            });
+        }
         if (hasFocus && seedClipboard) {
             seedClipboard = false;
             String text = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)
