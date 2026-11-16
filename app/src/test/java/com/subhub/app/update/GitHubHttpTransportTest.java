@@ -13,12 +13,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public final class GitHubHttpTransportTest {
     private ServerSocket server;
@@ -56,6 +59,15 @@ public final class GitHubHttpTransportTest {
                             + "\r\nConnection: close\r\n\r\n");
                     output.write(manifest);
                     output.flush();
+                } else if (path.equals("/history?per_page=30&page=1")) {
+                    writeHistory(output, "[{\"draft\":false,\"tag_name\":\"v0.7.0-dev.20\"},"
+                            + "{\"draft\":true,\"tag_name\":\"v0.7.0-dev.19\"}]",
+                            "Link: <" + root + "/history?per_page=30&page=2>; rel=\"next\"\r\n");
+                } else if (path.equals("/history?per_page=30&page=2")) {
+                    writeHistory(output, "[{\"draft\":false,\"tag_name\":\"v0.7.0\",\"body\":\"Stable\"}]",
+                            "Link: <" + root + "/history?per_page=30&page=1>; rel=\"prev\"\r\n");
+                } else if (path.equals("/history?per_page=30&page=3")) {
+                    write(output, "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                 } else if (path.equals("/cached")) write(output, "HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n");
                 else if (path.equals("/limited")) write(output, "HTTP/1.1 403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                 else if (path.equals("/redirect")) write(output, "HTTP/1.1 302 Found\r\nLocation: " + root + "/ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -67,6 +79,11 @@ public final class GitHubHttpTransportTest {
     private static void write(OutputStream output, String value) throws Exception {
         output.write(value.getBytes(StandardCharsets.US_ASCII));
         output.flush();
+    }
+
+    private static void writeHistory(OutputStream output, String body, String links) throws Exception {
+        write(output, "HTTP/1.1 200 OK\r\n" + links + "Content-Length: " + body.length()
+                + "\r\nConnection: close\r\n\r\n" + body);
     }
 
     @Test public void readsSuccessfulResponseAndEtag() throws Exception {
@@ -88,6 +105,22 @@ public final class GitHubHttpTransportTest {
         GitHubReleaseRepository.HttpResponse response = GitHubReleaseRepository.get(root + "/limited", "", 1024);
         assertEquals(403, response.code);
         assertEquals("0", response.rateRemaining);
+    }
+
+    @Test public void fetchesHistoryPagesWithoutFetchingManifests() {
+        String feed = root + "/history?per_page=30";
+        GitHubReleaseRepository.HistoryPage first = GitHubReleaseRepository.historyPage(feed, 1);
+        assertNull(first.failure());
+        assertTrue(first.hasNext());
+        assertEquals(List.of("v0.7.0-dev.20"), first.items().stream().map(item -> item.tag).toList());
+        assertTrue(first.items().get(0).prerelease);
+
+        GitHubReleaseRepository.HistoryPage last = GitHubReleaseRepository.historyPage(feed, 2);
+        assertNull(last.failure());
+        assertFalse(last.hasNext());
+        assertEquals("v0.7.0", last.items().get(0).tag);
+        assertEquals(GitHubReleaseRepository.Failure.RATE_LIMITED, GitHubReleaseRepository.historyPage(feed, 3).failure());
+        assertEquals(0, manifestRequests.get());
     }
 
     @Test public void warmFeedFetchesOnlyTheNewManifestAndPreservesChannelChoice() throws Exception {

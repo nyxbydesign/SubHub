@@ -122,11 +122,11 @@ SUBHUB_PASS_NATIVE = {
         "staleWorkspaceRevisionCannotSaveOrDiscardConfigurationEdits"
     ],
     "com.subhub.app.remote.RemoteDurationAndroidTest": [
-        "staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation"
+        "staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation",
+        "openingAndRecreatingInlineDurationNeverQueuesUnchangedConfiguration"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
-        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor"
@@ -158,7 +158,6 @@ SUBHUB_PASS_SOURCE_ONLY = {
         "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
         "actualRemoteStatsReprojectsVisibleAllowanceAfterDescriptorArrival",
-        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons"
     ],
     "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
@@ -193,17 +192,16 @@ SUBHUB_PASS_SOURCE_ONLY = {
     ],
     "com.subhub.app.remote.RemoteDurationAndroidTest": [
         "nativeInlineChoiceSurvivesRecreationAndQueuesOnlyTheSelectedPeersDuration",
-        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace"
+        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace",
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "draftAndInvalidRawBudgetSurviveRecreation",
+        "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
-        "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
-        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "pairedCensorSettingsOmitPeerAppsAndPopupActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
         "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
@@ -353,6 +351,7 @@ DEVICE_PASS_SOURCE_ONLY = {
     **BATTERY_SOURCE_ONLY,
     # This regression needs an explicitly owned paired fixture, with its opt-in runner argument.
     "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
+        "pairedContractEditsPopupInlineAndHonorsTargetConsent",
         "subContractOmitsDisabledDetailsAndKeepsEnabledSiblings",
         "subWalletKeepsPaidPauseOnlyAndHidesDetailsAfterLegacyDisable",
         "firstPopulatedSubContractFrameIncludesAllSavedSectionsAndPortrait",
@@ -418,7 +417,6 @@ DEVICE_PASS_SOURCE_ONLY = {
         "actualActivityPreviewOpensFullHistoryAndUsesArrivingRemotePixels",
         "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
         "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
-        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
         "sharedNativeLimitsAndAppSelectorKeepRemoteIconScope",
         "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons",
     ],
@@ -437,7 +435,7 @@ DEVICE_PASS_SOURCE_ONLY = {
         "renderedRoleProfilesRetainReadableNavigationStatisticsAndOriginalAchievements",
         "contractDomPreviewKeepsItsOwnIdentityBioAndRoundedAvatar",
         "compactAllowancesRetainNativeTargetsExplicitStatesAndPersistence",
-        "compactReadOnlyAllowancesKeepUnknownAndHardcoreContextWithoutEditControls",
+        "compactReadOnlyAllowancesKeepUnknownAndDeniedChoicesWithoutEditControls",
         "largeTextCaptureCoverageShowsWholeControlsAndExpandedBioEnd",
         "bothRoleProfileCardsUseSwitchAndSingleRolesKeepTheirIdentity",
         "profileSelectorsUseEqualHalvesOrAReadableStack",
@@ -526,6 +524,7 @@ DUMMY_PREVIEW_NATIVE = {
         "limitsEditorRecreatesAndRejectsForgedTargets",
         "walletEditorRecreatesAndRejectsForgedTargets",
         "atmosphereEditorRecreatesAndRejectsForgedTargets",
+        "gagWordPairsSaveThroughTheSharedEditorAndSurviveRecreation",
         "appsEditorRecreatesAndRejectsForgedTargets",
         "durationEditorRecreatesAndRejectsForgedTargets",
         "profileAuthorityRejectsForgeryAndLiveEditorRevocation",
@@ -730,20 +729,20 @@ DUMMY_PREVIEW_NATIVE = {
     ]
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteDurationAndroidTest": [
+        "fixedInlineDurationIgnoresHiddenRandomBounds",
+        "missingDurationBaselineOffersRetryAndRecoversWithoutSaving",
+    ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
-        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "pairedAppsNavigationSelectsAnAppAndPreservesTheExistingAllowance",
+        "pairedContractKeepsManageAppsAboveAnExpandablePreview",
         "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
         "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
         "automaticSaveRetainsTheFocusedEditorAndCursor",
-        "draftAndInvalidRawBudgetSurviveRecreation",
         "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
         "pairedAtmosphereOpensGagAndQueuesRulesForThatSub",
-        "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
-        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "pairedCensorSettingsOmitPeerAppsAndPopupActions",
         "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
-        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
-        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
         "pairedScreensFitCurrentDisplayAndFontConfiguration",
         "sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals",
         "peerNameChangesKeepRelationshipAndPersonIdentitiesStable",
@@ -794,7 +793,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 22, "subhub-pass": 54, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 227}
+SUITE_COUNTS = {"extra-time": 22, "subhub-pass": 54, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 228}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"

@@ -7,10 +7,12 @@ import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static org.hamcrest.Matchers.*;
 import android.content.*;
 import android.view.View;
-import android.widget.Spinner;
+import android.widget.EditText;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.NativeUiActions;
+import com.subhub.app.R;
 import com.subhub.app.people.*;
 import com.subhub.app.security.*;
 import com.subhub.app.settings.SettingsRepository;
@@ -33,8 +35,7 @@ public class RemoteDurationAndroidTest {
         com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context);assertTrue(ControllerPinManager.setPin(context,"2468"));assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
         database="inline-duration-"+UUID.randomUUID();feature=new RemoteFeature(context,new RemoteStore(context,database+".db"));source=new RemoteStore(context,database+"source.db");
         String dom=String.join("",Collections.nCopies(64,"a")),sub=String.join("",Collections.nCopies(64,"b"));
-        PairingInvite invite=PairingInvite.create(dom,"fixture",1000);feature.store.saveInvite(invite);feature.store.bindInvite(invite.id,sub,invite.tokenHash(),1001);
-        feature.store.approveInvite(invite.id,sub,"Fixture Sub",1001);feature.store.activate(sub,invite.id);source.acceptInvite(invite,"Dom");source.activate(dom,invite.id);peer=feature.store.peer(sub,invite.id);
+        PairingInvite invite=PairingInvite.create(dom,"fixture",1000);TimedPairingFixture.activeDom(feature.store, invite, sub, "Fixture Sub");TimedPairingFixture.activeSub(source, invite, sub, "Dom");peer=feature.store.peer(sub,invite.id);
         original=RemoteConfiguration.active(RemoteConfigurationAndroidTest.configuration());source.publish(dom,invite.id,RemoteProtocol.Stream.BASELINE,"active",original,false,1);feature.store.receive(sub,source.nextBatch(dom,invite.id,RemoteProtocol.Stream.BASELINE));
         singleton=RemoteFeature.class.getDeclaredField("instance");singleton.setAccessible(true);previous=(RemoteFeature)singleton.get(null);singleton.set(null,feature);
         People.installRemoteRepository(new RemotePersonRepository(context,feature));People.installConnectionUi(new RemoteUi());People.installRemoteAuthority(feature::controlsLocal);
@@ -52,15 +53,103 @@ public class RemoteDurationAndroidTest {
             page.recreate();ready(page);page.onActivity(a->assertEquals(3_600_000L,((com.subhub.app.commitment.DurationChoicesView)a.findViewById(android.R.id.content).findViewWithTag("remote_duration_choice")).duration()));
             await(()->feature.store.latestCommand(peer.identity,peer.generation)!=null);
             RemoteStore.Command command=feature.store.latestCommand(peer.identity,peer.generation);JSONObject queued=new JSONObject(command.body).getJSONObject("configuration");
-            assertEquals(3_600_000,queued.getJSONObject("service").getLong("duration"));
-            assertEquals(RemoteProtocol.canonical(original.getJSONObject("apps")),RemoteProtocol.canonical(queued.getJSONObject("apps")));
-            JSONObject compatible = com.subhub.app.tasks.TaskContractFields.forPeer(original, false, false);
-            assertEquals(RemoteProtocol.canonical(compatible.getJSONObject("contract")), RemoteProtocol.canonical(queued.getJSONObject("contract")));
-            assertEquals(RemoteProtocol.canonical(original.getJSONObject("contract")),
-                    RemoteProtocol.canonical(RemoteConfiguration.active(queued).getJSONObject("contract")));
+            JSONObject expected = new JSONObject(original.toString());
+            expected.getJSONObject("service").put("duration", 3_600_000L);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(RemoteConfiguration.active(queued)));
+            // The fixture has not negotiated Tasks or Extra Time. Older peers receive neither rule.
+            JSONObject wallet = expected.getJSONObject("contract").getJSONObject("sections").getJSONObject("wallet");
+            wallet.remove(com.subhub.app.tasks.TaskContractFields.ENABLED);
+            wallet.remove(com.subhub.app.tasks.TaskContractFields.CENTS);
+            wallet.remove(ExtraTimeContractFields.ENABLED);
+            wallet.remove(ExtraTimeContractFields.CENTS);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(queued));
             assertEquals(RemoteStore.CommandState.QUEUED,command.state);
         }
     }
+
+    @Test public void openingAndRecreatingInlineDurationNeverQueuesUnchangedConfiguration() throws Exception {
+        try (ActivityScenario<PersonActivity> page = open()) {
+            ready(page);
+            page.recreate();
+            ready(page);
+            page.onActivity(activity -> {
+                View root = activity.getWindow().getDecorView();
+                com.subhub.app.commitment.DurationChoicesView choices =
+                        root.findViewWithTag("remote_duration_choice");
+                assertEquals(com.subhub.app.commitment.ServiceDurationView.PERMANENT, choices.duration());
+                assertNotNull(root.findViewWithTag("remote_configuration_save_status"));
+                assertNull(root.findViewWithTag("feature_editor_apply"));
+            });
+            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS + 200);
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+        }
+        assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+    }
+
+    @Test public void fixedInlineDurationIgnoresHiddenRandomBounds() throws Exception {
+        try (ActivityScenario<PersonActivity> page = open()) {
+            ready(page);
+            page.onActivity(activity -> {
+                View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                assertNull(duration.findViewWithTag("feature_editor_apply"));
+                EditText minimum = duration.findViewWithTag("remote_duration_minimum");
+                EditText maximum = duration.findViewWithTag("remote_duration_maximum");
+                assertFalse(minimum.isShown());
+                assertFalse(maximum.isShown());
+                minimum.setText("");
+                maximum.setText("0");
+            });
+            onView(withTagValue(is("remote_duration_hidden"))).perform(NativeUiActions.revealAboveNavigation(), click());
+            await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
+            RemoteStore.Command command = feature.store.latestCommand(peer.identity, peer.generation);
+            JSONObject expected = new JSONObject(original.toString());
+            JSONObject service = expected.getJSONObject("service");
+            service.put("hidden", !service.getBoolean("hidden"));
+            JSONObject queued = new JSONObject(command.body).getJSONObject("configuration");
+            assertEquals(RemoteStore.CommandState.QUEUED, command.state);
+            assertEquals(RemoteProtocol.canonical(expected), RemoteProtocol.canonical(RemoteConfiguration.active(queued)));
+        }
+    }
+
+    @Test public void missingDurationBaselineOffersRetryAndRecoversWithoutSaving() throws Exception {
+        feature.store.getWritableDatabase().delete("remote_objects", "stream=?",
+                new String[]{RemoteProtocol.Stream.BASELINE.name()});
+        try (ActivityScenario<PersonActivity> page = open()) {
+            await(() -> {
+                AtomicReference<Boolean> visible = new AtomicReference<>(false);
+                page.onActivity(activity -> {
+                    View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                    if (duration == null) return;
+                    ArrayList<View> actions = new ArrayList<>();
+                    duration.findViewsWithText(actions, activity.getString(R.string.role_retry), View.FIND_VIEWS_WITH_TEXT);
+                    visible.set(actions.stream().anyMatch(action -> action.isShown() && action.isEnabled()));
+                });
+                return visible.get();
+            });
+            var retry = allOf(withText(R.string.role_retry),
+                    isDescendantOfA(withTagValue(is("remote_session_duration"))));
+            onView(retry).check(androidx.test.espresso.assertion.ViewAssertions.matches(isEnabled()));
+            page.onActivity(activity -> {
+                View duration = activity.getWindow().getDecorView().findViewWithTag("remote_session_duration");
+                assertNull(duration.findViewWithTag("remote_duration_choice"));
+            });
+
+            String dom = source.peers(false).get(0).identity;
+            JSONObject recovered = new JSONObject(original.toString());
+            recovered.getJSONObject("service").put("hidden", !original.getJSONObject("service").getBoolean("hidden"));
+            assertEquals(2L, source.publish(dom, peer.generation, RemoteProtocol.Stream.BASELINE,
+                    "active", recovered, false, 2));
+            assertEquals(2L, feature.store.receive(peer.identity,
+                    source.nextBatch(dom, peer.generation, RemoteProtocol.Stream.BASELINE)).through);
+            onView(retry).perform(NativeUiActions.revealAboveNavigation(), click());
+            ready(page);
+            onView(withTagValue(is("remote_duration_hidden"))).check(
+                    androidx.test.espresso.assertion.ViewAssertions.matches(
+                            recovered.getJSONObject("service").getBoolean("hidden") ? isChecked() : isNotChecked()));
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+        }
+    }
+
     @Test public void staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation()throws Exception {
         AtomicReference<View> stale=new AtomicReference<>();
         try(ActivityScenario<PersonActivity> page=open()) {

@@ -26,7 +26,7 @@ import org.junit.Test;
 
 public final class FormalRelationshipStoreAndroidTest extends FormalRelationshipFixture {
     @Test public void parsedPendingClaimHasNoAuthenticatedDomAndReservesSlot() {
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000); store.acceptInvite(invite,"Claimed Dom");
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000); TimedPairingFixture.stageSub(store, invite, "Claimed Dom");
         try(Cursor row=db().rawQuery("SELECT claimed_endpoint,dom_ref,sub_ref FROM formal_relationships",null)) {
             assertTrue(row.moveToFirst()); assertEquals(DOM,row.getString(0)); assertTrue(row.isNull(1)); assertNotNull(row.getString(2));
         }
@@ -34,25 +34,54 @@ public final class FormalRelationshipStoreAndroidTest extends FormalRelationship
         assertThrows(SecurityException.class,()->coordinator().internalSnapshot());
     }
     @Test public void callbacksAreCommittedUnlockedAndFailureCannotUndoOutcome() {
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000); store.acceptInvite(invite,"Dom");
+        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000); TimedPairingFixture.stageSub(store, invite, "Dom");
+        TimedPairingFixture.approveSub(store, invite, SUB);
         RemoteStore observer=another();
         store.onActivated(peer->{assertFalse(Thread.holdsLock(store));assertEquals(RemoteStore.State.ACTIVE,observer.peer(DOM,invite.id).state);throw new IllegalStateException("observer failure");});
-        assertThrows(IllegalStateException.class,()->store.activate(DOM,invite.id));
+        assertThrows(IllegalStateException.class,()->TimedPairingFixture.activate(store, invite, DOM));
         assertEquals(RemoteStore.State.ACTIVE,store.peer(DOM,invite.id).state);
         store.onRevoked((p,g)->{assertFalse(Thread.holdsLock(store));assertEquals(RemoteStore.State.REVOKED,observer.peer(p,g).state);throw new IllegalStateException("observer failure");});
         assertThrows(IllegalStateException.class,()->store.revoke(DOM,invite.id));
         assertEquals(0,count("formal_governing_slots"));
     }
     @Test public void rollbackAndOuterLocksNeverEmitPrematureCallbacks() {
-        PairingInvite invite=PairingInvite.create(DOM,"fixture",1000);store.acceptInvite(invite,"Dom");
-        int[] callbacks={0};store.onActivated(peer->callbacks[0]++);store.onRevoked((p,g)->callbacks[0]++);
-        synchronized(store){assertThrows(IllegalStateException.class,()->store.activate(DOM,invite.id));assertThrows(IllegalStateException.class,()->store.cancelInvite(invite.id));assertThrows(IllegalStateException.class,()->store.revoke(DOM,invite.id));}
-        db().beginTransaction();try{assertThrows(IllegalStateException.class,()->store.activate(DOM,invite.id));assertThrows(IllegalStateException.class,()->store.revoke(DOM,invite.id));assertThrows(IllegalStateException.class,()->store.cancelInvite(invite.id));}finally{db().endTransaction();}
+        PairingInvite invite = PairingInvite.create(DOM, "fixture", 1000);
+        TimedPairingFixture.stageSub(store, invite, "Dom");
+        TimedPairingFixture.approveSub(store, invite, SUB);
+        PairingLifecycleClock.Source clock = TimedPairingFixture.clock(invite);
+        RemoteStore.Peer peer = store.peer(DOM, invite.id);
+        Runnable activate = () -> store.activateTimedPeer(peer, invite.tokenHash(), clock.observe(), clock);
+        java.util.function.BooleanSupplier cancel = () -> store.cancelPairingOperation(
+                invite.id, invite.id, PairingLifecycleClock.Direction.ACCEPT, null, clock.observe(), clock);
+
+        int[] callbacks = {0};
+        store.onActivated(active -> callbacks[0]++);
+        store.onRevoked((identity, generation) -> callbacks[0]++);
+        synchronized (store) {
+            assertThrows(IllegalStateException.class, activate::run);
+            assertThrows(IllegalStateException.class, cancel::getAsBoolean);
+            assertThrows(IllegalStateException.class, () -> store.revoke(DOM, invite.id));
+        }
+        db().beginTransaction();
+        try {
+            assertThrows(IllegalStateException.class, activate::run);
+            assertThrows(IllegalStateException.class, () -> store.revoke(DOM, invite.id));
+            assertThrows(IllegalStateException.class, cancel::getAsBoolean);
+        } finally {
+            db().endTransaction();
+        }
+
         db().execSQL("CREATE TRIGGER fail_activation BEFORE UPDATE ON formal_relationships BEGIN SELECT RAISE(ABORT,'owned failure'); END");
-        assertThrows(android.database.sqlite.SQLiteException.class,()->store.activate(DOM,invite.id));
-        assertEquals(RemoteStore.State.PENDING,store.peer(DOM,invite.id).state);assertEquals(0,callbacks[0]);
+        assertThrows(android.database.sqlite.SQLiteException.class, activate::run);
+        assertEquals(RemoteStore.State.PENDING, store.peer(DOM, invite.id).state);
+        assertEquals(PairingLifecycleLedger.Stage.APPROVED, store.pairingOperation(
+                invite.id, invite.id, PairingLifecycleClock.Direction.ACCEPT).stage);
+        assertEquals(0, callbacks[0]);
         db().execSQL("DROP TRIGGER fail_activation");
-        store.cancelInvite(invite.id);assertEquals(1,callbacks[0]);assertEquals(0,count("formal_governing_slots"));
+
+        assertTrue(cancel.getAsBoolean());
+        assertEquals(1, callbacks[0]);
+        assertEquals(0, count("formal_governing_slots"));
     }
     @Test public void twoHandlesCannotCommitTwoPendingGoverningDoms() throws Exception {
         RemoteStore second=another();PairingInvite a=PairingInvite.create(DOM,"fixture",1000),b=PairingInvite.create(SUB,"fixture",1000);
@@ -63,7 +92,7 @@ public final class FormalRelationshipStoreAndroidTest extends FormalRelationship
         } finally {workers.shutdownNow();}
     }
     private static boolean accept(RemoteStore target,PairingInvite invite,CountDownLatch start)throws Exception {
-        start.await();try{target.acceptInvite(invite,"Claim");return true;}catch(SecurityException|android.database.sqlite.SQLiteConstraintException rejected){return false;}
+        start.await();try{TimedPairingFixture.stageSub(target, invite, "Claim");return true;}catch(SecurityException|android.database.sqlite.SQLiteConstraintException rejected){return false;}
     }
 }
 

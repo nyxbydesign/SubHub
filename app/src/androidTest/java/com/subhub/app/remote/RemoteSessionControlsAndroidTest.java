@@ -122,9 +122,8 @@ public class RemoteSessionControlsAndroidTest {
         feature = new RemoteFeature(context, new RemoteStore(context, database + ".db"));
         source = new RemoteStore(context, database + "-source.db");
         PairingInvite invite = PairingInvite.create(DOM, "fixture", 1000);
-        feature.store.saveInvite(invite); feature.store.bindInvite(invite.id, SUB, invite.tokenHash(), 1001);
-        feature.store.approveInvite(invite.id, SUB, "Fixture Sub", 1001); feature.store.activate(SUB, invite.id);
-        source.acceptInvite(invite, "Dom"); source.activate(DOM, invite.id); peer = feature.store.peer(SUB, invite.id);
+        TimedPairingFixture.activeDom(feature.store, invite, SUB, "Fixture Sub");
+        TimedPairingFixture.activeSub(source, invite, SUB, "Dom"); peer = feature.store.peer(SUB, invite.id);
         source.publish(DOM, invite.id, RemoteProtocol.Stream.BASELINE, "active", RemoteConfigurationAndroidTest.configuration(), false, 1);
         feature.store.receive(SUB, source.nextBatch(DOM, invite.id, RemoteProtocol.Stream.BASELINE));
         singleton = RemoteFeature.class.getDeclaredField("instance"); singleton.setAccessible(true);
@@ -383,7 +382,6 @@ public class RemoteSessionControlsAndroidTest {
             assertEquals(0, gateway.confirms.get());
             gateway.reviewWitness = WITNESS; gateway.stopAvailable = true; dirty.set(true);
             await(() -> enabled(page, "remote_session_stop"));
-            assertFalse(SubFeaturePolicy.hardcoreOverride(context));
             tap("remote_session_stop"); await(() -> gateway.confirms.get() == 1);
             assertEquals(RemoteSessionCommands.Action.STOP, gateway.confirmed.request.action);
             assertEquals(repeat('e'), gateway.confirmed.request.sessionIdentity);
@@ -517,7 +515,7 @@ public class RemoteSessionControlsAndroidTest {
             assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
             assertEquals(selection, ((com.subhub.app.commitment.DurationChoicesView) tag(a, "remote_duration_choice")).duration());
             assertEquals(context.getString(R.string.remote_session_applied_duration,
-                    context.getResources().getStringArray(R.array.remote_duration_choices)[0]),
+                    context.getString(R.string.role_permanent_duration)),
                     ((TextView) tag(a, "remote_session_applied_duration")).getText().toString());
         });
     }
@@ -701,6 +699,11 @@ public class RemoteSessionControlsAndroidTest {
         page.onActivity(a -> {
             View old = tag(a, "remote_session_controls"); LinearLayout parent = (LinearLayout) old.getParent();
             parent.removeView(old); new RemoteSessionControls(a, parent, person, dirty::get, gateway).bind();
+            // Still in the binding callback, before the first asynchronously delivered snapshot.
+            assertTrue(tag(a, "person_service_label").isShown());
+            TextView commandStatus = (TextView) tag(a, "remote_session_status");
+            assertEquals(0, commandStatus.length());
+            assertEquals(View.GONE, commandStatus.getVisibility());
         });
         await(() -> hasText(page, "remote_session_applied_duration", context.getString(R.string.remote_session_applied_duration,
                 "60 " + context.getString(R.string.remote_minutes))));

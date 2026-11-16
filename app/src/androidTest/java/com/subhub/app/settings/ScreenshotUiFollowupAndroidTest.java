@@ -39,7 +39,7 @@ public final class ScreenshotUiFollowupAndroidTest {
         repository.savePreset(SubliminalSettings.Preset.GENTLE);
         try (ActivityScenario<SubliminalSettingsActivity> scenario = ActivityScenario.launch(SubliminalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                Slider slider = activity.findViewById(R.id.preset_slider);
+                Slider slider = activity.findViewById(R.id.whispers_preset_slider);
                 assertEquals(0f, slider.getValueFrom(), 0f);
                 assertEquals(3f, slider.getValueTo(), 0f);
                 assertEquals(1f, slider.getStepSize(), 0f);
@@ -51,7 +51,7 @@ public final class ScreenshotUiFollowupAndroidTest {
                 assertTrue(packs.getChildAt(2).getTop() > packs.getChildAt(0).getTop());
             });
             for (int step = 1; step < 4; step++) {
-                onView(withId(R.id.preset_slider)).perform(pressKey(KeyEvent.KEYCODE_DPAD_RIGHT));
+                onView(withId(R.id.whispers_preset_slider)).perform(pressKey(KeyEvent.KEYCODE_DPAD_RIGHT));
                 assertEquals(SubliminalSettings.Preset.values()[step], repository.load().getPreset());
             }
         }

@@ -143,7 +143,7 @@ public final class RemoteKeyholderAndroidTest {
         ExecutorService worker = Executors.newSingleThreadExecutor();
         Thread activation = new Thread(() -> {
             attemptingActivation.countDown();
-            subStore.activate(DOM, subPeer.generation);
+            TimedPairingFixture.activate(subStore, invite, DOM);
             ControllerPinManager.lockNow();
             assignmentFinished.set(sequence.incrementAndGet());
         }, "keyholder-activation-fixture");
@@ -284,18 +284,19 @@ public final class RemoteKeyholderAndroidTest {
     private String current(String secret) throws GeneralSecurityException {
         return Totp.code(secret, wall.get() / Totp.STEP_MILLIS);
     }
+    private PairingInvite invite;
+
     private void pending() throws Exception {
-        PairingInvite invite = PairingInvite.create(DOM, "fixture-route", 1000);
-        domStore.saveInvite(invite);
-        domStore.bindInvite(invite.id, SUB, invite.tokenHash(), 1001);
-        domStore.approveInvite(invite.id, SUB, "Sub fixture", 1002);
-        subStore.acceptInvite(invite, "Dom fixture");
+        invite = PairingInvite.create(DOM, "fixture-route", 1000);
+        TimedPairingFixture.stageDom(domStore, invite, SUB, "Sub fixture", "");
+        TimedPairingFixture.stageSub(subStore, invite, "Dom fixture");
+        TimedPairingFixture.approveSub(subStore, invite, SUB);
         domPeer = domStore.peer(SUB, invite.id);
         subPeer = subStore.peer(DOM, invite.id);
     }
     private void activate() {
-        domStore.activate(SUB, domPeer.generation);
-        subStore.activate(DOM, subPeer.generation);
+        TimedPairingFixture.activate(domStore, invite, SUB);
+        TimedPairingFixture.activate(subStore, invite, DOM);
     }
     private String ready() throws Exception {
         pending();

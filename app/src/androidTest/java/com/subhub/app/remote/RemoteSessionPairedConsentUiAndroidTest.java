@@ -213,7 +213,6 @@ public class RemoteSessionPairedConsentUiAndroidTest {
 
     private void assertNoAuthority() {
         assertFalse(new HardcoreModeManager(context).isAdminActive());
-        assertFalse(SubFeaturePolicy.hardcoreOverride(context));
         assertNull(SubFeaturePolicy.hardcoreStartConsent(context, feature.store, SELF));
         assertEquals("", feature.store.metadata(DOM, GENERATION, "hardcore_start_review_ack", ""));
     }

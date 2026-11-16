@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.Test;
 
@@ -29,6 +30,47 @@ public final class GagRulesTest {
         assertEquals("mph", rules.complete("HELLO", size -> 0));
         assertEquals("hellos", rules.complete("hellos", size -> 0));
         assertEquals("mph", rules.complete("Don't", size -> 0));
+    }
+
+    @Test public void authoredPairsStayDeterministicAndCoexistWithLegacyMatches() throws Exception {
+        GagSettings settings = new GagSettings(true, GagRules.Mode.MATCH, 1, "hello", "mph\nmmph",
+                Map.of("Welcome", new GagWordPairs.Rule(List.of("good evening"), false),
+                        "Don't", new GagWordPairs.Rule(List.of("hush"), false)));
+        GagSettings restored = GagSettings.from(settings.json());
+        assertEquals(settings, restored);
+        assertEquals("hush", settings.json().getJSONObject("pairs").get("Don't"));
+        GagRules rules = restored.rules();
+        assertEquals("good evening’", rules.complete("WELCOME’", size -> { throw new AssertionError(); }));
+        assertEquals("hush", rules.complete("Don't", size -> { throw new AssertionError(); }));
+        assertEquals("mph", rules.complete("HELLO", size -> 0));
+        assertEquals("mmph", rules.complete("HELLO", size -> 1));
+        assertEquals("accepted", rules.complete("welcomes", "accepted", size -> { throw new AssertionError(); }));
+    }
+
+    @Test public void eachMatchChoosesAgainAndExactCaseTakesPrecedenceOverTheFallback() throws Exception {
+        var pairs = Map.of("god", new GagWordPairs.Rule(GagSettings.items(" Goddess \r\n\r\n Demoness \n"), false),
+                "God", new GagWordPairs.Rule(List.of("Deity"), true),
+                "ONLY", new GagWordPairs.Rule(List.of("Exact"), true));
+        var settings = new GagSettings(true, GagRules.Mode.MATCH, 3, "", "", pairs);
+        var restored = GagSettings.from(settings.json());
+        assertEquals(settings, restored);
+        GagRules rules = restored.rules();
+        assertEquals("Goddess", rules.complete("god", size -> { assertEquals(2, size); return 0; }));
+        assertEquals("Demoness", rules.complete("god", size -> { assertEquals(2, size); return 1; }));
+        assertEquals("Deity’", rules.complete("God’", size -> { throw new AssertionError(); }));
+        assertEquals("Demoness", rules.complete("GOD", size -> 1));
+        assertEquals("only", rules.complete("only", size -> { throw new AssertionError(); }));
+        assertEquals("Exact", rules.complete("ONLY", size -> { throw new AssertionError(); }));
+    }
+
+    @Test public void otherModesUseTheSharedPoolEvenWhenPairsAreRetained() {
+        var pairs = Map.of("one", new GagWordPairs.Rule(List.of("pair", "another"), false),
+                "two", new GagWordPairs.Rule(List.of("pair"), true));
+        assertEquals("shared", new GagRules(GagRules.Mode.ALL, 1, Set.of(), List.of("shared"), pairs)
+                .complete("one", size -> 0));
+        GagRules interval = new GagRules(GagRules.Mode.INTERVAL, 2, Set.of(), List.of("shared"), pairs);
+        assertEquals("one", interval.complete("one", size -> 0));
+        assertEquals("shared", interval.complete("two", size -> 0));
     }
 
     @Test public void fieldPolicyRejectsSensitiveEditors() {

@@ -20,7 +20,7 @@ import java.util.Map;
 
 /** Merges live GitHub notes with immutable-release backfill bundled in the APK. */
 public final class ReleaseHistoryCatalog {
-    static final int MAX_ITEMS = 16;
+    static final int PAGE_SIZE = 16;
 
     private ReleaseHistoryCatalog() {}
 
@@ -52,9 +52,17 @@ public final class ReleaseHistoryCatalog {
     /** Retain stable and development rows until the chosen channel is projected for display. */
     static List<ReleaseHistoryItem> merge(List<ReleaseHistoryItem> live,
             List<ReleaseHistoryItem> bundled) {
+        return mergeSources(bundled, live);
+    }
+
+    @SafeVarargs
+    static List<ReleaseHistoryItem> mergeSources(Iterable<ReleaseHistoryItem> bundled,
+            Iterable<ReleaseHistoryItem>... liveSources) {
         Map<String, ReleaseHistoryItem> byTag = new LinkedHashMap<>();
         if (bundled != null) for (ReleaseHistoryItem item : bundled) put(byTag, item, false);
-        if (live != null) for (ReleaseHistoryItem item : live) put(byTag, item, true);
+        for (Iterable<ReleaseHistoryItem> source : liveSources) {
+            if (source != null) for (ReleaseHistoryItem item : source) put(byTag, item, true);
+        }
         List<ReleaseHistoryItem> merged = new ArrayList<>(byTag.values());
         merged.sort(Comparator.comparing(ReleaseHistoryCatalog::publication)
                 .thenComparing(ReleaseHistoryCatalog::version).reversed());
@@ -65,27 +73,27 @@ public final class ReleaseHistoryCatalog {
         return item.tag.equals("v" + installedVersion);
     }
 
-    static List<ReleaseHistoryItem> visible(List<ReleaseHistoryItem> sortedHistory, boolean devUpdates,
+    static List<ReleaseHistoryItem> forDisplay(List<ReleaseHistoryItem> sortedHistory, boolean devUpdates,
             String installedVersion) {
-        if (devUpdates) return sortedHistory.subList(0, Math.min(sortedHistory.size(), MAX_ITEMS));
-        List<ReleaseHistoryItem> result = new ArrayList<>(MAX_ITEMS);
+        if (devUpdates) return sortedHistory;
+        List<ReleaseHistoryItem> result = new ArrayList<>();
         ReleaseHistoryItem installed = null;
         for (ReleaseHistoryItem item : sortedHistory) {
-            if (isInstalled(item, installedVersion)) {
-                installed = item;
-                if (result.size() < MAX_ITEMS) result.add(item);
-            } else if (!item.prerelease && result.size() < MAX_ITEMS) {
-                result.add(item);
-            }
+            boolean exactInstalled = isInstalled(item, installedVersion);
+            if (exactInstalled) installed = item;
+            if (exactInstalled || !item.prerelease) result.add(item);
         }
         if (installed == null && isPrerelease(installedVersion)) {
             // The installed development build may predate the feed or have no cached notes.
             installed = new ReleaseHistoryItem(installedVersion, "v" + installedVersion,
                     "", "", "", true);
         }
-        if (installed != null && !result.contains(installed)) {
-            if (result.size() == MAX_ITEMS) result.remove(MAX_ITEMS - 1);
-            result.add(installed);
+        if (installed != null) {
+            int index = result.indexOf(installed);
+            if (index < 0 || index >= PAGE_SIZE) {
+                if (index >= 0) result.remove(index);
+                result.add(Math.min(PAGE_SIZE - 1, result.size()), installed);
+            }
         }
         return result;
     }
@@ -101,12 +109,13 @@ public final class ReleaseHistoryCatalog {
     static List<ReleaseHistoryItem> withCandidate(List<ReleaseHistoryItem> history,
             UpdateCandidate candidate) {
         if (candidate == null) return merge(null, history);
-        ReleaseHistoryItem available = new ReleaseHistoryItem(
+        return merge(List.of(candidateItem(candidate)), history);
+    }
+
+    static ReleaseHistoryItem candidateItem(UpdateCandidate candidate) {
+        return new ReleaseHistoryItem(
                 candidate.manifest.versionName, candidate.manifest.tag, candidate.notes,
                 candidate.releaseUrl, candidate.publishedAt, candidate.prerelease);
-        List<ReleaseHistoryItem> live = new ArrayList<>();
-        live.add(available);
-        return merge(live, history);
     }
 
     private static void put(Map<String, ReleaseHistoryItem> target, ReleaseHistoryItem item,

@@ -76,7 +76,7 @@ public final class ProgressMeterThemeTest {
                 }
             }
         }
-        assertEquals("Achievements (2), combined limits, export, and update download", 5, count);
+        assertEquals("Achievements (2), combined limits, and update download", 4, count);
     }
 
     @Test public void programmaticMetersAndActivityChartUseTheSameMutedTokens() throws Exception {

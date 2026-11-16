@@ -29,8 +29,9 @@ public final class RemoteContracts {
         return new RemoteAssets(new File(root,peer.identity+"/"+peer.generation));
     }
 
-    public void prepare(RemoteStore.Peer peer) throws Exception {
-        if(peer.localRole==RemoteProtocol.Role.DOM)return;
+    /** Reports whether the current baseline can be advertised to this peer. */
+    public boolean prepare(RemoteStore.Peer peer) throws Exception {
+        if(peer.localRole==RemoteProtocol.Role.DOM)return true;
         if(store.metadata(peer.identity,peer.generation,"initial_configuration","").isEmpty()) {
             JSONObject current=capture(peer);
             store.putMetadata(peer.identity,peer.generation,"initial_configuration",RemoteProtocol.canonical(current));
@@ -40,9 +41,14 @@ public final class RemoteContracts {
         JSONObject wire = com.subhub.app.tasks.TaskContractFields.forPeer(current,
                 "1".equals(store.metadata(peer.identity,peer.generation,"tasks_version","0")), false);
         wire = ExtraTimeContractFields.forPeer(wire,"1".equals(store.metadata(peer.identity,peer.generation,"extra_time_version","0")),false);
-        wire = GagContractFields.forPeer(wire,GagContractFields.supported(store,peer),false);
-        store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",wire,false,System.currentTimeMillis());
+        var gagCapability = GagContractFields.capability(store, peer);
+        boolean baselineAvailable = gagCapability.supportsPairs(GagContractFields.section(wire));
+        if (baselineAvailable) {
+            wire = GagContractFields.forPeer(wire, gagCapability, false);
+            store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",wire,false,System.currentTimeMillis());
+        }
         process(peer);writer.prunePrepared();
+        return baselineAvailable;
     }
 
     public synchronized JSONObject capture(RemoteStore.Peer peer) throws Exception {

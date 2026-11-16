@@ -102,10 +102,14 @@ public final class RemoteConfigurationEdits {
 
     private void requireConsent(RemoteStore.Peer peer,JSONObject before,JSONObject after)throws Exception {
         JSONObject a=before.getJSONObject("contract"),b=after.getJSONObject("contract");
-        if(!same(a.getJSONObject("sections").optJSONObject(GagContractFields.SECTION),
-                b.getJSONObject("sections").optJSONObject(GagContractFields.SECTION))
-                && !GagContractFields.supported(store,peer))
-            throw new SecurityException("Update the paired app to configure Gag");
+        JSONObject priorRules=GagContractFields.section(before),rules=GagContractFields.section(after);
+        if (!same(priorRules,rules)) {
+            if (!GagContractFields.supported(store,peer))
+                throw new SecurityException("Update the paired app to configure Gag");
+            var capability = GagContractFields.capability(store, peer);
+            if (!capability.supportsPairs(priorRules) || !capability.supportsPairs(rules))
+                throw new SecurityException(GagContractFields.PAIRS_UPDATE_REQUIRED);
+        }
         for(String feature:SubFeaturePolicy.FEATURES){
             if(RemoteFeaturePolicy.remoteAllowed(store,peer,feature))continue;
             boolean changed=!same(a.getJSONObject("sections").getJSONObject(feature),b.getJSONObject("sections").getJSONObject(feature));

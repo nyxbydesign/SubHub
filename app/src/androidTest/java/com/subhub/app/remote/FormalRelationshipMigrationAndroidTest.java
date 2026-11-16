@@ -25,7 +25,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
         assertEquals(145,store.additionOrder(identity(145),"legacy_145"));
         while(store.migrateFormalRelationships()!=0){ }
         assertEquals(145,count("formal_relationships"));assertEquals(0,count("formal_operations"));
-        for(int i=1;i<=145;i++){store.activate(identity(i),"legacy_"+i);assertEquals(i,store.additionOrder(identity(i),"legacy_"+i));}
+        for(int i=1;i<=145;i++){RetainedPairingFixture.activateRetainedPeer(store, identity(i), "legacy_"+i);assertEquals(i,store.additionOrder(identity(i),"legacy_"+i));}
         assertEquals(145,count("formal_governing_slots"));
         assertEquals("raw legacy value",store.metadata(identity(1),"legacy_1","retained",""));
         try(Cursor row=db().rawQuery("SELECT request_digest,request,result,updated,received_boot FROM session_control_journal",null)){
@@ -35,11 +35,11 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
     }
     @Test public void newPeersMapImmediatelyAcrossInterruptedMigrationAndLocalInterleaving() {
         assertThrows(IllegalStateException.class,()->coordinator().internalSnapshot());
-        PairingInvite first=PairingInvite.create(DOM,"fixture",1000);store.saveInvite(first);store.bindInvite(first.id,SUB,first.tokenHash(),1001);store.approveInvite(first.id,SUB,"Sub",1001);
+        PairingInvite first=PairingInvite.create(DOM,"fixture",1000);RetainedPairingFixture.invitation(store, first, SUB, "Sub", null, true);
         assertEquals(146,store.additionOrder(SUB,first.id));
         while(store.migrateFormalRelationships()!=0){ }
         FormalRelationshipCoordinator engine=coordinator();FormalRelationshipCoordinator.InternalSnapshot s=engine.internalSnapshot();RelationshipUi.LocalReview local=engine.prepareLocal("interleaved",s.dom,s.sub,s.changeCounter);
-        String next=repeat('c');PairingInvite second=PairingInvite.create(DOM,"fixture",1000);store.saveInvite(second);store.bindInvite(second.id,next,second.tokenHash(),1001);store.approveInvite(second.id,next,"Next Sub",1001);
+        String next=repeat('c');PairingInvite second=PairingInvite.create(DOM,"fixture",1000);RetainedPairingFixture.invitation(store, second, next, "Next Sub", null, true);
         assertEquals(148,store.additionOrder(next,second.id));
         try(Cursor row=db().rawQuery("SELECT rowid FROM peers WHERE peer=?",new String[]{next})){assertTrue(row.moveToFirst());assertEquals(147,row.getLong(0));}
         assertEquals(RelationshipUi.OperationState.ACTIVE,engine.confirmLocal(local.operationId,local.requestDigest).state);

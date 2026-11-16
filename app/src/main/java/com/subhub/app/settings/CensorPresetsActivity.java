@@ -46,8 +46,7 @@ public final class CensorPresetsActivity extends PreferencePage {
 
     private void render() {
         if (isFinishing() || isDestroyed()) return;
-        if ((com.subhub.app.people.DummySubPreview.isRequested(getIntent())
-                || FeatureEditorSession.preview(this))
+        if (com.subhub.app.people.DummySubPreview.isRequested(getIntent())
                 && !FeatureEditorSession.canView(this, "censor")) { finish(); return; }
         if (page != null && page.getParent() instanceof android.widget.ScrollView)
             scrollPosition = ((android.widget.ScrollView) page.getParent()).getScrollY();
@@ -56,7 +55,7 @@ public final class CensorPresetsActivity extends PreferencePage {
         TextView edit = PrimaryHeader.editLockButton(page);
         ControllerEditMode.renderButton(this, edit);
         edit.setOnClickListener(view -> {
-            if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
+            if (FeatureEditorSession.remote(this)) return;
             if (ControllerPinManager.isSessionUnlocked()) {
                 ControllerPinManager.enterSubMode();
                 render();
@@ -184,8 +183,8 @@ public final class CensorPresetsActivity extends PreferencePage {
     }
     @Override protected void onRestoreInstanceState(Bundle state) {
         // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
-        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
-                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        if (!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+            super.onRestoreInstanceState(state);
     }
 
 }

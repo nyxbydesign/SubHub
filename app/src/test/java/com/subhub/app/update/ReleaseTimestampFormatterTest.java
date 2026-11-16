@@ -7,20 +7,20 @@ import java.util.Locale;
 import org.junit.Test;
 
 public final class ReleaseTimestampFormatterTest {
-    @Test public void previewUsesLocalDateTimeAndExplicitOffset() {
-        assertEquals("18 Oct 2026, 10:31:42 UTC+02:00", format("2026-10-18T08:31:42Z", "Europe/Berlin"));
-        assertEquals("18 Oct 2026, 08:31:42 UTC+00:00", format("2026-10-18T08:31:42Z", "UTC"));
+    @Test public void releaseUsesLocalDateTimeWithoutAnOffset() {
+        assertEquals("18 Oct 2026, 10:31:42", format("2026-10-18T08:31:42Z", "Europe/Berlin"));
+        assertEquals("18 Oct 2026, 08:31:42", format("2026-10-18T08:31:42Z", "UTC"));
     }
 
     @Test public void localeAndTimezoneComeFromTheCaller() {
-        assertEquals("18.10.2026, 10:31:42 UTC+02:00", ReleaseTimestampFormatter.preview(
+        assertEquals("18.10.2026, 10:31:42", ReleaseTimestampFormatter.format(
                 "2026-10-18T08:31:42Z", Locale.GERMANY, ZoneId.of("Europe/Berlin")));
-        assertEquals("17 Oct 2026, 17:30:00 UTC-07:00", format("2026-10-18T00:30:00Z", "America/Los_Angeles"));
+        assertEquals("17 Oct 2026, 17:30:00", format("2026-10-18T00:30:00Z", "America/Los_Angeles"));
     }
 
-    @Test public void repeatedDstHourRemainsUnambiguous() {
-        assertEquals("25 Oct 2026, 02:30:00 UTC+02:00", format("2026-10-25T00:30:00Z", "Europe/Berlin"));
-        assertEquals("25 Oct 2026, 02:30:00 UTC+01:00", format("2026-10-25T01:30:00Z", "Europe/Berlin"));
+    @Test public void repeatedDstHourDisplaysTheSameLocalTime() {
+        assertEquals("25 Oct 2026, 02:30:00", format("2026-10-25T00:30:00Z", "Europe/Berlin"));
+        assertEquals("25 Oct 2026, 02:30:00", format("2026-10-25T01:30:00Z", "Europe/Berlin"));
     }
 
     @Test public void sourceOffsetsDescribeTheSameInstant() {
@@ -37,6 +37,6 @@ public final class ReleaseTimestampFormatterTest {
     }
 
     private static String format(String value, String zone) {
-        return ReleaseTimestampFormatter.preview(value, Locale.UK, ZoneId.of(zone));
+        return ReleaseTimestampFormatter.format(value, Locale.UK, ZoneId.of(zone));
     }
 }

@@ -244,7 +244,7 @@ public final class CachedPeerReadModelAndroidTest {
         store.getWritableDatabase().execSQL("INSERT OR REPLACE INTO remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,?,?,?,1,?,0,?)",
                 new Object[]{SUB,generation,stream.name(),item,com.subhub.app.storage.StoredPayloads.bind(body.toString()),System.currentTimeMillis()});
     }
-    private static JSONObject summary() throws Exception {
+    static JSONObject summary() throws Exception {
         JSONObject value=new JSONObject().put("schema",1).put("currency","EUR");
         for(String key:new String[]{"protectedSeconds","serviceSeconds","sessions","activityEvents","censors","limitMillis","limitStops",
                 "whispers","popups","tamperEvents","tributes","assessedEUR","assessedUSD","paidEUR","paidUSD","currentSeconds",

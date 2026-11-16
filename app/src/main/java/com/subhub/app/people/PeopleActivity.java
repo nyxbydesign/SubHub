@@ -190,7 +190,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
                 card = ProfileViews.person(staging, person, () -> { }); staging.removeView(card);
                 if (previous != null) roster.removeView(previous.view);
                 if (favorite) {
-                    card.setBackgroundResource(R.drawable.bg_home_favorite);
+                    card.setBackgroundResource(R.drawable.bg_home_composition_person);
                     TextView mark = PersonUi.text(card, getString(R.string.home_favorite_marked), false);
                     mark.setTextColor(getColor(R.color.accent_text));
                     mark.setTag("people_favorite:" + person.id.value());

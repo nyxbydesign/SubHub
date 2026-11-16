@@ -8,6 +8,7 @@ import org.json.JSONException;
 import java.io.File;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /** Durable updater state; contains no credentials. */
 public final class UpdateStateStore {
@@ -27,6 +28,8 @@ public final class UpdateStateStore {
     private static final String INSTALL_REQUESTED = "install_requested";
     private final Context context;
     private final SharedPreferences preferences;
+    private String cachedReleaseHistoryJson = "";
+    private List<ReleaseHistoryItem> cachedReleaseHistory = Collections.emptyList();
 
     public UpdateStateStore(Context context) {
         this.context = context.getApplicationContext();
@@ -155,10 +158,15 @@ public final class UpdateStateStore {
         preferences.edit().remove(CANDIDATE).remove(LAST_NOTIFIED).apply();
     }
 
-    public List<ReleaseHistoryItem> releaseHistory() {
+    public synchronized List<ReleaseHistoryItem> releaseHistory() {
+        // A worker or another store can update the same preferences while the screen polls.
         String value = preferences.getString(RELEASE_HISTORY, "");
-        try { return ReleaseHistoryItem.decode(value); }
-        catch (JSONException exception) { return Collections.emptyList(); }
+        if (!Objects.equals(value, cachedReleaseHistoryJson)) {
+            try { cachedReleaseHistory = ReleaseHistoryItem.decode(value); }
+            catch (JSONException exception) { cachedReleaseHistory = Collections.emptyList(); }
+            cachedReleaseHistoryJson = value;
+        }
+        return cachedReleaseHistory;
     }
 
     public void setReleaseHistory(List<ReleaseHistoryItem> history) {

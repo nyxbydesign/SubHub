@@ -2,7 +2,6 @@ package com.subhub.app.security;
 
 import android.app.Activity;
 import android.text.InputType;
-import android.graphics.Typeface;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.KeyEvent;
@@ -15,6 +14,7 @@ import androidx.appcompat.app.AlertDialog;
 
 import com.subhub.app.R;
 import com.subhub.app.penance.TamperTributeReporter;
+import com.subhub.app.util.ThemedDialogs;
 
 /** Consistent setup and unlock dialogs for settings-changing surfaces. */
 public final class ControllerPinGate {
@@ -48,22 +48,22 @@ public final class ControllerPinGate {
     }
 
     private static void showPinSetup(Activity activity, Runnable authorized, boolean cancelable) {
-        LinearLayout panel = panel(activity);
-        panel.addView(title(activity, activity.getString(R.string.controller_pin_setup_title)));
+        LinearLayout panel = ThemedDialogs.formPanel(activity);
+        panel.addView(ThemedDialogs.formTitle(activity, activity.getString(R.string.controller_pin_setup_title)));
         TextView explainer = explainer(activity, activity.getString(R.string.controller_pin_setup_body));
         EditText pin = pinInput(activity, R.string.controller_pin_label);
         EditText confirmation = pinInput(activity, R.string.controller_pin_confirm_label);
         panel.addView(explainer);
         panel.addView(pin);
         panel.addView(confirmation);
-        com.google.android.material.dialog.MaterialAlertDialogBuilder builder = com.subhub.app.util.ThemedDialogs.builder(activity)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder builder = ThemedDialogs.builder(activity)
                 .setView(panel)
                 .setCancelable(cancelable)
                 .setPositiveButton(R.string.controller_pin_set, null);
         if (cancelable) builder.setNegativeButton(android.R.string.cancel, null);
         AlertDialog dialog = builder.create();
         dialog.setOnShowListener(ignored -> {
-            styleDialog(activity, dialog);
+            styleSecureDialog(dialog);
             bindSubmit(dialog, pin, confirmation);
             com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
@@ -92,16 +92,16 @@ public final class ControllerPinGate {
         if (!ControllerPinManager.isDomModeActive()) { notifyLocked(activity); return; }
         if (!ControllerPinManager.hasCredentials(activity) && !ControllerPinManager.allowsUnkeyedAccess(activity)) { ensureConfigured(activity, changed); return; }
         require(activity, () -> {
-            LinearLayout content = panel(activity);
-            content.addView(title(activity, activity.getString(R.string.keyholder_pin_change)));
+            LinearLayout content = ThemedDialogs.formPanel(activity);
+            content.addView(ThemedDialogs.formTitle(activity, activity.getString(R.string.keyholder_pin_change)));
             EditText pin = pinInput(activity, R.string.controller_pin_label);
             EditText confirmation = pinInput(activity, R.string.controller_pin_confirm_label);
             pin.setSaveEnabled(false); confirmation.setSaveEnabled(false);
             content.addView(pin); content.addView(confirmation);
-            AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity).setView(content)
+            AlertDialog dialog = ThemedDialogs.builder(activity).setView(content)
                     .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.controller_pin_set, null).create();
             dialog.setOnShowListener(ignored -> {
-                styleDialog(activity, dialog);
+                styleSecureDialog(dialog);
                 bindSubmit(dialog, pin, confirmation);
                 com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
@@ -227,9 +227,9 @@ public final class ControllerPinGate {
     private static void showCredentialPrompt(Activity activity, Runnable authorized,
             boolean finishOnCancel, boolean force, boolean workspaceOnly, Long localDomRevision) {
         KeyholderProvider.State keyholder = workspaceOnly ? KeyholderProvider.State.NONE : keyholderState();
-        LinearLayout panel = panel(activity);
+        LinearLayout panel = ThemedDialogs.formPanel(activity);
         boolean remote = keyholder != KeyholderProvider.State.NONE;
-        panel.addView(title(activity, activity.getString(remote
+        panel.addView(ThemedDialogs.formTitle(activity, activity.getString(remote
                 ? R.string.keyholder_remote_unlock : R.string.controller_pin_unlock_title)));
         panel.addView(explainer(activity, activity.getString(remote
                 ? R.string.keyholder_remote_unlock_help : R.string.controller_pin_unlock_body)));
@@ -247,7 +247,7 @@ public final class ControllerPinGate {
                 })
                 .create();
         dialog.setOnShowListener(ignored -> {
-            styleDialog(activity, dialog);
+            styleSecureDialog(dialog);
             bindSubmit(dialog, pin);
             com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
@@ -309,26 +309,6 @@ public final class ControllerPinGate {
         });
     }
 
-    private static LinearLayout panel(Activity activity) {
-        LinearLayout panel = new LinearLayout(activity);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        int horizontal = dp(activity, 24);
-        panel.setPadding(horizontal, dp(activity, 20), horizontal, dp(activity, 4));
-        return panel;
-    }
-
-    private static TextView title(Activity activity, String text) {
-        TextView view = new TextView(activity);
-        view.setText(text);
-        view.setTextColor(activity.getColor(R.color.text_primary));
-        com.subhub.app.util.UiIdentity.textSize(view, R.dimen.ui_text_title);
-        view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        view.setLetterSpacing(0.02f);
-        view.setIncludeFontPadding(false);
-        view.setPadding(0, 0, 0, dp(activity, 10));
-        return view;
-    }
-
     private static TextView explainer(Activity activity, String text) {
         TextView view = new TextView(activity);
         view.setText(text);
@@ -356,16 +336,10 @@ public final class ControllerPinGate {
         return input;
     }
 
-    private static void styleDialog(Activity activity, AlertDialog dialog) {
+    private static void styleSecureDialog(AlertDialog dialog) {
         Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawableResource(R.drawable.bg_native_dialog);
-            window.setDimAmount(0.72f);
-            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
-        }
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(activity.getColor(R.color.accent_text));
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
-                .setTextColor(activity.getColor(R.color.text_secondary));
+        if (window != null) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        ThemedDialogs.styleForm(dialog);
     }
 
     private static int dp(Activity activity, int value) {

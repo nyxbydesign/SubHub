@@ -24,6 +24,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
@@ -37,9 +38,11 @@ import com.subhub.app.activity.ActivityEvent;
 import com.subhub.app.activity.ActivityPreview;
 import com.subhub.app.activity.ActivityText;
 import com.subhub.app.activity.DomActivityActivity;
+import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.people.ContractAppList;
 import com.subhub.app.people.FavoriteSubStore;
+import com.subhub.app.people.LocalAppsActivity;
 import com.subhub.app.people.PersonActivity;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
@@ -287,67 +290,113 @@ public final class RemoteAppIconPresentationAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft() throws Exception {
-        try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
-            fixture.enablePages();
-            page(route(RemoteContractActivity.class, fixture).putExtra("section", "apps"), (scenario, host) -> {
-                String name = "app_icon:" + fixture.packageName();
-                await(() -> tagged(host.get(), name) instanceof ImageView);
-                AtomicReference<ImageView> originalIcon = new AtomicReference<>();
-                AtomicReference<EditText> minutes = new AtomicReference<>(); AtomicReference<CheckBox> selected = new AtomicReference<>();
-                AtomicReference<Object> draft = new AtomicReference<>(); AtomicReference<String> encoded = new AtomicReference<>();
-                main(() -> {
-                    originalIcon.set((ImageView) tagged(host.get(), name)); assertGeneric(originalIcon.get());
-                    Map<String, View> controls = controls(host.get());
-                    minutes.set((EditText) controls.get("budget:" + fixture.packageName()));
-                    selected.set((CheckBox) controls.get("app:" + fixture.packageName()));
-                    assertEquals("47", minutes.get().getText().toString()); assertTrue(selected.get().isChecked());
-                    draft.set(field(host.get(), "draft")); encoded.set(draft.get().toString());
-                });
-                onView(is((View) minutes.get())).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
-                onView(is((View) selected.get())).perform(revealAboveNavigation(), click());
-                fixture.offer();
-                await(() -> magenta((ImageView) tagged(host.get(), name)));
-                main(() -> {
-                    assertSame(originalIcon.get(), tagged(host.get(), name));
-                    assertSame(minutes.get(), controls(host.get()).get("budget:" + fixture.packageName()));
-                    assertSame(selected.get(), controls(host.get()).get("app:" + fixture.packageName()));
-                    assertEquals("", minutes.get().getText().toString()); assertFalse(selected.get().isChecked());
-                    assertSame(draft.get(), field(host.get(), "draft")); assertEquals(encoded.get(), field(host.get(), "draft").toString());
-                });
-                assertComposedPixel(host.get(), originalIcon.get(), "remote-editor-unsaved-arrival");
-                fixture.retire(); await(() -> originalIcon.get().getImageTintList() != null);
-                main(() -> {
-                    assertGeneric(originalIcon.get()); assertEquals("", minutes.get().getText().toString());
-                    assertFalse(selected.get().isChecked()); assertSame(draft.get(), field(host.get(), "draft"));
-                });
-            });
-        }
-    }
-
-    @Test @SdkSuppress(minSdkVersion = 29)
     public void sharedNativeLimitsAndAppSelectorKeepRemoteIconScope() throws Exception {
-        for (Class<? extends Activity> screen : Arrays.<Class<? extends Activity>>asList(com.subhub.app.appmode.AppModeActivity.class,
-                com.subhub.app.people.LocalAppsActivity.class)) {
+        for (boolean limits : new boolean[]{false, true}) {
+            Class<? extends Activity> screen = limits ? AppModeActivity.class : LocalAppsActivity.class;
             try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
                 fixture.enablePages();
-                page(route(screen, fixture), (scenario, host) -> {
-                    String name = "app_icon:" + fixture.packageName();
-                    await(() -> tagged(host.get(), name) instanceof ImageView);
-                    main(() -> assertGeneric((ImageView) tagged(host.get(), name)));
-                    fixture.offer();
-                    await(() -> magenta((ImageView) tagged(host.get(), name)));
-                    ImageView displayed = image(host.get(), name);
-                    assertComposedPixel(host.get(), displayed, "shared-native-" + screen.getSimpleName());
-                    scenario.recreate(); scenario.onActivity(host::set);
-                    await(() -> magenta((ImageView) tagged(host.get(), name)));
-                    displayed = image(host.get(), name);
-                    AtomicReference<ImageView> retained = new AtomicReference<>(displayed);
-                    fixture.retire();
-                    await(() -> retained.get().getImageTintList() != null);
+                RemoteStore.Peer peer = fixture.peer();
+                String name = fixture.packageName(), iconTag = "app_icon:" + name;
+                String rowTag = (limits ? "limit:" : "included:") + name;
+                page(route(PersonActivity.class, fixture), (scenario, profile) -> {
+                    try {
+                        tapProfileAction(profile.get(), "person_tab:contracts");
+                        tapProfileAction(profile.get(), limits ? "person_section:limits" : "person_apps");
+                        Activity editor = awaitEditor(screen, null, rowTag, iconTag);
+                        assertEquals(fixture.personId(), PersonRoutes.requireId(editor.getIntent()));
+                        ImageView first = image(editor, iconTag);
+                        AtomicReference<View> input = new AtomicReference<>();
+                        main(() -> {
+                            assertGeneric(first);
+                            input.set(tagged(editor, rowTag));
+                            assertEditorValue(input.get(), limits, "47");
+                        });
+                        if (limits) {
+                            onView(withTagValue(is(rowTag))).perform(revealAboveNavigation(), click(),
+                                    replaceText(""), closeSoftKeyboard());
+                            await(() -> {
+                                TextView status = (TextView) tagged(editor, "remote_configuration_save_status");
+                                return status != null && status.getText().toString()
+                                        .equals(editor.getString(R.string.remote_check_fields));
+                            });
+                        }
+                        fixture.offer();
+                        await(() -> magenta((ImageView) tagged(editor, iconTag)));
+                        assertComposedPixel(editor, image(editor, iconTag), "shared-native-" + screen.getSimpleName());
+                        main(() -> {
+                            if (limits) {
+                                assertSame(first, tagged(editor, iconTag));
+                                assertSame(input.get(), tagged(editor, rowTag));
+                            }
+                            assertEditorValue(tagged(editor, rowTag), limits, "");
+                        });
+                        assertNull(fixture.store().latestCommand(peer.identity, peer.generation));
+
+                        main(editor::recreate);
+                        Activity recreated = awaitEditor(screen, editor, rowTag, iconTag);
+                        assertEquals(fixture.personId(), PersonRoutes.requireId(recreated.getIntent()));
+                        await(() -> magenta((ImageView) tagged(recreated, iconTag)));
+                        main(() -> {
+                            View restored = tagged(recreated, rowTag);
+                            assertNotSame(input.get(), restored);
+                            assertEditorValue(restored, limits, "");
+                        });
+                        assertNull(fixture.store().latestCommand(peer.identity, peer.generation));
+                        if (limits) {
+                            onView(withTagValue(is(rowTag))).perform(revealAboveNavigation(), replaceText("53"));
+                            await(() -> fixture.store().latestCommand(peer.identity, peer.generation) != null);
+                            RemoteStore.Command saved = fixture.store().latestCommand(peer.identity, peer.generation);
+                            org.json.JSONObject document = new org.json.JSONObject(saved.body).getJSONObject("configuration");
+                            assertEquals(RemoteStore.CommandState.QUEUED, saved.state);
+                            assertEquals(1, saved.revision);
+                            assertEquals(Set.of(name), RemoteConfiguration.selected(document));
+                            assertEquals(53, document.getJSONObject("apps").getJSONObject("allowances").getInt(name));
+                        }
+                        ImageView shown = image(recreated, iconTag);
+                        fixture.retire();
+                        await(() -> !shown.isShown() || !shown.isAttachedToWindow() || shown.getImageTintList() != null);
+                        main(() -> {
+                            if (tagged(recreated, iconTag) instanceof ImageView replacement
+                                    && replacement.isShown() && replacement.isAttachedToWindow()) assertGeneric(replacement);
+                        });
+                    } finally {
+                        main(() -> {
+                            Activity editor = resumed(screen);
+                            if (editor != null) editor.finish();
+                        });
+                    }
                 });
             }
         }
+    }
+
+    private static void assertEditorValue(View control, boolean limits, String minutes) {
+        if (limits) assertEquals(minutes, ((EditText) control).getText().toString());
+        else assertTrue(((CheckBox) control).isChecked());
+    }
+
+    private static void tapProfileAction(Activity profile, String tag) throws Exception {
+        await(() -> {
+            View root = profile.getWindow().getDecorView(), action = tagged(profile, tag);
+            return profile.hasWindowFocus() && action != null && action.isShown()
+                    && action.isEnabled() && action.isClickable() && action.isLaidOut()
+                    && !root.isLayoutRequested();
+        });
+        onView(withTagValue(is(tag))).perform(revealAboveNavigation(), click());
+    }
+
+    private static Activity awaitEditor(Class<? extends Activity> screen, Activity previous,
+            String rowTag, String iconTag) throws Exception {
+        AtomicReference<Activity> editor = new AtomicReference<>();
+        await(() -> {
+            Activity current = resumed(screen);
+            if (current == null || current == previous || !current.hasWindowFocus()) return false;
+            View row = tagged(current, rowTag);
+            if (row == null || !row.isEnabled() || !row.isLaidOut() || !(tagged(current, iconTag) instanceof ImageView)) return false;
+            editor.set(current);
+            return true;
+        });
+        return editor.get();
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
@@ -444,7 +493,6 @@ public final class RemoteAppIconPresentationAndroidTest {
         try { Field field = object.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(object); }
         catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
     }
-    @SuppressWarnings("unchecked") private static Map<String, View> controls(Activity activity) { return (Map<String, View>) field(activity, "controls"); }
     private static <T extends Activity> T resumed(Class<T> type) {
         for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED))
             if (type.isInstance(activity)) return type.cast(activity);

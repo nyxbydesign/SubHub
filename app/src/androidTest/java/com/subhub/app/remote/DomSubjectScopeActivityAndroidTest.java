@@ -215,8 +215,7 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
 
     @Test public void offlineApprovedPeerAndUnreadReceiptSurviveReadWhileLocalStaysExcluded() throws Exception {
         PairingInvite invite = PairingInvite.create(DOM, "Synthetic Dom", System.currentTimeMillis());
-        store.saveInvite(invite); store.bindInvite(invite.id, SUB, invite.tokenHash(), System.currentTimeMillis());
-        store.approveInvite(invite.id, SUB, "Offline synthetic Sub", System.currentTimeMillis()); store.activate(SUB, invite.id);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Offline synthetic Sub");
         RemoteStore.Peer peer = store.peer(SUB, invite.id);
         ActivityEvent event = new ActivityEvent("scope_peer", ActivityEvent.Kind.APP_OPENED,
                 System.currentTimeMillis() - 3600000, "com.android.settings", 0, "", "", 0);
@@ -236,8 +235,7 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
 
     @Test public void markAllUsesTheVerifiedContinuityGateWithoutNestingItInsideSql() throws Exception {
         PairingInvite invite = PairingInvite.create(DOM, "Synthetic Dom", System.currentTimeMillis());
-        store.saveInvite(invite); store.bindInvite(invite.id, SUB, invite.tokenHash(), System.currentTimeMillis());
-        store.approveInvite(invite.id, SUB, "Synthetic Sub", System.currentTimeMillis()); store.activate(SUB, invite.id);
+        TimedPairingFixture.activeDom(store, invite, SUB, "Synthetic Sub");
         RemoteStore.Peer peer = store.peer(SUB, invite.id);
         ActivityEvent event = new ActivityEvent("gate_bulk", ActivityEvent.Kind.APP_OPENED,
                 System.currentTimeMillis(), "com.android.settings", 0, "", "", 0);

@@ -30,7 +30,7 @@ public class RemoteRuntimeAndroidTest {
         assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context));
         new StatsRepository(context).endSession();feature=new RemoteFeature(context,new RemoteStore(context,prefix+"dom.db"));source=new RemoteStore(context,prefix+"sub.db");
         assertTrue(feature.recoveryReady());
-        PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;feature.store.saveInvite(invite);feature.store.bindInvite(generation,SUB,invite.tokenHash(),1001);feature.store.approveInvite(generation,SUB,"Sub",1001);feature.store.activate(SUB,generation);source.acceptInvite(invite,"Dom");source.activate(DOM,generation);
+        PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;TimedPairingFixture.activeDom(feature.store, invite, SUB, "Sub");TimedPairingFixture.activeSub(source, invite, SUB, "Dom");
     }
     @After public void cleanup()throws Exception {
         new AppModeManager(context).setArmed(false);new StatsRepository(context).endSession();feature.shutdownForTest();source.close();context.deleteDatabase(prefix+"dom.db");context.deleteDatabase(prefix+"sub.db");

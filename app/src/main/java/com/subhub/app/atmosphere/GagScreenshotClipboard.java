@@ -25,7 +25,6 @@ import java.util.regex.Pattern;
 /** Reads only recent, saved screenshots after Clipboard use and a full Android photo grant. */
 final class GagScreenshotClipboard {
     static final String PREFS = "gag_clipboard";
-    static final String RETENTION = "retention";
     static final String ENABLED_SINCE = "screenshots_enabled_since";
     static final String CLEARED_THROUGH = "screenshots_cleared_through";
     private static final String CLIPBOARD_OPENED = "screenshots_clipboard_opened";
@@ -68,7 +67,7 @@ final class GagScreenshotClipboard {
 
     static boolean onClipboardOpened(Context context) {
         SharedPreferences prefs = preferences(context);
-        if (!prefs.getBoolean(RETENTION, true) || prefs.getBoolean(CLIPBOARD_OPENED, false)) return false;
+        if (prefs.getBoolean(CLIPBOARD_OPENED, false)) return false;
         prefs.edit().putBoolean(CLIPBOARD_OPENED, true).apply();
         return prefs.getLong(ENABLED_SINCE, 0) <= 0 && access(context) == Access.NONE;
     }
@@ -80,7 +79,6 @@ final class GagScreenshotClipboard {
             if (since > 0) prefs.edit().remove(ENABLED_SINCE).putBoolean(CLIPBOARD_OPENED, true).apply();
             return false;
         }
-        if (!prefs.getBoolean(RETENTION, true)) return false;
         if (since > 0) return true;
         if (!prefs.getBoolean(CLIPBOARD_OPENED, false)) return false;
         prefs.edit().putLong(ENABLED_SINCE, System.currentTimeMillis()).apply();
@@ -89,8 +87,7 @@ final class GagScreenshotClipboard {
 
     static boolean enabled(Context context) {
         SharedPreferences prefs = preferences(context);
-        return prefs.getBoolean(RETENTION, true) && prefs.getLong(ENABLED_SINCE, 0) > 0
-                && access(context) == Access.FULL;
+        return prefs.getLong(ENABLED_SINCE, 0) > 0 && access(context) == Access.FULL;
     }
 
     static void clearThrough(Context context, long timestamp) {

@@ -63,7 +63,7 @@ public final class GagClipboardPinnedAndroidTest {
             long later = original.expiresAt() + 1;
             assertTrue(clips.edit(clips.entries(later).get(0), "Pinned edit", later, later));
             assertEquals("Pinned edit", new GagClipboard(store).entries(0).get(0).text());
-            assertTrue(clips.forgetPins());
+            assertTrue(clips.remove(clips.entries(later).get(0), later));
             assertTrue(new GagClipboard(store).entries(0).isEmpty());
         } finally {
             new File(fixture, "gag_clipboard_pins.json").delete();

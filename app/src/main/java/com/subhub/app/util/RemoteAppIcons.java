@@ -53,6 +53,9 @@ public final class RemoteAppIcons implements AutoCloseable {
         /** Cheap immutable snapshot read, e.g. a volatile reference. No I/O, SQLite, Binder or UI locks. */
         Authority currentAuthority();
 
+        /** Already decoded pixels, with no cache I/O or decoding on the caller's thread. */
+        default Bitmap preview(RemoteAppIcon identity) { return null; }
+
         /** Memory-only subscription; notify after publishing changes/revocation, on any thread. */
         void addInvalidationListener(Runnable listener);
         void removeInvalidationListener(Runnable listener);
@@ -126,16 +129,31 @@ public final class RemoteAppIcons implements AutoCloseable {
             oldest.cancel(oldView);
         }
         bindings.add(token);
-        placeholder(view, fallback);
-        if (!token.detached) resolve(token);
+        Bitmap ready = memoryImage(key);
+        if (ready == null || !current(identity)) {
+            placeholder(view, fallback);
+            if (!token.detached) resolve(token);
+        } else {
+            display(view, token, ready);
+            if (!token.detached && !token.resolved) resolve(token);
+        }
+    }
+
+    private Bitmap memoryImage(Key key) {
+        if (key.identity.descriptor == null || !current(key.identity)) return null;
+        Bitmap bitmap = cache.get(key);
+        return bitmap != null ? bitmap : provider.preview(key.identity);
     }
 
     private void resolve(Binding token) {
         if (!current(token.key.identity) || token.key.identity.descriptor == null) return;
         ImageView view = token.view.get();
         if (view == null || !eligible(view, token, token.key)) return;
-        Bitmap hit = cache.get(token.key);
-        if (hit != null) { apply(view, token, token.key, hit); return; }
+        Bitmap hit = memoryImage(token.key);
+        if (hit != null) {
+            apply(view, token, token.key, hit);
+            if (token.resolved) return;
+        }
         Long absent = missing.get(token.key);
         if (absent != null && SystemClock.uptimeMillis() - absent < MISSING_MILLIS) return;
         Job job = pending.get(token.key);
@@ -187,8 +205,16 @@ public final class RemoteAppIcons implements AutoCloseable {
 
     private void apply(ImageView view, Binding token, Key key, Bitmap bitmap) {
         if (bitmap == null || !eligible(view, token, key) || !current(key.identity)) return;
+        display(view, token, bitmap);
+    }
+
+    private static void display(ImageView view, Binding token, Bitmap bitmap) {
+        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         view.setImageDrawable(new BitmapDrawable(view.getResources(), bitmap));
-        view.setImageTintList(null); token.resolved = true;
+        view.setImageTintList(null);
+        RemoteAppIcon.Descriptor original = token.key.identity.descriptor;
+        token.resolved = Math.max(bitmap.getWidth(), bitmap.getHeight()) >= Math.min(
+                token.key.pixels, Math.max(original.width, original.height));
     }
 
     private boolean eligible(ImageView view, Binding token, Key key) {
@@ -214,8 +240,15 @@ public final class RemoteAppIcons implements AutoCloseable {
         for (Binding token : new ArrayList<>(bindings)) {
             ImageView view = token.view.get();
             if (view == null || view.getTag(R.id.app_icon_request) != token) continue;
-            placeholder(view, token.fallback); token.resolved = false;
-            if (!token.detached) resolve(token);
+            Bitmap ready = memoryImage(token.key);
+            if (ready != null && current(token.key.identity)) {
+                display(view, token, ready);
+                if (!token.detached && !token.resolved) resolve(token);
+            }
+            else {
+                placeholder(view, token.fallback); token.resolved = false;
+                if (!token.detached) resolve(token);
+            }
         }
     }
 

@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.format.DateFormat;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.TextView;
@@ -18,19 +19,20 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityUpdatesBinding;
 
 import java.io.File;
-import java.text.DateFormat;
 import java.time.ZoneId;
 import java.util.Date;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -39,8 +41,10 @@ public final class UpdatesActivity extends AppCompatActivity {
     private ActivityUpdatesBinding binding;
     private UpdateStateStore state;
     private UpdateDownloadCoordinator downloads;
-    private List<ReleaseHistoryItem> bundledHistory;
+    private ReleaseHistoryPager history;
+    private ReleaseHistoryPager.Request historyRequest;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private final ExecutorService historyNetwork = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean checking;
     private boolean resumed;
@@ -48,8 +52,10 @@ public final class UpdatesActivity extends AppCompatActivity {
     private boolean installAfterPermission;
     private boolean finalizingDownload;
     private boolean verifyingInstall;
+    private long lastCheckBeforeFailure = -1L;
     private String historyFingerprint = "";
-    private final Set<String> expandedHistory = new HashSet<>();
+    private boolean historyDevUpdates;
+    private final Map<String, Boolean> historyDisclosureOverrides = new HashMap<>();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             render();
@@ -64,20 +70,41 @@ public final class UpdatesActivity extends AppCompatActivity {
                 }
             });
 
+    public static final class HistoryModel extends ViewModel {
+        private UpdateStateStore state;
+        private ReleaseHistoryPager pager;
+    }
+
     @Override protected void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
         binding = ActivityUpdatesBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.update_title, false);
-        state = new UpdateStateStore(this);
+        HistoryModel model = new ViewModelProvider(this).get(HistoryModel.class);
+        if (model.pager == null) {
+            model.state = new UpdateStateStore(this);
+            model.pager = new ReleaseHistoryPager(ReleaseHistoryCatalog.bundled(this), BuildConfig.VERSION_NAME);
+        }
+        state = model.state;
+        history = model.pager;
         downloads = new UpdateDownloadCoordinator(this);
-        bundledHistory = ReleaseHistoryCatalog.bundled(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonCheck.setOnClickListener(view -> checkNow());
+        binding.historyOlder.setOnClickListener(view -> olderReleases());
+        binding.historyNewer.setOnClickListener(view -> {
+            int page = history.pageIndex();
+            history.newer();
+            render();
+            scrollToHistoryOnPageChange(page);
+        });
         binding.buttonCancel.setOnClickListener(view -> {
             downloads.cancel();
-            binding.updateStatus.setText(R.string.update_download_failed);
+            showFeedback(R.string.update_download_failed);
             render();
+        });
+        binding.automaticChecksTitle.setOnClickListener(view -> binding.automaticChecks.performClick());
+        binding.devUpdatesTitle.setOnClickListener(view -> {
+            if (binding.devUpdates.isEnabled()) binding.devUpdates.performClick();
         });
         changingAutomatic = true;
         binding.automaticChecks.setChecked(state.automaticChecks());
@@ -121,7 +148,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         checking = true;
         binding.buttonCheck.setEnabled(false);
         binding.devUpdates.setEnabled(false);
-        binding.updateStatus.setText(R.string.update_checking);
+        showFeedback(R.string.update_checking);
         network.execute(() -> {
             GitHubReleaseRepository.Result result = new GitHubReleaseRepository(this).check();
             if (result.succeeded() && result.candidate != null) downloads.prepare(result.candidate, false);
@@ -129,9 +156,9 @@ public final class UpdatesActivity extends AppCompatActivity {
                 if (binding == null) return;
                 checking = false;
                 binding.buttonCheck.setEnabled(true);
-                if (!result.succeeded()) binding.updateStatus.setText(error(result.failure));
-                else binding.updateStatus.setText(result.candidate == null
-                        ? R.string.update_none_available : R.string.update_available_body);
+                lastCheckBeforeFailure = result.succeeded() ? -1L : state.lastCheck();
+                if (result.succeeded()) showFeedback("");
+                else showFeedback(error(result.failure));
                 render();
                 main.removeCallbacks(poll);
                 if (resumed) main.post(poll);
@@ -148,23 +175,27 @@ public final class UpdatesActivity extends AppCompatActivity {
 
     private void render() {
         if (binding == null) return;
-        UpdateCandidate candidate = state.candidate();
+        UpdateCandidate candidate;
+        List<ReleaseHistoryItem> cachedHistory;
+        long last;
+        long channelRevision;
+        boolean devUpdates;
+        synchronized (UpdateStateStore.class) {
+            candidate = state.candidate();
+            last = state.lastCheck();
+            devUpdates = state.devUpdates();
+            cachedHistory = state.releaseHistory();
+            channelRevision = state.channelRevision();
+        }
+        history.update(cachedHistory, candidate, channelRevision, devUpdates);
         if (candidate == null && (state.downloadId() >= 0 || !state.verifiedPath().isEmpty())) {
             downloads.cancel();
         }
-        binding.installedVersion.setText(getString(R.string.update_installed_version,
-                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
-        binding.availableVersion.setText(candidate == null
-                ? getString(R.string.update_none_available)
-                : getString(R.string.update_available_version, candidate.manifest.versionName));
-        long last = state.lastCheck();
-        binding.lastChecked.setText(last <= 0 ? getString(R.string.update_not_checked)
-                : getString(R.string.update_last_checked,
-                        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                                .format(new Date(last))));
-        boolean devUpdates = state.devUpdates();
-        binding.automaticChecks.setText(devUpdates
-                ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle);
+        binding.updateCheckSummary.setText(checkSummary(candidate, last));
+        int automaticTitle = devUpdates
+                ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle;
+        binding.automaticChecksTitle.setText(automaticTitle);
+        binding.automaticChecks.setContentDescription(getText(automaticTitle));
         binding.automaticChecks.setEnabled(true);
         binding.devUpdates.setEnabled(!checking);
         binding.automaticHelp.setText(R.string.update_automatic_help);
@@ -173,11 +204,9 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.devUpdates.setChecked(devUpdates);
         changingAutomatic = false;
         binding.devUpdatesHelp.setText(R.string.update_dev_help);
-        List<ReleaseHistoryItem> history = state.releaseHistory();
-        if (history.isEmpty()) history = bundledHistory;
-        else if (!devUpdates) history = ReleaseHistoryCatalog.merge(history, bundledHistory);
-        history = ReleaseHistoryCatalog.withCandidate(history, candidate);
-        renderReleaseHistory(ReleaseHistoryCatalog.visible(history, devUpdates, BuildConfig.VERSION_NAME), candidate);
+        renderInstalledVersion();
+        renderReleaseHistory(history.rows(), candidate, devUpdates);
+        renderHistoryControls();
         binding.downloadGuideCard.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
         if (candidate != null) {
             UpdateManifest.Asset asset = candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
@@ -192,7 +221,7 @@ public final class UpdatesActivity extends AppCompatActivity {
             binding.buttonAction.setText(R.string.update_install);
             binding.buttonAction.setOnClickListener(view -> installVerified());
             binding.buttonCancel.setVisibility(View.GONE);
-            if (!checking) binding.updateStatus.setText(R.string.update_ready_body);
+            if (!checking) showFeedback(R.string.update_ready_body);
             return;
         }
         UpdateDownloadCoordinator.Status download = downloads.status();
@@ -206,7 +235,7 @@ public final class UpdatesActivity extends AppCompatActivity {
             binding.downloadProgress.setProgress(percent);
             binding.buttonAction.setVisibility(View.GONE);
             binding.buttonCancel.setVisibility(View.VISIBLE);
-            if (!checking) binding.updateStatus.setText(getString(R.string.update_downloading, percent));
+            if (!checking) showFeedback(getString(R.string.update_downloading, percent));
             return;
         }
         if (download != null && download.state == DownloadManager.STATUS_SUCCESSFUL) {
@@ -214,13 +243,13 @@ public final class UpdatesActivity extends AppCompatActivity {
             binding.downloadProgress.setIndeterminate(true);
             binding.buttonAction.setVisibility(View.GONE);
             binding.buttonCancel.setVisibility(View.GONE);
-            if (!checking) binding.updateStatus.setText(R.string.update_verifying);
+            if (!checking) showFeedback(R.string.update_verifying);
             finalizeDownload();
             return;
         }
         if (download != null && download.state == DownloadManager.STATUS_FAILED) {
             downloads.cancel();
-            if (!checking) binding.updateStatus.setText(R.string.update_download_failed);
+            if (!checking) showFeedback(R.string.update_download_failed);
         }
         binding.downloadProgress.setVisibility(View.GONE);
         binding.buttonCancel.setVisibility(View.GONE);
@@ -229,15 +258,81 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.buttonAction.setOnClickListener(view -> beginDownload());
     }
 
-    private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate) {
-        binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
+    private CharSequence checkSummary(UpdateCandidate candidate, long last) {
+        boolean available = candidate != null && candidate.manifest.versionCode > BuildConfig.VERSION_CODE;
+        if (last <= 0) return getText(available ? R.string.update_status_available : R.string.update_not_checked);
+        String checked = getString(R.string.update_last_checked, DateFormat.getTimeFormat(this).format(new Date(last)));
+        if (!available && last == lastCheckBeforeFailure) return checked;
+        String status = getString(available ? R.string.update_status_available : R.string.update_status_current);
+        return getString(R.string.update_status_with_check, status, checked);
+    }
+
+    private void showFeedback(int message) { showFeedback(getText(message)); }
+
+    private void showFeedback(CharSequence message) {
+        binding.updateStatus.setText(message);
+        binding.updateStatus.setVisibility(message.length() == 0 ? View.GONE : View.VISIBLE);
+    }
+
+    private void olderReleases() {
+        int page = history.pageIndex();
+        ReleaseHistoryPager.Request request = history.older();
+        render();
+        scrollToHistoryOnPageChange(page);
+        if (request == null) return;
+        historyRequest = request;
+        historyNetwork.execute(() -> {
+            GitHubReleaseRepository.HistoryPage result = GitHubReleaseRepository.historyPage(request.page());
+            main.post(() -> {
+                if (binding == null) return;
+                // Observe any worker refresh or channel change before accepting the response.
+                synchronized (UpdateStateStore.class) {
+                    history.update(state.releaseHistory(), state.candidate(), state.channelRevision(), state.devUpdates());
+                }
+                historyRequest = null;
+                int currentPage = history.pageIndex();
+                history.finish(request, result);
+                render();
+                scrollToHistoryOnPageChange(currentPage);
+            });
+        });
+    }
+
+    private void scrollToHistoryOnPageChange(int page) {
+        if (page != history.pageIndex()) {
+            binding.getRoot().smoothScrollTo(0, binding.releaseNotesCard.getTop());
+        }
+    }
+
+    private void renderHistoryControls() {
+        boolean loading = history.loading();
+        binding.historyNewer.setVisibility(history.hasNewer() ? View.VISIBLE : View.GONE);
+        binding.historyNewer.setEnabled(!loading);
+        binding.historyOlder.setVisibility(history.hasOlder() ? View.VISIBLE : View.GONE);
+        binding.historyOlder.setEnabled(!loading);
+        int status = 0;
+        if (loading) status = R.string.update_history_loading;
+        else if (history.failure() != null) status = error(history.failure());
+        else if (history.noOlderMatches()) status = R.string.update_history_no_matches;
+        CharSequence text = status == 0 ? "" : getText(status);
+        if (!text.equals(binding.historyStatus.getText())) binding.historyStatus.setText(text);
+        binding.historyStatus.setVisibility(status == 0 ? View.GONE : View.VISIBLE);
+    }
+
+    private void renderReleaseHistory(List<ReleaseHistoryItem> history, UpdateCandidate candidate,
+            boolean devUpdates) {
+        if (historyDevUpdates != devUpdates) {
+            historyDevUpdates = devUpdates;
+            historyDisclosureOverrides.clear();
+        }
         if (history.isEmpty()) {
             if (!historyFingerprint.isEmpty()) binding.releaseHistoryList.removeAllViews();
             historyFingerprint = "";
             return;
         }
         StringBuilder fingerprint = new StringBuilder();
-        fingerprint.append(getResources().getConfiguration().getLocales().toLanguageTags())
+        fingerprint.append(devUpdates).append(';')
+                .append(getResources().getConfiguration().getLocales().toLanguageTags())
                 .append(':').append(ZoneId.systemDefault().getId()).append(';')
                 .append(candidate == null ? "" : candidate.manifest.tag).append(';');
         for (ReleaseHistoryItem item : history) {
@@ -246,9 +341,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         }
         String value = fingerprint.toString();
         if (value.equals(historyFingerprint)) return;
-        boolean firstRender = historyFingerprint.isEmpty();
         historyFingerprint = value;
-        if (firstRender && candidate != null) expandedHistory.add(candidate.manifest.tag);
         binding.releaseHistoryList.removeAllViews();
         LayoutInflater inflater = LayoutInflater.from(this);
         for (ReleaseHistoryItem item : history) {
@@ -273,12 +366,12 @@ public final class UpdatesActivity extends AppCompatActivity {
                             info.setClassName(android.widget.Button.class.getName());
                         }
                     });
-            renderHistoryDisclosure(heading, details, chevron, expandedHistory.contains(item.tag));
+            boolean expanded = historyDisclosureOverrides.getOrDefault(item.tag, !devUpdates || item.prerelease);
+            renderHistoryDisclosure(heading, details, chevron, expanded);
             heading.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
                 renderHistoryDisclosure(heading, details, chevron, show);
-                if (show) expandedHistory.add(item.tag);
-                else expandedHistory.remove(item.tag);
+                historyDisclosureOverrides.put(item.tag, show);
             });
             binding.releaseHistoryList.addView(row);
         }
@@ -291,23 +384,34 @@ public final class UpdatesActivity extends AppCompatActivity {
                 getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
     }
 
+    private void renderInstalledVersion() {
+        String label = getString(R.string.update_installed_version,
+                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
+        ReleaseHistoryItem installed = history.installed();
+        String timestamp = installed == null ? "" : releaseTimestamp(installed);
+        binding.installedVersion.setText(withTimestamp(label, timestamp));
+    }
+
+    private String releaseTimestamp(ReleaseHistoryItem item) {
+        Locale locale = getResources().getConfiguration().getLocales().get(0);
+        return ReleaseTimestampFormatter.format(item.publishedAt,
+                locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
+    }
+
+    private String withTimestamp(String label, String timestamp) {
+        return timestamp.isEmpty() ? label : getString(R.string.update_release_with_timestamp, label, timestamp);
+    }
+
     private String historyMeta(ReleaseHistoryItem item, UpdateCandidate candidate) {
+        String timestamp = releaseTimestamp(item);
         if (candidate != null && item.tag.equals(candidate.manifest.tag)) {
-            return getString(R.string.update_history_available);
+            return withTimestamp(getString(R.string.update_history_available), timestamp);
         }
         if (ReleaseHistoryCatalog.isInstalled(item, BuildConfig.VERSION_NAME)) {
-            return getString(R.string.update_history_installed);
+            return withTimestamp(getString(R.string.update_history_installed), timestamp);
         }
-        if (item.prerelease) {
-            Locale locale = getResources().getConfiguration().getLocales().get(0);
-            String timestamp = ReleaseTimestampFormatter.preview(item.publishedAt,
-                    locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
-            return timestamp.isEmpty() ? getString(R.string.update_history_preview)
-                    : getString(R.string.update_history_preview_date, timestamp);
-        }
-        String date = item.publishedAt.length() >= 10
-                ? item.publishedAt.substring(0, 10) : "";
-        return date.isEmpty() ? getString(R.string.update_history_published) : date;
+        int releaseType = item.prerelease ? R.string.update_history_preview : R.string.update_history_stable;
+        return withTimestamp(getString(releaseType), timestamp);
     }
 
     private void finalizeDownload() {
@@ -321,7 +425,7 @@ public final class UpdatesActivity extends AppCompatActivity {
                 if (binding == null) return;
                 finalizingDownload = false;
                 if (result == UpdateDownloadFinalizer.Result.FAILED && !checking) {
-                    binding.updateStatus.setText(R.string.update_verification_failed);
+                    showFeedback(R.string.update_verification_failed);
                 }
                 render();
             });
@@ -333,12 +437,12 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (candidate == null) return;
         try {
             downloads.start(candidate);
-            binding.updateStatus.setText(getString(R.string.update_downloading, 0));
+            showFeedback(getString(R.string.update_downloading, 0));
             main.removeCallbacks(poll);
             main.post(poll);
             render();
         } catch (RuntimeException exception) {
-            binding.updateStatus.setText(R.string.update_no_compatible_apk);
+            showFeedback(R.string.update_no_compatible_apk);
         }
     }
 
@@ -360,7 +464,7 @@ public final class UpdatesActivity extends AppCompatActivity {
                             || !UpdateStateStore.sameCandidate(candidate, state.candidate())) { render(); return; }
                     if (!verified) {
                         downloads.cancel();
-                        binding.updateStatus.setText(R.string.update_verification_failed);
+                        showFeedback(R.string.update_verification_failed);
                         render();
                         return;
                     }
@@ -379,7 +483,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         String path = state.verifiedPath();
         File apk = path.isEmpty() ? null : new File(path);
         if (apk == null || !apk.isFile()) {
-            binding.updateStatus.setText(R.string.update_verification_failed);
+            showFeedback(R.string.update_verification_failed);
             state.clearDownload();
             render();
             return;
@@ -387,7 +491,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
             installAfterPermission = true;
-            binding.updateStatus.setText(R.string.update_install_permission);
+            showFeedback(R.string.update_install_permission);
             installPermission.launch(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + getPackageName())));
             return;
@@ -407,6 +511,8 @@ public final class UpdatesActivity extends AppCompatActivity {
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
         network.shutdownNow();
+        historyNetwork.shutdownNow();
+        if (history != null && historyRequest != null) history.cancel(historyRequest);
         binding = null;
         super.onDestroy();
     }

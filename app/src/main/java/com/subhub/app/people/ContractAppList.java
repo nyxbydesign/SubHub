@@ -17,14 +17,25 @@ public final class ContractAppList {
 
     /** Synthetic presentations keep static icons and never query installed applications. */
     public static void add(LinearLayout parent, PersonSnapshot.Section section, boolean localIcons) {
+        add(parent, section, localIcons, Integer.MAX_VALUE);
+    }
+
+    static int count(PersonSnapshot.Section section) { return rows(section).size(); }
+
+    private static java.util.List<PersonSnapshot.App> rows(PersonSnapshot.Section section) {
         java.util.List<PersonSnapshot.App> apps = section.apps;
         if (apps.isEmpty()) {
             apps = new java.util.ArrayList<>();
             for (String label : section.details.split("\\n")) if (!label.trim().isEmpty())
                 apps.add(new PersonSnapshot.App("", label));
         }
+        return apps;
+    }
+
+    static void add(LinearLayout parent, PersonSnapshot.Section section, boolean localIcons, int maximumRows) {
         int index = 0;
-        for (PersonSnapshot.App app : apps) {
+        for (PersonSnapshot.App app : rows(section)) {
+            if (index == maximumRows) break;
             if (index++ > 0) {
                 View divider = new View(parent.getContext());
                 divider.setBackgroundColor(parent.getContext().getColor(R.color.outline_subtle));
