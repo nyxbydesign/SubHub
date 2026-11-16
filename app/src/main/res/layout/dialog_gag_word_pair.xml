@@ -1,36 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:paddingHorizontal="@dimen/ui_control_padding"
-    android:paddingBottom="@dimen/ui_gap_group">
+    android:layout_height="wrap_content">
 
-    <TextView
-        style="@style/Widget.SubHub.FieldLabel"
-        android:labelFor="@+id/gag_pair_source"
-        android:text="@string/gag_pair_source" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="@dimen/ui_control_padding"
+        android:paddingBottom="@dimen/ui_gap_group">
 
-    <EditText
-        android:id="@id/gag_pair_source"
-        style="@style/Widget.SubHub.Input"
-        android:imeOptions="actionNext|flagNoPersonalizedLearning"
-        android:importantForAutofill="no"
-        android:inputType="textNoSuggestions"
-        android:maxLength="128"
-        android:maxLines="1" />
+        <TextView
+            style="@style/Widget.SubHub.FieldLabel"
+            android:labelFor="@+id/gag_pair_source"
+            android:text="@string/gag_pair_source" />
 
-    <TextView
-        style="@style/Widget.SubHub.FieldLabel"
-        android:labelFor="@+id/gag_pair_replacement"
-        android:text="@string/gag_pair_replacement" />
+        <EditText
+            android:id="@id/gag_pair_source"
+            style="@style/Widget.SubHub.Input"
+            android:imeOptions="actionNext|flagNoPersonalizedLearning"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:maxLength="128"
+            android:maxLines="1" />
 
-    <EditText
-        android:id="@id/gag_pair_replacement"
-        style="@style/Widget.SubHub.Input"
-        android:imeOptions="actionDone|flagNoPersonalizedLearning"
-        android:importantForAutofill="no"
-        android:inputType="textNoSuggestions"
-        android:maxLength="2048"
-        android:maxLines="1" />
-</LinearLayout>
+        <TextView
+            style="@style/Widget.SubHub.FieldLabel"
+            android:labelFor="@+id/gag_pair_replacement"
+            android:text="@string/gag_pair_replacement" />
+
+        <TextView
+            android:id="@+id/gag_pair_options_hint"
+            style="@style/Widget.SubHub.FieldHelp"
+            android:text="@string/gag_one_per_line" />
+
+        <EditText
+            android:id="@id/gag_pair_replacement"
+            style="@style/Widget.SubHub.Input"
+            android:gravity="top|start"
+            android:imeOptions="flagNoPersonalizedLearning"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:maxLength="2048"
+            android:minLines="3"
+            android:maxLines="6" />
+
+        <com.subhub.app.util.StateToggle
+            android:id="@+id/gag_pair_case_sensitive"
+            style="@style/Widget.SubHub.Switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/ui_gap_control"
+            android:text="@string/gag_pair_case_sensitive" />
+    </LinearLayout>
+</ScrollView>

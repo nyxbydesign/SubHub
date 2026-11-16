@@ -101,6 +101,30 @@ public final class RemoteConfigurationCompatibilityTest {
         assertFalse(GagContractFields.containsPairs(batch(RemoteProtocol.Stream.STATS, paired)));
     }
 
+    @Test public void richAndLegacyPairDocumentsRetainTheirOwnPeerBoundaries() throws Exception {
+        var oldPairs = GagContractFields.Capability.PAIRS;
+        var options = GagContractFields.Capability.PAIR_OPTIONS;
+        JSONObject basic = GagContractFields.forPeer(configuration(), oldPairs, false);
+        GagContractFields.section(basic).put(GagContractFields.PAIRS, new JSONObject().put("god", "Goddess"));
+        JSONObject rich = new JSONObject(basic.toString());
+        JSONObject pairs = GagContractFields.section(rich).getJSONObject(GagContractFields.PAIRS);
+        pairs.put("God", new JSONObject().put("caseSensitive", true)
+                .put("options", new JSONArray(List.of("Goddess", "Demoness"))));
+        assertNotNull(RemoteConfiguration.active(rich));
+        assertEquals(RemoteProtocol.canonical(basic), RemoteProtocol.canonical(GagContractFields.forPeer(basic, oldPairs, true)));
+        assertThrows(SecurityException.class, () -> GagContractFields.forPeer(rich, oldPairs, true));
+        assertEquals(RemoteProtocol.canonical(rich), RemoteProtocol.canonical(GagContractFields.forPeer(rich, options, true)));
+        for (RemoteProtocol.Stream stream : List.of(RemoteProtocol.Stream.BASELINE, RemoteProtocol.Stream.CONFIGURATION)) {
+            assertEquals(oldPairs, GagContractFields.requiredByBatch(batch(stream, basic)));
+            assertEquals(options, GagContractFields.requiredByBatch(batch(stream, rich)));
+        }
+        for (Object invalid : List.of(new JSONArray(), new JSONArray().put(1), new JSONArray().put(" "),
+                new JSONArray().put("x".repeat(2048)).put("other"))) {
+            pairs.getJSONObject("God").put("options", invalid);
+            assertThrows(IllegalArgumentException.class, () -> RemoteConfiguration.active(rich));
+        }
+    }
+
     private static RemoteProtocol.Batch batch(RemoteProtocol.Stream stream, JSONObject configuration) throws Exception {
         boolean command = stream == RemoteProtocol.Stream.CONFIGURATION;
         JSONObject payload = command ? new JSONObject().put("configuration", configuration) : configuration;

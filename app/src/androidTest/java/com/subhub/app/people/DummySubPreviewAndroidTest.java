@@ -368,9 +368,32 @@ public final class DummySubPreviewAndroidTest {
 
             onView(withContentDescription(context.getString(R.string.gag_pair_row_accessibility, "beta", "before edit")))
                     .perform(revealAboveNavigation(), click());
-            onView(withId(R.id.gag_pair_source)).inRoot(isDialog()).check(matches(withText("beta")));
-            saveGagPair(device, null, "second phrase");
-            Map<String, String> authored = Map.of("alpha", "first phrase", "beta", "second phrase");
+            onView(withId(R.id.gag_pair_source)).inRoot(isDialog()).check(matches(withText("beta")))
+                    .perform(replaceText("God"));
+            onView(withId(R.id.gag_pair_replacement)).inRoot(isDialog())
+                    .perform(replaceText(" Goddess \n\n Demoness "), closeSoftKeyboard());
+            device.waitForIdle();
+            onView(withId(R.id.gag_pair_case_sensitive)).inRoot(isDialog()).check(matches(
+                    androidx.test.espresso.matcher.ViewMatchers.isNotChecked())).perform(click());
+            scenario.recreate();
+            onView(withId(R.id.gag_pair_source)).inRoot(isDialog()).check(matches(withText("God")));
+            onView(withId(R.id.gag_pair_replacement)).inRoot(isDialog()).check(matches(withText(" Goddess \n\n Demoness ")));
+            onView(withId(R.id.gag_pair_case_sensitive)).inRoot(isDialog()).check(matches(
+                    androidx.test.espresso.matcher.ViewMatchers.isChecked()));
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click());
+            Map<String, ?> authored = Map.of("alpha", "first phrase", "God", new JSONObject()
+                    .put("caseSensitive", true).put("options", new org.json.JSONArray(List.of("Goddess", "Demoness"))));
+            assertSavedGagPairs(authored);
+
+            onView(withId(R.id.gag_every_n)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_interval)).perform(replaceText("7"), closeSoftKeyboard());
+            onView(withId(R.id.gag_pairs_field)).check(matches(androidx.test.espresso.matcher.ViewMatchers
+                    .withEffectiveVisibility(androidx.test.espresso.matcher.ViewMatchers.Visibility.GONE)));
+            onView(withId(R.id.gag_all)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_interval_field)).check(matches(androidx.test.espresso.matcher.ViewMatchers
+                    .withEffectiveVisibility(androidx.test.espresso.matcher.ViewMatchers.Visibility.GONE)));
+            onView(withId(R.id.gag_specific)).perform(revealAboveNavigation(), click());
+            await(() -> Integer.valueOf(7).equals(store.read().configuration().get("gag").get("interval")));
             assertSavedGagPairs(authored);
 
             scenario.recreate();
@@ -379,10 +402,15 @@ public final class DummySubPreviewAndroidTest {
             scenario.onActivity(recreated::set);
             await(() -> resumed(recreated.get()) && recreated.get().hasWindowFocus());
             onView(withId(R.id.gag_add_pair)).perform(revealAboveNavigation());
-            authored.forEach((word, replacement) -> onView(withContentDescription(
-                    context.getString(R.string.gag_pair_row_accessibility, word, replacement)))
+            onView(withContentDescription(context.getString(R.string.gag_pair_row_accessibility, "alpha", "first phrase")))
                     .check(matches(isCompletelyDisplayed()))
-                    .check(matches(withText(context.getString(R.string.gag_pair_row, word, replacement)))));
+                    .check(matches(withText(context.getString(R.string.gag_pair_row, "alpha", "first phrase"))));
+            String optionsSummary = context.getResources().getQuantityString(R.plurals.gag_more_options, 1, 1);
+            String caseSummary = context.getString(R.string.gag_pair_case_sensitive);
+            String description = context.getString(R.string.gag_pair_row_summary,
+                    context.getString(R.string.gag_pair_row_summary,
+                            context.getString(R.string.gag_pair_row_accessibility, "God", "Goddess"), optionsSummary), caseSummary);
+            onView(withContentDescription(description)).check(matches(isCompletelyDisplayed()));
             onView(withId(R.id.gag_add_pair)).check(matches(isCompletelyDisplayed()));
             assertSavedGagPairs(authored);
             capture(recreated.get(), "gag-word-pairs");
@@ -392,6 +420,13 @@ public final class DummySubPreviewAndroidTest {
             onView(withId(R.id.gag_replacements)).check(matches(isCompletelyDisplayed()))
                     .check(matches(withText("shared one\nshared two")));
             capture(recreated.get(), "gag-shared-replacements");
+
+            onView(withContentDescription(description)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.gag_pair_replacement)).inRoot(isDialog()).check(matches(withText("Goddess\nDemoness")));
+            onView(withId(R.id.gag_pair_case_sensitive)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()));
+            device.waitForIdle();
+            capture(recreated.get(), "gag-pair-options");
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click());
         }
     }
 
@@ -405,10 +440,13 @@ public final class DummySubPreviewAndroidTest {
         onView(withId(android.R.id.button1)).inRoot(dialog).perform(click());
     }
 
-    private void assertSavedGagPairs(Map<String, String> authored) throws Exception {
+    private void assertSavedGagPairs(Map<String, ?> authored) throws Exception {
         var store = internalFixture.data.configuration;
         String expected = RemoteProtocol.canonical(new JSONObject(authored));
-        await(() -> expected.equals(store.read().configuration().get("gag").get("pairs")));
+        await(() -> {
+            Map<String, Object> gag = store.read().configuration().get("gag");
+            return expected.equals(gag.get("pairs")) && "MATCH".equals(gag.get("mode"));
+        });
         var rules = store.edit(store.read()).gagRules();
         assertTrue(rules.getBoolean("enabled"));
         assertEquals("MATCH", rules.getString("mode"));
@@ -1151,7 +1189,7 @@ public final class DummySubPreviewAndroidTest {
             assertTrue(resumed(atmosphere));
             assertAtmospherePanel(atmosphere, "gag");
             assertEquals(View.GONE, atmosphere.findViewById(R.id.gag_rules_button).getVisibility());
-            assertTrue(atmosphere.findViewById(R.id.gag_interval).isShown());
+            assertFalse(atmosphere.findViewById(R.id.gag_interval).isShown());
             assertFalse(atmosphere.findViewById(R.id.gag_words).isShown());
             assertNull(atmosphere.findViewById(R.id.gag_keyboard_settings));
         });

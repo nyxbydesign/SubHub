@@ -614,10 +614,8 @@ public class RemoteEditorAndroidTest {
     private static void assertGagModeFields(android.app.Activity activity, boolean intervalActive, boolean wordsActive) {
         View interval = activity.findViewById(R.id.gag_interval);
         View words = activity.findViewById(R.id.gag_words);
-        assertTrue(interval.isShown());
-        assertTrue(words.isShown());
-        assertEquals(intervalActive, interval.isEnabled());
-        assertEquals(wordsActive, words.isEnabled());
+        assertEquals(intervalActive, interval.isShown());
+        assertEquals(wordsActive, words.isShown());
     }
 
     @Test public void sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity() throws Exception {

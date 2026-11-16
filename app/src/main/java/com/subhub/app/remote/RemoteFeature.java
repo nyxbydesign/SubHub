@@ -1342,6 +1342,7 @@ public final class RemoteFeature {
             @Override public int extraTimeVersion() { return ExtraTimePeer.VERSION; }
             @Override public boolean gagRulesSupported() { return true; }
             @Override public boolean gagPairsSupported() { return true; }
+            @Override public boolean gagPairOptionsSupported() { return true; }
             @Override public void gagCapabilityChanged(RemoteStore.Peer peer) {
                 if (peer.localRole == RemoteProtocol.Role.SUB) invalidateGag();
             }

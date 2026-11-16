@@ -106,8 +106,8 @@ public final class RemoteConfigurationEdits {
         if (!same(priorRules,rules)) {
             if (!GagContractFields.supported(store,peer))
                 throw new SecurityException("Update the paired app to configure Gag");
-            if ((GagContractFields.needsPairs(priorRules) || GagContractFields.needsPairs(rules))
-                    && !GagContractFields.pairsSupported(store,peer))
+            var capability = GagContractFields.capability(store, peer);
+            if (!capability.supportsPairs(priorRules) || !capability.supportsPairs(rules))
                 throw new SecurityException(GagContractFields.PAIRS_UPDATE_REQUIRED);
         }
         for(String feature:SubFeaturePolicy.FEATURES){

@@ -2,7 +2,6 @@ package com.subhub.app.remote;
 
 import com.subhub.app.atmosphere.GagWordPairs;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -13,8 +12,20 @@ public final class GagContractFields {
     public static final String PAIRS = "pairs";
     static final String VERSION = "gag_version";
     static final String PAIRS_VERSION = "gag_pairs_version";
+    static final String PAIR_OPTIONS_VERSION = "gag_pair_options_version";
     static final String PAIRS_UPDATE_REQUIRED = "Update the paired app for per-word replacements";
     private GagContractFields() { }
+
+    public enum Capability {
+        NONE, SHARED, PAIRS, PAIR_OPTIONS;
+
+        public boolean supports(Capability required) { return compareTo(required) >= 0; }
+
+        public boolean supportsPairs(JSONObject rules) {
+            Capability required = required(rules);
+            return required.compareTo(PAIRS) < 0 || supports(required);
+        }
+    }
 
     public static JSONObject defaults() throws JSONException {
         return new JSONObject().put("enabled", false).put("mode", "ALL").put("interval", 3)
@@ -35,9 +46,8 @@ public final class GagContractFields {
         boolean hasSharedWords = !words.trim().isEmpty();
         boolean matching = "MATCH".equals(mode);
         if (paired) {
-            Map<String, String> pairs = GagWordPairs.read(rules.getJSONObject(PAIRS));
             Set<String> keys = new HashSet<>();
-            pairs.keySet().forEach(word -> keys.add(GagWordPairs.sourceKey(word)));
+            GagWordPairs.read(rules.getJSONObject(PAIRS)).keySet().forEach(word -> keys.add(GagWordPairs.sourceKey(word)));
             for (String word : words.split("\\r\\n|\\r|\\n")) {
                 if (keys.contains(GagWordPairs.sourceKey(word)))
                     throw new IllegalArgumentException("A Gag word cannot also use shared replacements");
@@ -66,6 +76,19 @@ public final class GagContractFields {
         return supported(store, peer) && "1".equals(store.metadata(peer.identity, peer.generation, PAIRS_VERSION, "0"));
     }
 
+    public static Capability capability(RemoteStore store, RemoteStore.Peer peer) {
+        if (!supported(store, peer)) return Capability.NONE;
+        if (!pairsSupported(store, peer)) return Capability.SHARED;
+        return "1".equals(store.metadata(peer.identity, peer.generation, PAIR_OPTIONS_VERSION, "0"))
+                ? Capability.PAIR_OPTIONS : Capability.PAIRS;
+    }
+
+    private static Capability required(JSONObject rules) {
+        if (rules == null) return Capability.NONE;
+        if (!needsPairs(rules)) return Capability.SHARED;
+        return GagWordPairs.containsOptions(rules.optJSONObject(PAIRS)) ? Capability.PAIR_OPTIONS : Capability.PAIRS;
+    }
+
     public static boolean needsPairs(JSONObject rules) {
         return rules != null && rules.has(PAIRS);
     }
@@ -80,16 +103,17 @@ public final class GagContractFields {
 
     /** After a peer downgrade, old in-flight rows still need their original digest and sequence. */
     static boolean containsRules(RemoteProtocol.Batch batch) throws JSONException {
-        return containsRules(batch, false);
+        return requiredByBatch(batch) != Capability.NONE;
     }
 
     static boolean containsPairs(RemoteProtocol.Batch batch) throws JSONException {
-        return containsRules(batch, true);
+        return requiredByBatch(batch).supports(Capability.PAIRS);
     }
 
-    private static boolean containsRules(RemoteProtocol.Batch batch, boolean pairsOnly) throws JSONException {
+    static Capability requiredByBatch(RemoteProtocol.Batch batch) throws JSONException {
         if (batch.stream != RemoteProtocol.Stream.CONFIGURATION && batch.stream != RemoteProtocol.Stream.BASELINE)
-            return false;
+            return Capability.NONE;
+        Capability required = Capability.NONE;
         for (RemoteProtocol.Change row : batch.changes) {
             if (row.deleted) continue;
             JSONObject body = new JSONObject(row.body);
@@ -97,10 +121,11 @@ public final class GagContractFields {
                     ? body.optJSONObject("configuration") : body;
             JSONObject contract = document == null ? null : document.optJSONObject("contract");
             JSONObject sections = contract == null ? null : contract.optJSONObject("sections");
-            if (sections != null && (pairsOnly ? needsPairs(sections.optJSONObject(SECTION)) : sections.has(SECTION)))
-                return true;
+            Capability candidate = required(sections == null ? null : sections.optJSONObject(SECTION));
+            if (candidate == Capability.PAIR_OPTIONS) return candidate;
+            if (candidate.supports(required)) required = candidate;
         }
-        return false;
+        return required;
     }
 
     static JSONObject forPeer(JSONObject configuration, boolean supported, boolean editing) throws JSONException {
@@ -109,11 +134,16 @@ public final class GagContractFields {
 
     static JSONObject forPeer(JSONObject configuration, boolean supported, boolean pairsSupported, boolean editing)
             throws JSONException {
-        if (needsPairs(section(configuration)) && (!supported || !pairsSupported))
+        Capability capability = !supported ? Capability.NONE : pairsSupported ? Capability.PAIRS : Capability.SHARED;
+        return forPeer(configuration, capability, editing);
+    }
+
+    static JSONObject forPeer(JSONObject configuration, Capability capability, boolean editing) throws JSONException {
+        if (!capability.supportsPairs(section(configuration)))
             throw new SecurityException(PAIRS_UPDATE_REQUIRED);
         JSONObject copy = new JSONObject(configuration.toString());
         JSONObject sections = copy.getJSONObject("contract").getJSONObject("sections");
-        if (supported) {
+        if (capability != Capability.NONE) {
             if (!sections.has(SECTION)) sections.put(SECTION, defaults());
         } else if (sections.has(SECTION)) {
             if (editing && !RemoteConfigurationEdits.same(sections.getJSONObject(SECTION), defaults()))

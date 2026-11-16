@@ -41,6 +41,7 @@ public final class RemoteSession {
         default int extraTimeVersion() { return 0; }
         default boolean gagRulesSupported() { return false; }
         default boolean gagPairsSupported() { return false; }
+        default boolean gagPairOptionsSupported() { return false; }
         default void gagCapabilityChanged(RemoteStore.Peer peer) { }
         default void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int taskCancelVersion() { return 0; }
@@ -100,7 +101,10 @@ public final class RemoteSession {
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
         if (hooks.gagRulesSupported()) {
             hello.put("gagVersion", 1);
-            if (hooks.gagPairsSupported()) hello.put("gagPairsVersion", 1);
+            if (hooks.gagPairsSupported()) {
+                hello.put("gagPairsVersion", 1);
+                if (hooks.gagPairOptionsSupported()) hello.put("gagPairOptionsVersion", 1);
+            }
         }
         String retainedProfile = "";
         if (hooks.profileVersion() == 1) {
@@ -184,6 +188,8 @@ public final class RemoteSession {
         if (rememberGag(peer, hello)) {
             ready.put("gagVersion", 1);
             if (GagContractFields.pairsSupported(store, peer)) ready.put("gagPairsVersion", 1);
+            if (GagContractFields.capability(store, peer) == GagContractFields.Capability.PAIR_OPTIONS)
+                ready.put("gagPairOptionsVersion", 1);
         }
         if (priority) ready.put("phasePlanVersion",1);
         boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
@@ -369,6 +375,8 @@ public final class RemoteSession {
                 && RemoteProtocol.integer(frame, "gagVersion") == 1;
         boolean pairs = supported && hooks.gagPairsSupported() && frame.has("gagPairsVersion")
                 && RemoteProtocol.integer(frame, "gagPairsVersion") == 1;
+        boolean options = pairs && hooks.gagPairOptionsSupported() && frame.has("gagPairOptionsVersion")
+                && RemoteProtocol.integer(frame, "gagPairOptionsVersion") == 1;
         String value = supported ? "1" : "0";
         boolean changed = !value.equals(store.metadata(peer.identity, peer.generation, GagContractFields.VERSION, "0"));
         if (changed) {
@@ -377,6 +385,11 @@ public final class RemoteSession {
         String pairsValue = pairs ? "1" : "0";
         if (!pairsValue.equals(store.metadata(peer.identity, peer.generation, GagContractFields.PAIRS_VERSION, "0"))) {
             store.putMetadata(peer.identity, peer.generation, GagContractFields.PAIRS_VERSION, pairsValue);
+            changed = true;
+        }
+        String optionsValue = options ? "1" : "0";
+        if (!optionsValue.equals(store.metadata(peer.identity, peer.generation, GagContractFields.PAIR_OPTIONS_VERSION, "0"))) {
+            store.putMetadata(peer.identity, peer.generation, GagContractFields.PAIR_OPTIONS_VERSION, optionsValue);
             changed = true;
         }
         if (changed) {
@@ -515,13 +528,15 @@ public final class RemoteSession {
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
                 // A later capability handshake can resume these exact rows and their acknowledgments.
-                if (!GagContractFields.pairsSupported(store, peer) && GagContractFields.containsPairs(batch)) {
+                var required = GagContractFields.requiredByBatch(batch);
+                var capability = GagContractFields.capability(store, peer);
+                if (required.supports(GagContractFields.Capability.PAIRS) && !capability.supports(required)) {
                     withheld.add(stream);
                     break;
                 }
                 boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
-                if (sectionCandidate && !GagContractFields.supported(store, peer)
-                        && GagContractFields.containsRules(batch)) sectionCandidate=false;
+                if (sectionCandidate && capability == GagContractFields.Capability.NONE
+                        && required != GagContractFields.Capability.NONE) sectionCandidate=false;
                 RemoteSectionTransfer.EncodedOffer encoded=sectionCandidate?RemoteSectionTransfer.encodeOffer(batch,sectionBasis(peer,true)):null;
                 JSONObject offered=encoded==null?batch.json():encoded.frame;
                 if(encoded==null)send(connection,offered,deadline);else sendEncoded(connection,encoded.encoded,deadline);
@@ -658,7 +673,9 @@ public final class RemoteSession {
             if(phase>=0 && core(batch.stream)!=(phase==0))throw new IOException("Unexpected stream phase");
             if(batch.stream==RemoteProtocol.Stream.EVENTS&&!activity)throw new SecurityException("Activity capability was not negotiated");
             if (!peer.generation.equals(batch.generation)) throw new SecurityException("Sync generation changed");
-            if (!GagContractFields.pairsSupported(store, peer) && GagContractFields.containsPairs(batch))
+            var required = GagContractFields.requiredByBatch(batch);
+            if (required.supports(GagContractFields.Capability.PAIRS)
+                    && !GagContractFields.capability(store, peer).supports(required))
                 throw new SecurityException(GagContractFields.PAIRS_UPDATE_REQUIRED);
             RemoteStore.BatchReceipt receipt = store.receiveBatch(peer.identity, batch);
             if (receipt.acceptedData) recordDataPresence(peer);

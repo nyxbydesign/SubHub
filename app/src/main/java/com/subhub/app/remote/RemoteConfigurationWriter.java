@@ -81,8 +81,7 @@ public final class RemoteConfigurationWriter {
                     throw new SecurityException("Pairing is no longer authorized");
                 RemoteStore.Command latest=store.command(peer.identity,peer.generation,command.id);
                 if(latest==null || !latest.pending())return true;
-                if (GagContractFields.needsPairs(GagContractFields.section(doc))
-                        && !GagContractFields.pairsSupported(store,current)) return false;
+                if (!GagContractFields.capability(store, current).supportsPairs(GagContractFields.section(doc))) return false;
                 if(GagContractFields.section(doc)!=null && !GagContractFields.supported(store,current)) {
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Gag is unsupported by the pairing");
                     return true;

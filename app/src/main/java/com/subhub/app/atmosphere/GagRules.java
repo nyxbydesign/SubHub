@@ -1,5 +1,6 @@
 package com.subhub.app.atmosphere;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -14,19 +15,24 @@ final class GagRules {
     private final int interval;
     private final Set<String> matches;
     private final List<String> replacements;
-    private final Map<String, String> pairs;
+    private final Map<String, List<String>> exactPairs = new HashMap<>();
+    private final Map<String, List<String>> foldedPairs = new HashMap<>();
     private int count;
 
     GagRules(Mode mode, int interval, Set<String> matches, List<String> replacements) {
         this(mode, interval, matches, replacements, Map.of());
     }
 
-    GagRules(Mode mode, int interval, Set<String> matches, List<String> replacements, Map<String, String> pairs) {
+    GagRules(Mode mode, int interval, Set<String> matches, List<String> replacements,
+            Map<String, GagWordPairs.Rule> pairs) {
         this.mode = mode;
         this.interval = Math.max(1, interval);
         this.matches = Set.copyOf(matches);
         this.replacements = List.copyOf(replacements);
-        this.pairs = Map.copyOf(pairs);
+        pairs.forEach((source, rule) -> {
+            if (rule.caseSensitive()) exactPairs.put(source, rule.options());
+            else foldedPairs.put(GagWordPairs.sourceKey(source), rule.options());
+        });
     }
 
     String complete(String word, IntUnaryOperator choose) {
@@ -41,8 +47,12 @@ final class GagRules {
         String token = word.substring(0, end);
         if (mode == Mode.MATCH) {
             String key = token.toLowerCase(Locale.ROOT);
-            String paired = pairs.get(key);
-            if (paired != null) return paired + word.substring(end);
+            List<String> options = exactPairs.get(token);
+            if (options == null) options = foldedPairs.get(key);
+            if (options != null) {
+                int choice = options.size() == 1 ? 0 : choose.applyAsInt(options.size());
+                return options.get(choice) + word.substring(end);
+            }
             if (!matches.contains(key)) return accepted;
         }
         if (replacements.isEmpty()) return accepted;

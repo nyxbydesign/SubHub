@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import static org.junit.Assert.*;
 
 /** Canonical JUnit uses the real configuration catalog and JSON dependency, not substitute schemas. */
@@ -72,12 +73,17 @@ public final class InternalConfigurationTest {
     @Test public void demoPerWordRulesSurviveFlushAndCanReturnToTheLegacyShape() throws Exception {
         Fixture f = new Fixture();
         InternalConfigurationStore.EditorDraft draft = f.config.edit(f.config.read());
+        JSONObject authored = new JSONObject().put("one", "two").put("God", new JSONObject()
+                .put("caseSensitive", true).put("options", new JSONArray().put("Goddess").put("Demoness")));
         JSONObject rules = GagContractFields.defaults().put("enabled", true).put("mode", "MATCH")
-                .put("replacements", "").put(GagContractFields.PAIRS, new JSONObject().put("one", "two"));
+                .put("replacements", "").put(GagContractFields.PAIRS, authored);
         draft.editGagRules(rules);
         f.config.flush(draft);
         InternalConfigurationStore.EditorDraft reopened = f.config.edit(f.config.read());
-        assertEquals("two", reopened.gagRules().getJSONObject(GagContractFields.PAIRS).getString("one"));
+        JSONObject stored = reopened.gagRules().getJSONObject(GagContractFields.PAIRS);
+        assertEquals("two", stored.getString("one"));
+        assertTrue(stored.getJSONObject("God").getBoolean("caseSensitive"));
+        assertEquals("[\"Goddess\",\"Demoness\"]", stored.getJSONObject("God").getJSONArray("options").toString());
         reopened.editGagRules(GagContractFields.defaults());
         f.config.flush(reopened);
         assertFalse(f.config.edit(f.config.read()).gagRules().has(GagContractFields.PAIRS));

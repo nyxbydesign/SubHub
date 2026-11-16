@@ -254,12 +254,13 @@ public final class FeatureEditorSession {
                 &&canEdit(activity,GagContractFields.SECTION);
     }
 
-    public static boolean canEditGagPairs(AppCompatActivity activity) {
-        return canEditGag(activity) && supportsGagPairs(scope(activity));
+    public static GagContractFields.Capability gagCapability(AppCompatActivity activity) {
+        return canEditGag(activity) ? gagCapability(scope(activity)) : GagContractFields.Capability.NONE;
     }
 
-    private static boolean supportsGagPairs(FeatureEditorSession scope) {
-        return scope.internal || GagContractFields.pairsSupported(scope.feature.store, scope.peer);
+    private static GagContractFields.Capability gagCapability(FeatureEditorSession scope) {
+        return scope.internal ? GagContractFields.Capability.PAIR_OPTIONS
+                : GagContractFields.capability(scope.feature.store, scope.peer);
     }
 
     public static JSONObject gagRules(AppCompatActivity activity) throws Exception {
@@ -277,8 +278,8 @@ public final class FeatureEditorSession {
             scope.internalDraft.editGagRules(rules);
             return;
         }
-        if ((GagContractFields.needsPairs(GagContractFields.section(scope.document))
-                || GagContractFields.needsPairs(rules)) && !supportsGagPairs(scope))
+        var capability = gagCapability(scope);
+        if (!capability.supportsPairs(GagContractFields.section(scope.document)) || !capability.supportsPairs(rules))
             throw new SecurityException("Update the paired app for per-word replacements");
         scope.document.getJSONObject("contract").getJSONObject("sections")
                 .put(GagContractFields.SECTION,GagContractFields.validate(rules));
