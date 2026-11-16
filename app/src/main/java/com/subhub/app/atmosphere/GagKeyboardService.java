@@ -170,6 +170,8 @@ public final class GagKeyboardService extends InputMethodService {
     @Override public void onCreate() {
         super.onCreate();
         clipboard = new GagClipboard(new GagClipboardPins(getNoBackupFilesDir()));
+        clipboard.clearThrough(GagScreenshotClipboard.preferences(this)
+                .getLong(GagScreenshotClipboard.CLEARED_THROUGH, 0));
         backend = RemoteFeature.get(this);
         configurationObserver = RemoteUi.observeConfiguration(this::refreshWorkspace);
         participation = GagParticipation.preferences(this);
@@ -1140,10 +1142,6 @@ public final class GagKeyboardService extends InputMethodService {
         return clipboardVisible && editorAllowed && clipboard.allows(getCurrentInputConnection());
     }
 
-    private boolean clipboardRetention() {
-        return GagScreenshotClipboard.preferences(this).getBoolean(GagScreenshotClipboard.RETENTION, true);
-    }
-
     private void startScreenshotClipboard() {
         if (!clipboardAllowed() || !GagScreenshotClipboard.updateAccess(this)) return;
         if (screenshotObserver == null) {
@@ -1214,7 +1212,7 @@ public final class GagKeyboardService extends InputMethodService {
             scheduleScreenshotScan();
         }
         var prefs = GagScreenshotClipboard.preferences(this);
-        if (!clipboardAllowed() || !clipboardRetention()) return;
+        if (!clipboardAllowed()) return;
         if (!GagScreenshotClipboard.updateAccess(this)) {
             stopScreenshotClipboard();
             refreshClipboard();
@@ -1258,7 +1256,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void captureClipboard() {
         if (!clipboardAllowed()) { stopClipboard(); return; }
-        if (clipboardManager != null && clipboardRetention()) try {
+        if (clipboardManager != null) try {
             if (GagClipboard.accepts(clipboardManager.getPrimaryClipDescription())) {
                 ClipData clip = clipboardManager.getPrimaryClip();
                 long copied = clip == null ? 0 : clip.getDescription().getTimestamp();
@@ -1289,7 +1287,7 @@ public final class GagKeyboardService extends InputMethodService {
             clipboardImageTask = clipboardImages.submit(() -> {
                 GagClipboardImage image = GagClipboardImage.read(getContentResolver(), source, description);
                 main.post(() -> {
-                    if (generation != clipboardCaptureGeneration || !clipboardAllowed() || !clipboardRetention()
+                    if (generation != clipboardCaptureGeneration || !clipboardAllowed()
                             || !clipboard.allows(input) || !clipboard.eligibleTimestamp(copied)) return;
                     clipboardImageTask = null;
                     if (image == null) { clipboardImageTimestamp = 0L; return; }
@@ -1398,20 +1396,6 @@ public final class GagKeyboardService extends InputMethodService {
                 refreshClipboard();
             });
 
-        android.widget.Switch retention = new android.widget.Switch(clipboardPanel.getContext());
-        retention.setText(R.string.gag_clipboard_retention);
-        retention.setTextColor(LABEL_COLOR);
-        retention.setChecked(clipboardRetention());
-        retention.setMinimumHeight(dp(42));
-        clipboardPanel.addView(retention, new LinearLayout.LayoutParams(-1, -2));
-        retention.setOnCheckedChangeListener((button, enabled) -> {
-            if (!enabled && !clipboard.forgetPins()) {
-                clipboardChangeFailed();
-                return;
-            }
-            GagScreenshotClipboard.preferences(this).edit().putBoolean(GagScreenshotClipboard.RETENTION, enabled).apply();
-            clearClipboardHistory();
-        });
         android.widget.ScrollView scroll = new android.widget.ScrollView(clipboardPanel.getContext());
         clipboardPanel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout content = new LinearLayout(scroll.getContext());
@@ -1487,7 +1471,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean clipboardCardIsCurrent(View panel, InputConnection input, GagClipboard.Entry entry) {
-        return panel == clipboardPanel && clipboardAllowed() && clipboardRetention() && clipboard.allows(input)
+        return panel == clipboardPanel && clipboardAllowed() && clipboard.allows(input)
                 && (entry.screenshot() == null || GagScreenshotClipboard.enabled(this))
                 && clipboard.contains(entry, android.os.SystemClock.elapsedRealtime());
     }
@@ -1590,7 +1574,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void pasteClipboard(View panel, InputConnection input, GagClipboard.Entry entry) {
-        if ((panel != null && panel != clipboardPanel) || !clipboardAllowed() || !clipboardRetention()
+        if ((panel != null && panel != clipboardPanel) || !clipboardAllowed()
                 || (entry.screenshot() != null && !GagScreenshotClipboard.enabled(this))
                 || !clipboard.allows(input)
                 || !clipboard.contains(entry, android.os.SystemClock.elapsedRealtime())) return;
@@ -1645,7 +1629,7 @@ public final class GagKeyboardService extends InputMethodService {
                     Uri shared = null;
                     boolean accepted = false;
                     try {
-                        if (epoch != editorEpoch || !clipboardAllowed() || !clipboardRetention() || !clipboard.allows(input)
+                        if (epoch != editorEpoch || !clipboardAllowed() || !clipboard.allows(input)
                                 || (entry.screenshot() != null && !GagScreenshotClipboard.enabled(this))
                                 || !image.supports(editor) || !clipboard.entries(now).contains(entry)) return;
                         leaveWordLiteral();
@@ -1677,7 +1661,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private boolean showClipboardSuggestion(InputConnection input) {
         if (!GagScreenshotClipboard.enabled(this)) clipboard.retainScreenshots(java.util.Set.of());
-        if (!clipboardAllowed() || !clipboardRetention()) return false;
+        if (!clipboardAllowed()) return false;
         long now = android.os.SystemClock.elapsedRealtime();
         List<GagClipboard.Entry> entries = clipboard.recentEntries(now);
         if (entries.isEmpty()) return false;

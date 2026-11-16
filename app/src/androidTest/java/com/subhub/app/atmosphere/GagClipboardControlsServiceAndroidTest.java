@@ -1,6 +1,7 @@
 package com.subhub.app.atmosphere;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -82,16 +83,28 @@ public final class GagClipboardControlsServiceAndroidTest {
     @Test public void longClipboardCardPastesTheEntireEntry() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
-        openFixture(true, true);
-        openClipboard();
-        UiObject2 card = await(By.pkg(APP).textStartsWith(GagEditorFixtureActivity.LONG_CLIPBOARD_PREFIX));
-        assertTrue(card.getText().length() <= 257);
-        card.click();
-        String expected = GagEditorFixtureActivity.longClipboardResult(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT);
-        UiObject2 result = device().wait(Until.findObject(By.pkg(FIXTURE).desc(expected)), TIMEOUT);
-        if (result == null) {
-            UiObject2 editor = await(By.pkg(FIXTURE).descStartsWith(GagEditorFixtureActivity.EDITOR));
-            assertEquals(expected, editor.getContentDescription());
+        var prefs = GagScreenshotClipboard.preferences(target);
+        String legacyRetention = "retention";
+        boolean hadSetting = prefs.contains(legacyRetention);
+        boolean previous = prefs.getBoolean(legacyRetention, true);
+        try {
+            assertTrue(prefs.edit().putBoolean(legacyRetention, false).commit());
+            openFixture(true, true);
+            openClipboard();
+            UiObject2 card = await(By.pkg(APP).textStartsWith(GagEditorFixtureActivity.LONG_CLIPBOARD_PREFIX));
+            assertTrue(card.getText().length() <= 257);
+            card.click();
+            String expected = GagEditorFixtureActivity.longClipboardResult(GagEditorFixtureActivity.LONG_CLIPBOARD_TEXT);
+            UiObject2 result = device().wait(Until.findObject(By.pkg(FIXTURE).desc(expected)), TIMEOUT);
+            if (result == null) {
+                UiObject2 editor = await(By.pkg(FIXTURE).descStartsWith(GagEditorFixtureActivity.EDITOR));
+                assertEquals(expected, editor.getContentDescription());
+            }
+        } finally {
+            var edit = prefs.edit();
+            if (hadSetting) edit.putBoolean(legacyRetention, previous);
+            else edit.remove(legacyRetention);
+            assertTrue(edit.commit());
         }
     }
 
@@ -127,6 +140,7 @@ public final class GagClipboardControlsServiceAndroidTest {
                     + ", backToKeysVisible=" + device().hasObject(By.pkg(APP).desc(label(R.string.gag_keyboard_back_to_keys)))
                     + ", fixtureEditorVisible=" + device().hasObject(editor()) + "]");
         }
+        assertFalse(device().hasObject(By.pkg(APP).clazz(android.widget.Switch.class)));
     }
 
     private static boolean systemClipboardOverlayPresent() {

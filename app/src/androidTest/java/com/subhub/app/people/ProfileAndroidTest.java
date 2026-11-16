@@ -2,6 +2,7 @@ package com.subhub.app.people;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.junit.Assert.*;
@@ -397,6 +398,7 @@ public final class ProfileAndroidTest {
                 assertNull(activity.findViewById(R.id.gag_modes));
                 assertNull(activity.findViewById(R.id.gag_replacements));
             });
+            onView(withText("Keep clipboard history")).check(doesNotExist());
             onView(withId(R.id.gag_personal_dictionary)).perform(revealAboveNavigation(), click());
             onView(withId(R.id.gag_custom_word)).perform(revealAboveNavigation(), replaceText(word));
             onView(withId(R.id.gag_add_custom_word)).perform(revealAboveNavigation(), click());
