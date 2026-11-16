@@ -56,20 +56,10 @@
                 android:text="@string/gag_one_per_line" />
         </LinearLayout>
 
-        <FrameLayout
-            android:id="@+id/gag_pair_case_row"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/ui_gap_group"
-            android:background="@drawable/bg_card">
-
-            <com.subhub.app.util.StateToggle
-                android:id="@+id/gag_pair_case_sensitive"
-                style="@style/Widget.SubHub.Switch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingHorizontal="@dimen/ui_card_padding"
-                android:text="@string/gag_pair_case_sensitive" />
-        </FrameLayout>
+        <com.subhub.app.util.StateToggle
+            android:id="@+id/gag_pair_case_sensitive"
+            style="@style/Widget.SubHub.SettingsToggle"
+            android:layout_marginTop="@dimen/ui_gap_control"
+            android:text="@string/gag_pair_case_sensitive" />
     </LinearLayout>
 </ScrollView>

@@ -220,7 +220,7 @@ final class GagRulesEditor {
         EditText replacement = form.findViewById(R.id.gag_pair_replacement);
         StateToggle sensitive = form.findViewById(R.id.gag_pair_case_sensitive);
         boolean optionsAllowed = capability.supports(Capability.PAIR_OPTIONS);
-        form.findViewById(R.id.gag_pair_case_row).setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
+        sensitive.setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
         form.findViewById(R.id.gag_pair_options_hint).setVisibility(optionsAllowed ? View.VISIBLE : View.GONE);
         if (restored != null) {
             source.setText(restored.getString("source"));
