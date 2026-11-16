@@ -16,12 +16,14 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.subhub.app.R;
 import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.remote.GagContractFields.Capability;
 import com.subhub.app.util.StateToggle;
+import com.subhub.app.util.ThemedDialogs;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -214,8 +216,15 @@ final class GagRulesEditor {
         Capability capability = FeatureEditorSession.gagCapability(activity);
         GagWordPairs.Rule rule = pairs.get(existing);
         if (!canEditPair(capability, rule) || existing != null && rule == null) { updateFields(); return; }
-        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_SubHub_GagPairDialog);
-        View form = android.view.LayoutInflater.from(builder.getContext()).inflate(R.layout.dialog_gag_word_pair, null);
+        MaterialAlertDialogBuilder builder = ThemedDialogs.builder(activity);
+        CharSequence title = activity.getText(existing == null ? R.string.gag_add_word_pair : R.string.gag_edit_word_pair);
+        LinearLayout panel = ThemedDialogs.formPanel(builder.getContext());
+        TextView heading = ThemedDialogs.formTitle(builder.getContext(), title);
+        ViewCompat.setAccessibilityHeading(heading, true);
+        ViewCompat.setAccessibilityPaneTitle(panel, title);
+        panel.addView(heading);
+        View form = android.view.LayoutInflater.from(builder.getContext()).inflate(R.layout.dialog_gag_word_pair, panel, false);
+        panel.addView(form);
         EditText source = form.findViewById(R.id.gag_pair_source);
         EditText replacement = form.findViewById(R.id.gag_pair_replacement);
         StateToggle sensitive = form.findViewById(R.id.gag_pair_case_sensitive);
@@ -231,8 +240,7 @@ final class GagRulesEditor {
             replacement.setText(String.join("\n", rule.options()));
             sensitive.setChecked(rule.caseSensitive());
         }
-        builder.setTitle(existing == null ? R.string.gag_add_word_pair : R.string.gag_edit_word_pair)
-                .setView(form)
+        builder.setView(panel)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.gag_save_word_pair, null);
         if (existing != null) builder.setNeutralButton(R.string.gag_remove_word_pair, (dialog, which) -> {
@@ -246,6 +254,7 @@ final class GagRulesEditor {
         if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         dialog.show();
+        ThemedDialogs.styleForm(dialog);
         editedPair = existing;
         pairDialog = dialog;
         dialog.setOnDismissListener(ignored -> pairDialog = null);
