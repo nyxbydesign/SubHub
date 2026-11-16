@@ -26,6 +26,13 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:visibility="gone">
+            <TextView
+                android:id="@+id/gag_rules_heading"
+                style="@style/Widget.SubHub.FieldLabel"
+                android:accessibilityHeading="true"
+                android:text="@string/gag_when_to_replace"
+                android:visibility="gone" />
+
             <RadioGroup
                 android:id="@+id/gag_modes"
                 android:layout_width="match_parent"

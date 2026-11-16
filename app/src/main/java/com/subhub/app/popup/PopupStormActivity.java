@@ -1,12 +1,7 @@
 package com.subhub.app.popup;
 
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
-
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 
 import com.subhub.app.R;
 import com.subhub.app.configuration.FeatureEditorActivity;
@@ -19,18 +14,8 @@ public final class PopupStormActivity extends FeatureEditorActivity {
     private static final String ADVANCED = "popup_advanced_expanded";
     private PopupStormEditorPanel panel;
     private ControllerEditMode editMode;
-    private final ActivityResultLauncher<Intent> enableOverlayPermission = registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (panel != null) panel.overlayResult(true);
-            });
-    private final ActivityResultLauncher<Uri> folderPicker = registerForActivityResult(
-            new ActivityResultContracts.OpenDocumentTree(), result -> {
-                if (panel != null) panel.onFolderPicked(result);
-            });
-    private final ActivityResultLauncher<Intent> previewOverlayPermission = registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (panel != null) panel.overlayResult(false);
-            });
+    private final PopupStormEditorPanel.LocalRequests localRequests =
+            new PopupStormEditorPanel.LocalRequests(this, () -> panel);
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -40,7 +25,7 @@ public final class PopupStormActivity extends FeatureEditorActivity {
         PrimaryHeader.bindSecondary(root, R.string.popup_title, true);
         PrimaryHeader.backButton(root).setOnClickListener(view -> finish());
         panel = new PopupStormEditorPanel(this, findViewById(R.id.popup_storm_settings),
-                state != null && state.getBoolean(ADVANCED), null);
+                state != null && state.getBoolean(ADVANCED), null, localRequests);
         if (!FeatureEditorSession.remote(this)) {
             editMode = ControllerEditMode.bind(this, PrimaryHeader.editLockButton(root),
                     editing -> panel.applyEditState());
@@ -71,7 +56,4 @@ public final class PopupStormActivity extends FeatureEditorActivity {
         super.onDestroy();
     }
 
-    void chooseFolder() { folderPicker.launch(null); }
-    void requestEnableOverlay(Intent request) { enableOverlayPermission.launch(request); }
-    void requestPreviewOverlay(Intent request) { previewOverlayPermission.launch(request); }
 }

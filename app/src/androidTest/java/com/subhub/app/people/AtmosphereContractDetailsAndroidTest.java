@@ -413,17 +413,39 @@ public final class AtmosphereContractDetailsAndroidTest {
             Intent intent = new Intent(context, PersonActivity.class)
                     .putExtra(PersonRoutes.EXTRA_PERSON_ID, paired.subPerson.value())
                     .putExtra("person_section", "contracts");
+            Intent atmosphereRoute;
             try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(intent)) {
-                await(page, a -> tagged(a, "atmosphere_panel:subliminal") != null);
+                await(page, a -> tagged(a, "person_section:atmosphere") != null);
                 page.onActivity(a -> {
                     View editor = tagged(a, "person_section:atmosphere");
                     View summary = tagged(a, "person_allowed_features");
-                    assertNotNull(editor);
+                    assertTrue(editor.isClickable());
                     assertNotNull(summary);
-                    android.widget.LinearLayout body = (android.widget.LinearLayout) editor.getParent();
-                    View permissions = (View) summary.getParent();
-                    assertSame(body, permissions.getParent());
-                    assertTrue(body.indexOfChild(editor) < body.indexOfChild(permissions));
+                    assertNull(tagged(a, "atmosphere_panel:subliminal"));
+                    ViewGroup body = a.findViewById(R.id.role_page_body);
+                    assertTrue(body.indexOfChild((View) editor.getParent().getParent())
+                            < body.indexOfChild((View) summary.getParent()));
+                });
+                android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+                Class<com.subhub.app.atmosphere.AtmosphereActivity> destination =
+                        com.subhub.app.atmosphere.AtmosphereActivity.class;
+                android.app.Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
+                        destination.getName(), null, false);
+                try {
+                    onView(withTagValue(is("person_section:atmosphere")))
+                            .perform(NativeUiActions.revealAboveNavigation(), click());
+                    Activity opened = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
+                    assertNotNull(opened);
+                    atmosphereRoute = new Intent(opened.getIntent());
+                    instrumentation.runOnMainSync(opened::finish);
+                    instrumentation.waitForIdleSync();
+                } finally {
+                    instrumentation.removeMonitor(monitor);
+                }
+            }
+            try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> page =
+                         ActivityScenario.launch(atmosphereRoute)) {
+                page.onActivity(a -> {
                     View whispers = tagged(a, "atmosphere_panel:subliminal");
                     assertEquals(View.VISIBLE, whispers.getVisibility());
                     assertEquals(context.getString(R.string.sub_feature_disabled), text(whispers));
@@ -438,6 +460,8 @@ public final class AtmosphereContractDetailsAndroidTest {
                     com.subhub.app.util.StateToggle popup = a.findViewById(R.id.switch_popup_storm);
                     assertTrue(popup.isChecked());
                     assertTrue(popup.isEnabled());
+                    assertEquals(View.VISIBLE, a.findViewById(R.id.dynamic_settings).getVisibility());
+                    assertEquals(View.GONE, a.findViewById(R.id.button_advanced_details).getVisibility());
                     assertEquals(View.GONE, a.findViewById(R.id.button_preview).getVisibility());
                 });
                 onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_popup_storm))

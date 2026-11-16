@@ -126,12 +126,6 @@ public final class FeatureEditorSession {
         duration.putBoolean("hidden",service.getBoolean("hidden")).commit();
     }
     public static boolean attach(AppCompatActivity activity,String section,Bundle saved) {
-        return attach(activity, saved, false);
-    }
-    public static boolean attachEmbedded(AppCompatActivity activity, Bundle saved) {
-        return scope(activity) != null || attach(activity, saved, true);
-    }
-    private static boolean attach(AppCompatActivity activity, Bundle saved, boolean embedded) {
         if(!DummySubPreview.isRequested(activity.getIntent())&&PersonRoutes.isLocalTarget(activity.getIntent()))return true;
         try{
             String token=saved==null?activity.getIntent().getStringExtra(TOKEN):saved.getString(TOKEN);
@@ -150,12 +144,12 @@ public final class FeatureEditorSession {
                     if(attached.invalidated){restart(activity);return;}
                     try { attached.requireAuthority(); }
                     catch (RuntimeException denied) {
-                        if (!embedded) activity.finish();
+                        activity.finish();
                         return;
                     }
                     EditorBinding binding=attached.bindings.get(activity);
                     if(binding!=null) attached.activate(binding);
-                    if(!embedded)activity.getWindow().getDecorView().post(()->decorate(activity));
+                    activity.getWindow().getDecorView().post(()->decorate(activity));
                 } else if(event==Lifecycle.Event.ON_PAUSE){
                     EditorBinding binding=attached.bindings.get(activity);
                     if(binding!=null){binding.autosave.flush();binding.active=false;attached.remember(binding);}
@@ -170,10 +164,8 @@ public final class FeatureEditorSession {
             });
             return true;
         }catch(Exception unavailable){
-            if (!embedded) {
-                Toast.makeText(activity,R.string.remote_reload,Toast.LENGTH_LONG).show();
-                activity.finish();
-            }
+            Toast.makeText(activity,R.string.remote_reload,Toast.LENGTH_LONG).show();
+            activity.finish();
             return false;
         }
     }
@@ -345,15 +337,9 @@ public final class FeatureEditorSession {
         if(body==null)throw new IllegalStateException("Feature editor has no content");
         scope.bind(activity, body, root, section, flush);
     }
-    public static void bindEmbedded(AppCompatActivity activity, LinearLayout body, String section, BooleanSupplier flush) {
+    public static void bindPanels(AppCompatActivity activity, LinearLayout body, String section, BooleanSupplier flush) {
         FeatureEditorSession scope = scope(activity);
-        if (scope == null) throw new IllegalStateException("Embedded editor has no target");
-        scope.bind(activity, body, null, section, flush);
-    }
-    public static void flushBinding(AppCompatActivity activity) {
-        FeatureEditorSession scope = scope(activity);
-        EditorBinding binding = scope == null ? null : scope.bindings.get(activity);
-        if (binding != null) binding.flush();
+        if (scope != null) scope.bind(activity, body, null, section, flush);
     }
     public static void unbind(AppCompatActivity activity) {
         FeatureEditorSession scope = scope(activity);
@@ -375,7 +361,7 @@ public final class FeatureEditorSession {
                     if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
                     scope.flushing=true;try{return flush.getAsBoolean();}finally{scope.flushing=false;}
                 },()->{scope.invalidated=true;DRAFTS.remove(scope.token);restart(activity);},
-                        !(activity instanceof PersonActivity) && !"popup".equals(section));
+                        !(activity instanceof PersonActivity) && !"popup".equals(section) && !"atmosphere".equals(section));
                 if (textRoot != null) scope.watchText(textRoot,binding);
                 binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
             }

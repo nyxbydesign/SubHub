@@ -18,6 +18,8 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
@@ -33,13 +35,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /** Popup Storm controls for standalone and target-scoped Contract editing. */
 public final class PopupStormEditorPanel implements AutoCloseable {
     private final AppCompatActivity activity;
     private final PanelPopupStormBinding binding;
     private final SharedPreferences preferences;
+    private final LocalRequests localRequests;
     private boolean updatingEnabled;
+    private boolean showAllSettings;
     private CensorImageEditor remoteArtwork;
     private boolean closed;
     private EditText caption;
@@ -52,8 +57,9 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         }
     };
     public PopupStormEditorPanel(AppCompatActivity activity, View root, boolean advancedExpanded,
-            CensorImageEditor.Picker picker) {
+            CensorImageEditor.Picker picker, LocalRequests localRequests) {
         this.activity = activity;
+        this.localRequests = localRequests;
         binding = PanelPopupStormBinding.bind(root);
         preferences = PopupStormSettings.preferences(FeatureEditorSession.context(activity));
         binding.switchPopupStorm.setOnCheckedChangeListener((button, checked) -> {
@@ -61,8 +67,8 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         });
         if (!FeatureEditorSession.remote(activity)) PopupStormManager.get().reloadSettings(activity);
         binding.buttonAddFolder.setOnClickListener(view -> {
-            if (!FeatureEditorSession.remote(activity) && FeatureEditorSession.canEdit(activity, "popup"))
-                ((PopupStormActivity) activity).chooseFolder();
+            if (localRequests != null && FeatureEditorSession.canEdit(activity, "popup"))
+                localRequests.folder.launch(null);
         });
         binding.buttonStop.setOnClickListener(view -> {
             if (FeatureEditorSession.remote(activity)) return;
@@ -100,7 +106,14 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         return binding.dynamicSettings.getVisibility() == View.VISIBLE;
     }
 
-    void resume() {
+    public void showAllSettings() {
+        showAllSettings = true;
+        binding.buttonAdvancedDetails.setVisibility(View.GONE);
+        binding.dynamicSettings.setVisibility(View.VISIBLE);
+        updateAdvancedApplicability(FeatureEditorSession.canEdit(activity, "popup"));
+    }
+
+    public void resume() {
         applyEditState();
         ui.removeCallbacks(statusUpdater);
         if (!FeatureEditorSession.remote(activity)) {
@@ -110,7 +123,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         mainDelayRefresh();
     }
 
-    void pause() {
+    public void pause() {
         flush();
         ui.removeCallbacks(statusUpdater);
     }
@@ -151,7 +164,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         if (!FeatureEditorSession.canEdit(activity, "popup")) return;
         if (!Settings.canDrawOverlays(activity)) {
             Toast.makeText(activity, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
-            ((PopupStormActivity) activity).requestPreviewOverlay(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            localRequests.previewOverlay.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + activity.getPackageName())));
         } else preview();
     }
@@ -261,6 +274,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         binding.buttonAddFolder.setEnabled(editing);
         binding.presetSlider.setEnabled(editing);
         setEnabledRecursive(binding.dynamicSettings, editing);
+        if (showAllSettings) updateAdvancedApplicability(editing);
         rebuildFolders();
         // Stop remains available as an unconditional safety action.
     }
@@ -319,7 +333,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         if (!Settings.canDrawOverlays(activity)) {
             renderEnabled();
             Toast.makeText(activity, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
-            ((PopupStormActivity) activity).requestEnableOverlay(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            localRequests.enableOverlay.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + activity.getPackageName())));
         } else completeEnable();
     }
@@ -349,6 +363,34 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         }
     }
 
+    private void updateAdvancedApplicability(boolean editing) {
+        boolean fixedSize = "fixed".equals(preferences.getString(PopupStormSettings.K_SIZE_MODE, "random"));
+        setAdvancedEnabled(editing && !fixedSize, PopupStormSettings.K_MIN_SIZE, PopupStormSettings.K_MAX_SIZE);
+        setAdvancedEnabled(editing && fixedSize, PopupStormSettings.K_FIXED_SIZE);
+        setAdvancedEnabled(editing && preferences.getBoolean(PopupStormSettings.K_RANDOM_ROT, false),
+                PopupStormSettings.K_ROT_MAX);
+        setAdvancedEnabled(editing && preferences.getBoolean(PopupStormSettings.K_BOUNCING, false),
+                PopupStormSettings.K_BOUNCING_SPEED);
+        setAdvancedEnabled(editing && preferences.getBoolean(PopupStormSettings.K_BURST_ENABLED, false),
+                PopupStormSettings.K_BURST_FREQUENCY, PopupStormSettings.K_BURST_DURATION,
+                PopupStormSettings.K_BURST_MULTIPLIER);
+        boolean denialEnabled = editing && preferences.getInt(PopupStormSettings.K_DENIAL_CHANCE, 0) > 0;
+        setAdvancedEnabled(denialEnabled, PopupStormSettings.K_DENIAL_STYLE, PopupStormSettings.K_DENIAL_INTENSITY,
+                PopupStormSettings.K_DENIAL_CAPTION);
+        setAdvancedEnabled(denialEnabled && preferences.getBoolean(PopupStormSettings.K_DENIAL_CAPTION, true),
+                PopupStormSettings.K_DENIAL_CAPTION_TEXT);
+        setAdvancedEnabled(editing && "avoid".equals(preferences.getString(PopupStormSettings.K_DETECTION_MODE, "off")),
+                PopupStormSettings.K_AVOID_PADDING);
+    }
+
+    private void setAdvancedEnabled(boolean enabled, String... keys) {
+        for (String key : keys) {
+            View control = binding.dynamicSettings.findViewWithTag("popup-setting:" + key);
+            if (control == null) control = binding.dynamicSettings.findViewWithTag("popup-choice:" + key);
+            if (control != null) setEnabledRecursive(control, enabled);
+        }
+    }
+
     private LinearLayout card(int title) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -371,6 +413,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
 
     private void addToggle(LinearLayout parent, int title, String key, boolean defaultValue) {
         SwitchMaterial toggle = new com.subhub.app.util.StateToggle(activity);
+        toggle.setTag("popup-setting:" + key);
         toggle.setText(title);
         toggle.setEnabled(FeatureEditorSession.canEdit(activity, "popup"));
         toggle.setChecked(preferences.getBoolean(key, defaultValue));
@@ -388,6 +431,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         TextView value = formLabel(activity.getString(title) + ": " + stored, parent);
         parent.addView(value);
         SeekBar slider = new SeekBar(activity);
+        slider.setTag("popup-setting:" + key);
         slider.setMinimumHeight(dp(48));
         slider.setMax(maximum - minimum);
         slider.setProgress(stored - minimum);
@@ -396,7 +440,11 @@ public final class PopupStormEditorPanel implements AutoCloseable {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int actual = minimum + progress;
                 value.setText(activity.getString(title) + ": " + actual);
-                if (fromUser && FeatureEditorSession.canEdit(activity, "popup")) preferences.edit().putInt(key, actual).apply();
+                if (fromUser && FeatureEditorSession.canEdit(activity, "popup")) {
+                    preferences.edit().putInt(key, actual).apply();
+                    if (showAllSettings && PopupStormSettings.K_DENIAL_CHANCE.equals(key))
+                        updateAdvancedApplicability(true);
+                }
             }
             @Override public void onStopTrackingTouch(SeekBar seekBar) { settingsChanged(); }
         });
@@ -410,6 +458,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         TextView value = formLabel(activity.getString(title) + ": " + String.format(Locale.ROOT, format, stored), parent);
         parent.addView(value);
         SeekBar slider = new SeekBar(activity);
+        slider.setTag("popup-setting:" + key);
         slider.setMinimumHeight(dp(48));
         slider.setMax(steps);
         slider.setProgress(Math.round((stored - minimum) / step));
@@ -464,6 +513,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         parent.addView(heading);
         EditText input = (EditText) activity.getLayoutInflater().inflate(R.layout.view_preference_input, parent, false);
         input.setId(View.generateViewId());
+        input.setTag("popup-setting:" + key);
         heading.setLabelFor(input.getId());
         input.setMinimumHeight(dp(48));
         input.setSingleLine(true);
@@ -510,6 +560,7 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         if (!FeatureEditorSession.canEdit(activity, "popup")) return;
         preferences.edit().remove(PopupStormSettings.K_PRESET).apply();
         renderPreset();
+        if (showAllSettings) updateAdvancedApplicability(true);
         if (!FeatureEditorSession.remote(activity)) PopupStormManager.get().reloadSettings(activity);
         refreshStatus();
     }
@@ -626,6 +677,28 @@ public final class PopupStormEditorPanel implements AutoCloseable {
         closed = true;
         ui.removeCallbacksAndMessages(null);
         if (remoteArtwork != null) remoteArtwork.close();
+    }
+
+    /** Registers the physical device's picker and overlay flows before the host starts. */
+    public static final class LocalRequests {
+        private final ActivityResultLauncher<Uri> folder;
+        private final ActivityResultLauncher<Intent> previewOverlay;
+        private final ActivityResultLauncher<Intent> enableOverlay;
+
+        public LocalRequests(AppCompatActivity host, Supplier<PopupStormEditorPanel> panel) {
+            folder = host.registerForActivityResult(new ActivityResultContracts.OpenDocumentTree(), result -> {
+                PopupStormEditorPanel current = panel.get();
+                if (current != null) current.onFolderPicked(result);
+            });
+            previewOverlay = host.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), ignored -> {
+                PopupStormEditorPanel current = panel.get();
+                if (current != null) current.overlayResult(false);
+            });
+            enableOverlay = host.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), ignored -> {
+                PopupStormEditorPanel current = panel.get();
+                if (current != null) current.overlayResult(true);
+            });
+        }
     }
 
     private abstract static class SimpleSeekListener implements SeekBar.OnSeekBarChangeListener {

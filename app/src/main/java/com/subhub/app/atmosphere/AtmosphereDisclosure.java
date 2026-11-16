@@ -1,12 +1,14 @@
 package com.subhub.app.atmosphere;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.core.view.AccessibilityDelegateCompat;
+import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 
@@ -38,8 +40,11 @@ public final class AtmosphereDisclosure {
         }
         content.setVisibility(expanded ? View.VISIBLE : View.GONE);
         header.setSelected(expanded);
-        header.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0,
-                expanded ? R.drawable.ic_atmosphere_chevron_down : R.drawable.ic_overview_chevron, 0);
+        Drawable icon = header.getCompoundDrawablesRelative()[0];
+        Drawable arrow = AppCompatResources.getDrawable(header.getContext(),
+                expanded ? R.drawable.ic_atmosphere_chevron_down : R.drawable.ic_overview_chevron);
+        if (arrow != null) arrow.setBounds(0, 0, arrow.getIntrinsicWidth(), arrow.getIntrinsicHeight());
+        header.setCompoundDrawablesRelative(icon, null, arrow, null);
         ViewCompat.setStateDescription(header, header.getContext().getString(
                 expanded ? R.string.section_expanded : R.string.section_collapsed));
     }

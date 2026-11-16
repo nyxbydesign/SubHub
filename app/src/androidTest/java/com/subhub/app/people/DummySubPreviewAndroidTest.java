@@ -250,34 +250,13 @@ public final class DummySubPreviewAndroidTest {
                 assertNotNull(tagged(profile, "person_contract_features"));
                 assertNull(tagged(profile, "person_duration"));
                 instrumentation.runOnMainSync(() -> {
-                    assertAtmospherePanel(profile, "subliminal");
-                    assertEquals(View.GONE, profile.findViewById(com.subhub.app.R.id.whispers_advanced_content)
-                            .getVisibility());
+                    assertTrue(tagged(profile, "person_section:atmosphere").isClickable());
+                    assertNull(tagged(profile, "atmosphere_panel:subliminal"));
                     View scope = tagged(profile, "person_contract_scope");
                     assertFalse(hasText(scope, context.getString(com.subhub.app.R.string.role_changes_pending)));
                     assertFalse(hasText(scope, context.getString(com.subhub.app.R.string.profile_contract_scope)));
-                    assertEquals(View.GONE, tagged(profile, "internal_configuration_save_status").getVisibility());
                 });
-                tapTag("atmosphere_header:popup");
-                instrumentation.runOnMainSync(() -> {
-                    assertAtmospherePanel(profile, "popup");
-                    assertEquals(View.GONE, profile.findViewById(com.subhub.app.R.id.button_preview).getVisibility());
-                    assertEquals(View.GONE, profile.findViewById(com.subhub.app.R.id.dynamic_settings).getVisibility());
-                });
-                tapTag("atmosphere_header:popup");
-                instrumentation.runOnMainSync(() -> assertAtmospherePanel(profile, "popup"));
-                tapTag("atmosphere_header:gag");
-                instrumentation.runOnMainSync(() -> {
-                    assertAtmospherePanel(profile, "gag");
-                    assertNotNull(profile.findViewById(com.subhub.app.R.id.gag_replacements));
-                    assertEquals(View.GONE, profile.findViewById(com.subhub.app.R.id.gag_rules_content).getVisibility());
-                    assertNull(profile.findViewById(com.subhub.app.R.id.gag_keyboard_settings));
-                });
-                tapTag("atmosphere_header:subliminal");
-                instrumentation.runOnMainSync(() -> assertAtmospherePanel(profile, "subliminal"));
-                capture(profile, "dummy-preview-atmosphere");
-                assertRealState(before, rows);
-                for (String section : new String[]{"censor", "limits", "wallet", "apps", "duration"}) {
+                for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
                     Class<? extends Activity> expected = PersonRoutes.sectionActivity(section);
                     Instrumentation.ActivityMonitor pageMonitor = instrumentation.addMonitor(expected.getName(), null, false);
                     try {
@@ -291,7 +270,8 @@ public final class DummySubPreviewAndroidTest {
                         assertEquals(expected, page.getClass()); await(() -> resumed(page));
                         assertNativeSection(page, section);
                         if ("censor".equals(section)) browseCensorDetails(page);
-                        exerciseNativeInput(page);
+                        if ("atmosphere".equals(section)) browseAtmosphere(page);
+                        else exerciseNativeInput(page);
                         if ("limits".equals(section)) {
                             instrumentation.runOnMainSync(() -> allowances.forEach((app, minutes) ->
                                     assertEquals(minutes.toString(), ((EditText) tagged(page, "limit:" + app)).getText().toString())));
@@ -322,8 +302,8 @@ public final class DummySubPreviewAndroidTest {
             tapTag("person_tab:contracts");
             scenario.recreate(); scenario.onActivity(host::set); await(() -> resumed(host.get()));
             assertNotNull(tagged(host.get(), "person_contract_scope"));
-            await(() -> tagged(host.get(), "atmosphere_panel:subliminal") != null);
-            scenario.onActivity(activity -> assertAtmospherePanel(activity, "subliminal"));
+            await(() -> tagged(host.get(), "person_section:atmosphere") != null);
+            scenario.onActivity(activity -> assertNull(tagged(activity, "atmosphere_panel:subliminal")));
             nativeBack(host.get()); await(() -> tagged(host.get(), "person_tab:contracts") != null);
             assertEquals("A preview profile must not submit any application endpoint work", work, endpoint.completedEndpointWork());
             ControllerPinManager.enterSubMode(); await(() -> host.get().isFinishing() || host.get().isDestroyed());
@@ -859,43 +839,30 @@ public final class DummySubPreviewAndroidTest {
             history.capture(true);
             previewTransportBaseline = endpoint.transportCalls();
 
-            Class<com.subhub.app.popup.PopupStormActivity> type = com.subhub.app.popup.PopupStormActivity.class;
-            java.lang.reflect.Field handler = type.getDeclaredField("ui");
-            java.lang.reflect.Field updater = type.getDeclaredField("statusUpdater");
-            handler.setAccessible(true);
-            updater.setAccessible(true);
-            Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(type.getName(), null, false);
-            try {
-                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.popup_storm_card))
-                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-                Activity popup = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
-                assertNotNull("Atmosphere must open the nested Popup editor", popup);
-                assertEquals(type, popup.getClass());
-                await(() -> resumed(popup));
-                assertInternalBackend(popup);
-                instrumentation.runOnMainSync(() -> {
-                    assertTrue(DummySubPreview.isAllowed(popup));
-                    assertEquals(View.GONE, popup.findViewById(com.subhub.app.R.id.button_preview).getVisibility());
-                    assertEquals(View.GONE, popup.findViewById(com.subhub.app.R.id.button_stop).getVisibility());
-                    View saveStatus = tagged(popup, "internal_configuration_save_status");
-                    assertNotNull("Popup retains its autosave feedback view", saveStatus);
-                    assertEquals("The idle Popup editor should not show a save confirmation",
-                            View.GONE, saveStatus.getVisibility());
-                    try {
-                        assertFalse("Internal Popup must not queue physical preview status",
-                                ((android.os.Handler) handler.get(popup)).hasCallbacks((Runnable) updater.get(popup)));
-                    } catch (IllegalAccessException inaccessible) {
-                        throw new AssertionError(inaccessible);
-                    }
-                });
-                capture(popup, "internal-popup-preview-status");
-                assertRealState(before, rows);
-                nativeBack(popup);
-                await(() -> resumed(atmosphere.get()));
-                assertRealState(before, rows);
-            } finally {
-                instrumentation.removeMonitor(monitor);
-            }
+            tapTag("atmosphere_header:popup");
+            assertInternalBackend(atmosphere.get());
+            instrumentation.runOnMainSync(() -> {
+                Activity page = atmosphere.get();
+                assertTrue(resumed(page));
+                assertAtmospherePanel(page, "popup");
+                assertEquals(View.GONE, page.findViewById(R.id.button_preview).getVisibility());
+                assertEquals(View.GONE, page.findViewById(R.id.button_stop).getVisibility());
+                View saveStatus = tagged(page, "internal_configuration_save_status");
+                assertNotNull("Popup retains its autosave feedback view", saveStatus);
+                assertEquals("The idle Popup editor should not show a save confirmation",
+                        View.GONE, saveStatus.getVisibility());
+                try {
+                    Object panels = privateField(page, "panels");
+                    Object popup = privateField(panels, "popup");
+                    android.os.Handler handler = (android.os.Handler) privateField(popup, "ui");
+                    assertFalse("Internal Popup must not queue physical preview status",
+                            handler.hasCallbacks((Runnable) privateField(popup, "statusUpdater")));
+                } catch (ReflectiveOperationException inaccessible) {
+                    throw new AssertionError(inaccessible);
+                }
+            });
+            capture(atmosphere.get(), "internal-popup-preview-status");
+            assertRealState(before, rows);
         }
     }
 
@@ -936,12 +903,6 @@ public final class DummySubPreviewAndroidTest {
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
             AtomicReference<PersonActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
             await(() -> resumed(host.get()));
-            if ("atmosphere".equals(section)) {
-                AtomicReference<Intent> legacy = new AtomicReference<>();
-                scenario.onActivity(activity -> legacy.set(com.subhub.app.configuration.FeatureEditorSession
-                        .child(activity, PersonRoutes.sectionActivity(section))));
-                return legacy.get();
-            }
             if (!"duration".equals(section)) {
                 await(() -> tagged(host.get(), "person_tab:contracts") != null);
                 tapTag("person_tab:contracts");
@@ -1073,54 +1034,57 @@ public final class DummySubPreviewAndroidTest {
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
         } finally { instrumentation.removeMonitor(monitor); }
     }
-    private void browseAtmosphere(Activity atmosphere) throws Exception {
-        for (boolean whispers : new boolean[]{true, false}) {
-            Class<? extends Activity> type = whispers ? com.subhub.app.subliminal.SubliminalSettingsActivity.class
-                    : com.subhub.app.popup.PopupStormActivity.class;
-            Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(type.getName(), null, false);
-            try {
-                onView(androidx.test.espresso.matcher.ViewMatchers.withId(whispers ? com.subhub.app.R.id.whispers_card
-                        : com.subhub.app.R.id.popup_storm_card)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-                Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
-                assertNotNull(page); await(() -> resumed(page));
-                instrumentation.runOnMainSync(() -> assertScopedControls(page.findViewById(android.R.id.content)));
-                assertInternalBackend(page); exerciseNativeInput(page); attemptMaterialSlider(page);
-                capture(page, "dummy-preview-" + (whispers ? "subliminal" : "popup"));
-                Activity recreatedPage = exerciseNestedRecreation(page, atmosphere);
-                nativeBack(recreatedPage); await(() -> resumed(atmosphere));
-            } finally { instrumentation.removeMonitor(monitor); }
-        }
-        browseGag(atmosphere);
+    private static Object privateField(Object target, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
-    private void browseGag(Activity atmosphere) {
-        int replacements = com.subhub.app.R.id.gag_replacements;
+    private void browseAtmosphere(Activity atmosphere) throws Exception {
+        instrumentation.runOnMainSync(() -> {
+            assertAtmospherePanel(atmosphere, "subliminal");
+            assertEquals(View.GONE, atmosphere.findViewById(R.id.whispers_advanced_button).getVisibility());
+            assertEquals(View.VISIBLE, atmosphere.findViewById(R.id.advanced_panel).getVisibility());
+            assertTrue(atmosphere.findViewById(R.id.custom_phrases).isShown());
+        });
+        exerciseNativeInput(atmosphere);
+        attemptMaterialSlider(atmosphere);
+        capture(atmosphere, "dummy-preview-subliminal");
+
+        tapTag("atmosphere_header:popup");
+        tapTag("atmosphere_header:popup");
+        instrumentation.runOnMainSync(() -> {
+            assertTrue(resumed(atmosphere));
+            assertAtmospherePanel(atmosphere, "popup");
+            assertEquals(View.GONE, atmosphere.findViewById(R.id.button_advanced_details).getVisibility());
+            assertEquals(View.VISIBLE, atmosphere.findViewById(R.id.dynamic_settings).getVisibility());
+            assertEquals(View.GONE, atmosphere.findViewById(R.id.button_preview).getVisibility());
+        });
+        attemptMaterialSlider(atmosphere);
+        capture(atmosphere, "dummy-preview-popup");
+
+        tapTag("atmosphere_header:gag");
+        instrumentation.runOnMainSync(() -> {
+            assertTrue(resumed(atmosphere));
+            assertAtmospherePanel(atmosphere, "gag");
+            assertEquals(View.GONE, atmosphere.findViewById(R.id.gag_rules_button).getVisibility());
+            assertTrue(atmosphere.findViewById(R.id.gag_interval).isShown());
+            assertTrue(atmosphere.findViewById(R.id.gag_words).isShown());
+            assertNull(atmosphere.findViewById(R.id.gag_keyboard_settings));
+        });
         String synthetic = "fixture replacement";
-        Class<?> type = com.subhub.app.atmosphere.GagActivity.class;
-        Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(type.getName(), null, false);
-        try {
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.gag_card))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-            Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
-            assertNotNull(page);
-            await(() -> resumed(page));
-            assertInternalBackend(page);
-            assertNull(page.findViewById(com.subhub.app.R.id.gag_keyboard_settings));
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(replacements))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
-                            androidx.test.espresso.action.ViewActions.replaceText(synthetic),
-                            androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
-            await(() -> {
-                Map<String, Object> rules = internalFixture.data.store.read().configuration().get("gag");
-                return rules != null && synthetic.equals(rules.get("replacements"));
-            });
-            Activity recreatedPage = exerciseNestedRecreation(page, atmosphere);
-            instrumentation.runOnMainSync(() -> assertEquals(synthetic,
-                    ((android.widget.EditText) recreatedPage.findViewById(replacements)).getText().toString()));
-            nativeBack(recreatedPage);
-            await(() -> resumed(atmosphere));
-        } finally { instrumentation.removeMonitor(monitor); }
+        onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.gag_replacements))
+                .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.replaceText(synthetic),
+                        androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+        await(() -> {
+            Map<String, Object> rules = internalFixture.data.store.read().configuration().get("gag");
+            return rules != null && synthetic.equals(rules.get("replacements"));
+        });
+        tapTag("atmosphere_header:subliminal");
+        instrumentation.runOnMainSync(() -> assertAtmospherePanel(atmosphere, "subliminal"));
     }
+
     private Activity exerciseNestedRecreation(Activity original, Activity parent) {
         await(() -> resumed(original));
         AtomicReference<Activity> replacement = new AtomicReference<>();
@@ -1185,6 +1149,7 @@ public final class DummySubPreviewAndroidTest {
         instrumentation.runOnMainSync(() -> { assertTrue(slider.get().isEnabled()); slider.get().setValue(value.get()); });
     }
     private static com.google.android.material.slider.Slider findSlider(View view) {
+        if (view.getVisibility() != View.VISIBLE) return null;
         if (view instanceof com.google.android.material.slider.Slider) return (com.google.android.material.slider.Slider) view;
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
             com.google.android.material.slider.Slider found = findSlider(((ViewGroup) view).getChildAt(i)); if (found != null) return found;

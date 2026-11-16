@@ -1,6 +1,7 @@
 package com.subhub.app.atmosphere;
 
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -10,6 +11,8 @@ import android.widget.TextView;
 import androidx.annotation.LayoutRes;
 import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.view.ViewCompat;
 
 import com.subhub.app.R;
 import com.subhub.app.capture.CensorImageEditor;
@@ -19,27 +22,34 @@ import com.subhub.app.popup.PopupStormEditorPanel;
 import com.subhub.app.remote.GagContractFields;
 import com.subhub.app.subliminal.WhispersEditorPanel;
 
-/** Collects the three target-scoped effect editors in the Contract's Atmosphere card. */
-public final class AtmosphereEditorPanels implements AutoCloseable {
+/** Collects the three target-scoped effect editors on the Atmosphere page. */
+final class AtmosphereEditorPanels implements AutoCloseable {
     private enum Effect {
-        WHISPERS("subliminal", R.string.sub_feature_whispers, R.layout.panel_whispers),
-        POPUP("popup", R.string.popup_title, R.layout.panel_popup_storm),
-        GAG(GagContractFields.SECTION, R.string.gag_title, R.layout.panel_gag);
+        WHISPERS("subliminal", R.string.sub_feature_whispers, R.layout.panel_whispers,
+                R.id.whispers_card, R.drawable.ic_subliminal_whisper_2),
+        POPUP("popup", R.string.popup_title, R.layout.panel_popup_storm,
+                R.id.popup_storm_card, R.drawable.ic_popup_storm),
+        GAG(GagContractFields.SECTION, R.string.gag_title, R.layout.panel_gag,
+                R.id.gag_card, R.drawable.ic_atmosphere);
 
         final String section;
         @StringRes final int title;
         @LayoutRes final int layout;
+        final int headerId;
+        final int icon;
 
-        Effect(String section, int title, int layout) {
+        Effect(String section, int title, int layout, int headerId, int icon) {
             this.section = section;
             this.title = title;
             this.layout = layout;
+            this.headerId = headerId;
+            this.icon = icon;
         }
     }
 
     private final AppCompatActivity activity;
     private final CensorImageEditor.Picker images;
-    private final LinearLayout root;
+    private final PopupStormEditorPanel.LocalRequests localRequests;
     private final TextView[] headers = new TextView[Effect.values().length];
     private final LinearLayout[] contents = new LinearLayout[Effect.values().length];
     private final View[] forms = new View[Effect.values().length];
@@ -49,28 +59,45 @@ public final class AtmosphereEditorPanels implements AutoCloseable {
     private WhispersEditorPanel whispers;
     private PopupStormEditorPanel popup;
     private GagRulesEditor gag;
+    private boolean resumed;
 
-    public AtmosphereEditorPanels(AppCompatActivity activity, LinearLayout parent,
-            CensorImageEditor.Picker images, Bundle state) {
+    AtmosphereEditorPanels(AppCompatActivity activity, LinearLayout parent,
+            CensorImageEditor.Picker images, PopupStormEditorPanel.LocalRequests localRequests, Bundle state) {
         this.activity = activity;
         this.images = images;
+        this.localRequests = localRequests;
         restored = state == null ? new Bundle() : state;
-        root = PersonUi.card(parent);
-        root.setTag("person_section:atmosphere");
-        PersonUi.text(root, activity.getString(R.string.atmosphere_title), true);
         open = Effect.WHISPERS;
         for (Effect effect : Effect.values()) {
             if (effect.section.equals(restored.getString("open"))) open = effect;
             int index = effect.ordinal();
+            LinearLayout card = PersonUi.column(activity);
+            card.setBackgroundResource(R.drawable.bg_card);
+            card.setClipToOutline(true);
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+            if (index > 0) cardParams.topMargin = spacing(R.dimen.ui_gap_control);
+            parent.addView(card, cardParams);
             TextView header = (TextView) activity.getLayoutInflater()
-                    .inflate(R.layout.view_atmosphere_disclosure, root, false);
+                    .inflate(R.layout.view_atmosphere_disclosure, card, false);
             header.setText(effect.title);
+            header.setId(effect.headerId);
             header.setTag("atmosphere_header:" + effect.section);
-            root.addView(header);
+            Drawable icon = AppCompatResources.getDrawable(activity, effect.icon);
+            if (icon != null) {
+                icon = icon.mutate();
+                icon.setTint(activity.getColor(R.color.accent_text));
+                int size = spacing(R.dimen.atmosphere_panel_icon);
+                icon.setBounds(0, 0, size, size);
+                header.setCompoundDrawablesRelative(icon, null, null, null);
+            }
+            ViewCompat.setAccessibilityHeading(header, true);
+            card.addView(header);
             headers[index] = header;
             LinearLayout content = PersonUi.column(activity);
+            int padding = spacing(R.dimen.ui_control_padding);
+            content.setPaddingRelative(padding, 0, padding, padding);
             content.setTag("atmosphere_panel:" + effect.section);
-            root.addView(content, new LinearLayout.LayoutParams(-1, -2));
+            card.addView(content, new LinearLayout.LayoutParams(-1, -2));
             contents[index] = content;
             unavailable[index] = PersonUi.text(content, activity.getString(effect == Effect.GAG
                     ? R.string.atmosphere_gag_unavailable : R.string.sub_feature_disabled), false);
@@ -80,10 +107,22 @@ public final class AtmosphereEditorPanels implements AutoCloseable {
         select(open);
     }
 
-    public LinearLayout root() { return root; }
+    private int spacing(int size) { return activity.getResources().getDimensionPixelSize(size); }
 
-    public void refreshAccess() {
+    PopupStormEditorPanel popup() { return popup; }
+
+    void resume() {
+        resumed = true;
         for (Effect effect : Effect.values()) refreshAccess(effect);
+        if (open == Effect.WHISPERS && whispers != null) whispers.resume();
+        if (open == Effect.POPUP && popup != null) popup.resume();
+    }
+
+    void pause() {
+        resumed = false;
+        flushDeferredInputs();
+        if (whispers != null) whispers.stopPreview();
+        if (popup != null) popup.pause();
     }
 
     private void refreshAccess(Effect effect) {
@@ -99,7 +138,7 @@ public final class AtmosphereEditorPanels implements AutoCloseable {
         boolean switched = selected != open;
         if (switched) {
             if (whispers != null) { whispers.flush(); whispers.stopPreview(); }
-            if (popup != null) popup.flush();
+            if (popup != null) popup.pause();
         }
         open = selected;
         refreshAccess(selected);
@@ -108,6 +147,7 @@ public final class AtmosphereEditorPanels implements AutoCloseable {
         }
         show(selected, true);
         if (switched) {
+            if (resumed && selected == Effect.POPUP && popup != null) popup.resume();
             TextView header = headers[selected.ordinal()];
             header.post(() -> {
                 if (open == selected) header.requestRectangleOnScreen(
@@ -126,34 +166,39 @@ public final class AtmosphereEditorPanels implements AutoCloseable {
         LinearLayout content = contents[index];
         View form = LayoutInflater.from(activity).inflate(effect.layout, content, false);
         switch (effect) {
-            case WHISPERS -> whispers = new WhispersEditorPanel(activity, form, restored.getBoolean("whispers_advanced"));
-            case POPUP -> popup = new PopupStormEditorPanel(activity, form, restored.getBoolean("popup_advanced"), images);
+            case WHISPERS -> {
+                whispers = new WhispersEditorPanel(activity, form, false);
+                whispers.showAllSettings();
+            }
+            case POPUP -> {
+                popup = new PopupStormEditorPanel(activity, form, false, images, localRequests);
+                popup.showAllSettings();
+            }
             case GAG -> {
                 try { gag = new GagRulesEditor(activity, form, restored.getBundle("gag")); }
                 catch (Exception unavailable) { return; }
+                gag.showAllSettings();
             }
         }
         content.addView(form);
         forms[index] = form;
     }
 
-    public Bundle saveState() {
+    Bundle saveState() {
         Bundle state = new Bundle(restored);
         state.putString("open", open.section);
-        if (whispers != null) state.putBoolean("whispers_advanced", whispers.advancedExpanded());
-        if (popup != null) state.putBoolean("popup_advanced", popup.advancedExpanded());
         if (gag != null) state.putBundle("gag", gag.saveState());
         return state;
     }
 
-    public boolean flush() {
+    boolean flush() {
         flushDeferredInputs();
         // Keep invalid Gagging input available for correction without delaying valid changes to the other effects.
         if (gag != null) gag.flush();
         return true;
     }
 
-    public void flushDeferredInputs() {
+    void flushDeferredInputs() {
         if (whispers != null) whispers.flush();
         if (popup != null) popup.flush();
     }

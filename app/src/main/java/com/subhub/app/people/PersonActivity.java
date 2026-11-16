@@ -11,8 +11,6 @@ import com.subhub.app.R;
 import com.subhub.app.activity.ActivityPreview;
 import com.subhub.app.appmode.DeviceStartResultRegistry;
 import com.subhub.app.appmode.DeviceStartViewModel;
-import com.subhub.app.atmosphere.AtmosphereEditorPanels;
-import com.subhub.app.capture.CensorImageEditor;
 import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.journal.JournalPreview;
@@ -24,18 +22,12 @@ import com.subhub.app.util.SubHubNavigation;
 
 /** A selected person's contract, statistics and connection are always identity-bound. */
 public final class PersonActivity extends RolePage {
-    private static final String ATMOSPHERE_STATE = "person_atmosphere_state";
-    private static final String ATMOSPHERE_WORKSPACE = "person_atmosphere_workspace";
     private PersonId personId;
     private boolean internal;
     private long renderedInternalRevision = -1;
     private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
     private boolean contractAppsExpanded;
-    private AtmosphereEditorPanels atmosphere;
-    private CensorImageEditor.Picker atmosphereImages;
-    private Bundle atmosphereRestoration;
-    private boolean atmosphereBound;
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
     private final java.util.Map<String, LinearLayout> panels = new java.util.LinkedHashMap<>();
@@ -103,7 +95,6 @@ public final class PersonActivity extends RolePage {
     }
 
     @Override protected void onPause() {
-        if (atmosphere != null && "contracts".equals(section)) atmosphere.flushDeferredInputs();
         demoUiResumed = false;
         if (demoStart != null) demoStart.detach(demoUi);
         updateDemoStartAction();
@@ -128,7 +119,6 @@ public final class PersonActivity extends RolePage {
         if (demoResults != null) demoResults.close();
         stopRemoteChanges();
         super.onDestroy();
-        if (atmosphere != null) atmosphere.close();
     }
 
     private boolean demoAuthorized() {
@@ -355,10 +345,6 @@ public final class PersonActivity extends RolePage {
                 || !FeatureEditorSession.attach(this, "duration", state))) { demoStart.cancel(); finish(); return; }
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
-        if (!personId.isLocal()) {
-            atmosphereImages = new CensorImageEditor.Picker(this, "person-popup-images", state);
-            atmosphereRestoration = state;
-        }
         section = state == null ? getIntent().getStringExtra("person_section")
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
@@ -384,14 +370,8 @@ public final class PersonActivity extends RolePage {
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
-        if (atmosphere != null && "contracts".equals(section)) atmosphere.flushDeferredInputs();
         FeatureEditorSession.saveState(this, state);
         if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
-        if (atmosphereImages != null) atmosphereImages.saveState(state);
-        if (atmosphere != null) {
-            state.putBundle(ATMOSPHERE_STATE, atmosphere.saveState());
-            state.putLong(ATMOSPHERE_WORKSPACE, ControllerPinManager.domWorkspaceRevision());
-        }
         state.putString("person_section", section);
         state.putBoolean("person_contract_apps_expanded", contractAppsExpanded);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
@@ -556,26 +536,18 @@ public final class PersonActivity extends RolePage {
                 });
             } else {
                 title(R.string.role_contract);
-                boolean inlineAtmosphere = canMountAtmosphere(person)
-                        && FeatureEditorSession.attachEmbedded(this, atmosphereRestoration);
                 java.util.List<Object> contract = PersonPresentation.contract(person);
                 java.util.Collections.addAll(contract, internal ? null : People.connectionUi(), internal ? null : People.keyholder(),
                         internal ? null : com.subhub.app.relationships.RelationshipUi.provider(),
-                        ControllerPinManager.domWorkspaceRevision(), inlineAtmosphere);
+                        ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
                     if (!internal && person.id.isLocal()) ProfileViews.allowedFeatures(parent, person);
-                    contracts(parent, person, inlineAtmosphere);
+                    contracts(parent, person);
                 });
-                if (inlineAtmosphere) mountAtmosphere();
-                else if (atmosphere != null && atmosphere.root().getParent() == body) body.removeView(atmosphere.root());
                 if (!internal && !person.id.isLocal()) {
                     reconcile("contractPermissions", java.util.Arrays.asList(person.featureConsent, person.sync.runtime),
                             parent -> ProfileViews.allowedFeatures(parent, person));
-                    LinearLayout permissions = panels.get("contractPermissions");
-                    // The editor may become available after the permissions summary is already visible.
-                    if (inlineAtmosphere && body.indexOfChild(permissions) < body.indexOfChild(atmosphere.root()))
-                        permissions.bringToFront();
                 }
                 // Image bytes can arrive after the descriptor without changing the content signature.
                 for (PersonSnapshot.Section value : person.sections) for (PersonSnapshot.App app : value.apps) {
@@ -607,13 +579,7 @@ public final class PersonActivity extends RolePage {
     private void selectSection(String next) {
         com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
         positions.put(section, scroll.position());
-        if (atmosphere != null && "contracts".equals(section)) atmosphere.flushDeferredInputs();
-        if (internal) {
-            FeatureEditorSession.unbind(this);
-            atmosphereBound = false;
-        } else if ("contracts".equals(section)) {
-            FeatureEditorSession.flushBinding(this);
-        }
+        if (internal) FeatureEditorSession.unbind(this);
         section = next;
         resetPagePosition();
         body.removeAllViews(); panels.clear(); signatures.clear(); renderedSection = null;
@@ -720,37 +686,7 @@ public final class PersonActivity extends RolePage {
         }
     }
 
-    private boolean canMountAtmosphere(PersonSnapshot person) {
-        if (person.id.isLocal() || contractSection(person, "atmosphere") == null
-                || !person.can(PersonSnapshot.Capability.VIEW_CONTRACT)
-                || !person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
-                || person.sync.contract == PersonSnapshot.Freshness.UNKNOWN) return false;
-        if (internal) return FeatureEditorSession.canEdit(this, "atmosphere");
-        ConnectionUi ui = People.connectionUi();
-        return ControllerPinManager.isDomWorkspaceUnlocked() && ui != null
-                && ui.canEditSection(person.id, "atmosphere");
-    }
-
-    private void mountAtmosphere() {
-        if (atmosphere == null) {
-            Bundle restored = atmosphereRestoration;
-            Bundle panelState = restored != null
-                    && restored.getLong(ATMOSPHERE_WORKSPACE, -1) == ControllerPinManager.domWorkspaceRevision()
-                    && (!internal || FeatureEditorSession.restoreInternalWidgets(this, restored))
-                    ? restored.getBundle(ATMOSPHERE_STATE) : null;
-            atmosphere = new AtmosphereEditorPanels(this, body, atmosphereImages, panelState);
-            atmosphereRestoration = null;
-        } else if (atmosphere.root().getParent() == null) {
-            body.addView(atmosphere.root(), atmosphere.root().getLayoutParams());
-        }
-        if (!atmosphereBound) {
-            FeatureEditorSession.bindEmbedded(this, atmosphere.root(), "atmosphere", atmosphere::flush);
-            atmosphereBound = true;
-        }
-        atmosphere.refreshAccess();
-    }
-
-    private void contracts(LinearLayout body, PersonSnapshot person, boolean inlineAtmosphere) {
+    private void contracts(LinearLayout body, PersonSnapshot person) {
         if (!person.can(PersonSnapshot.Capability.VIEW_CONTRACT)) {
             PersonUi.text(body, getString(R.string.role_contract_unavailable), false);
             return;
@@ -778,7 +714,6 @@ public final class PersonActivity extends RolePage {
         LinearLayout features = null;
         for (PersonSnapshot.Section value : person.sections) {
             if ("apps".equals(value.key) || "duration".equals(value.key)) continue;
-            if (inlineAtmosphere && "atmosphere".equals(value.key)) continue;
             if (features == null) {
                 features = PersonUi.card(body);
                 features.setTag("person_contract_features");
@@ -830,14 +765,16 @@ public final class PersonActivity extends RolePage {
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
         boolean known = person.sync.contract != PersonSnapshot.Freshness.UNKNOWN;
-        LinearLayout row = PersonUi.row(parent, icon, value.title,
-                atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
-                        : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                editable && allowed && (!atmosphere || (known && person.id.isLocal()))
-                        ? () -> editSection(person, value.key) : null);
+        boolean canOpen = editable && allowed && (!atmosphere || known);
+        boolean compactAtmosphere = atmosphere && canOpen && !person.id.isLocal();
+        CharSequence summary = atmosphere
+                ? compactAtmosphere ? "" : known ? value.summary : getString(R.string.role_unknown_data)
+                : allowed ? value.summary : getString(R.string.sub_feature_disabled);
+        LinearLayout row = PersonUi.row(parent, icon, value.title, summary,
+                canOpen ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
-        if (atmosphere && known && !internal) {
+        if (atmosphere && known && !internal && !compactAtmosphere) {
             for (String block : value.details.split("\\n\\s*\\n")) {
                 android.text.SpannableString copy = new android.text.SpannableString(block);
                 int firstLine = block.indexOf('\n');
