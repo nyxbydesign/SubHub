@@ -1,7 +1,10 @@
 package com.subhub.app.atmosphere;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.app.UiAutomation;
@@ -13,6 +16,8 @@ import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -26,8 +31,96 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class GagKeyAlternativesAndroidTest {
+    @Test public void previewReusesItsPopupAndFollowsTheCurrentAttachedKey() throws Exception {
+        GagKeyPreview preview = new GagKeyPreview();
+        var popupField = GagKeyPreview.class.getDeclaredField("popup");
+        popupField.setAccessible(true);
+        AtomicReference<Button> first = new AtomicReference<>();
+        AtomicReference<Button> second = new AtomicReference<>();
+        try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
+            host.onActivity(activity -> {
+                LinearLayout page = new LinearLayout(activity);
+                page.setGravity(android.view.Gravity.BOTTOM | android.view.Gravity.RIGHT);
+                activity.setContentView(page);
+                first.set(new Button(activity));
+                second.set(new Button(activity));
+                first.get().setText("a");
+                second.get().setText("b");
+                page.addView(first.get(), new LinearLayout.LayoutParams(70, 64));
+                page.addView(second.get(), new LinearLayout.LayoutParams(70, 64));
+            });
+            var instrumentation = InstrumentationRegistry.getInstrumentation();
+            instrumentation.waitForIdleSync();
+            host.onActivity(activity -> {
+                preview.show(first.get());
+                assertTrue(popup(preview, popupField).isShowing());
+            });
+            instrumentation.waitForIdleSync();
+            host.onActivity(activity -> {
+                PopupWindow cached = popup(preview, popupField);
+                TextView label = (TextView) cached.getContentView();
+                var background = label.getBackground();
+                assertFalse(cached.isTouchable());
+                assertFalse(cached.isFocusable());
+                assertAbove(first.get(), label);
+                preview.dismiss(first.get());
+                assertFalse(cached.isShowing());
+                assertNull(label.getParent());
+                assertEquals(0, label.length());
+                for (int i = 0; i < 24; i++) {
+                    preview.show(first.get());
+                    assertSame(cached, popup(preview, popupField));
+                    assertSame(label, cached.getContentView());
+                    assertSame(background, label.getBackground());
+                    assertTrue(cached.isShowing());
+                    preview.dismiss(first.get());
+                }
+                preview.show(first.get());
+                var attachedWindow = label.getRootView();
+                preview.show(second.get());
+                assertSame(attachedWindow, label.getRootView());
+                preview.dismiss(first.get());
+                assertTrue("Releasing the previous key leaves the current preview visible", cached.isShowing());
+                assertEquals("b", label.getText().toString());
+            });
+            instrumentation.waitForIdleSync();
+            host.onActivity(activity -> {
+                PopupWindow cached = popup(preview, popupField);
+                TextView label = (TextView) cached.getContentView();
+                assertAbove(second.get(), label);
+                ((LinearLayout) second.get().getParent()).removeView(second.get());
+                assertFalse("Detaching the owner dismisses its preview", cached.isShowing());
+                assertNull(label.getParent());
+                assertEquals(0, label.length());
+            });
+        }
+    }
+
+    private static PopupWindow popup(GagKeyPreview preview, java.lang.reflect.Field field) {
+        try {
+            return (PopupWindow) field.get(preview);
+        } catch (IllegalAccessException inaccessible) {
+            throw new AssertionError(inaccessible);
+        }
+    }
+
+    private static void assertAbove(Button key, TextView label) {
+        int[] keyPosition = new int[2];
+        int[] popupPosition = new int[2];
+        Rect visible = new Rect();
+        key.getLocationOnScreen(keyPosition);
+        label.getLocationOnScreen(popupPosition);
+        key.getWindowVisibleDisplayFrame(visible);
+        assertTrue(label.getWidth() > 0 && label.getHeight() > 0);
+        assertEquals(keyPosition[1], popupPosition[1] + label.getHeight());
+        int centeredLeft = keyPosition[0] + (key.getWidth() - label.getWidth()) / 2;
+        assertEquals(Math.max(visible.left, Math.min(centeredLeft, visible.right - label.getWidth())),
+                popupPosition[0]);
+    }
+
     @Test public void tapDefaultsAndNineHoldOptionsRemainReachable() {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         UiAutomation automation = instrumentation.getUiAutomation();
