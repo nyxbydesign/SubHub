@@ -85,6 +85,7 @@ public final class RemoteFeature {
     }
     private final Map<String,Long> nextAttempt=new ConcurrentHashMap<>();
     private final Map<String,Integer> consecutiveFailures=new ConcurrentHashMap<>();
+    private final Map<String,Integer> catchUpTurns=new ConcurrentHashMap<>();
     private final Object attemptClockLock=new Object();
     private long dirtyGeneration, retryResetGeneration;
     private final Map<PeerTransport.Connection,String> connections=new ConcurrentHashMap<>();
@@ -712,7 +713,7 @@ public final class RemoteFeature {
         for(Map.Entry<PeerTransport.Connection,String> entry:connections.entrySet())if(key(peer).equals(entry.getValue()))timer.execute(()->close(entry.getKey()));
         changed();
     }
-    private void invalidateAttempts(){synchronized(attemptClockLock){dirtyGeneration++;retryResetGeneration=dirtyGeneration;nextAttempt.clear();consecutiveFailures.clear();}}
+    private void invalidateAttempts(){synchronized(attemptClockLock){dirtyGeneration++;retryResetGeneration=dirtyGeneration;nextAttempt.clear();consecutiveFailures.clear();catchUpTurns.clear();}}
     private boolean backgroundConnection(){return !foreground && backgroundWindows.get()==0 && hasConnectedService();}
     private void invalidateChangedAttempts(){invalidateChangedAttempts(false);}
     private void invalidateChangedAttempts(boolean hiding){
@@ -725,20 +726,29 @@ public final class RemoteFeature {
         }
     }
     private long attemptGeneration(){synchronized(attemptClockLock){return dirtyGeneration;}}
-    private void finishAttempt(String key,long generation,boolean success,boolean pending){
-        finishAttempt(key,generation,success,pending,null);
-    }
-    private void finishAttempt(String key,long generation,boolean success,boolean pending,RemoteProtocol.Role crossedRole){
+    private void finishAttempt(String key,long generation,boolean success,boolean pending,
+            RemoteProtocol.Role continuationRole,RemoteProtocol.Role crossedRole){
         synchronized(attemptClockLock){
-            // A mutation during this exchange still needs a follow-up, even when its old snapshot completed.
-            if(generation!=dirtyGeneration && (success || pending || !backgroundConnection() || generation<retryResetGeneration)){
+            boolean continueSync = success && !pending && continuationRole != null;
+            if (!continueSync) catchUpTurns.remove(key);
+            // Preserve immediate wakes for fresh local mutations. A known catch-up still observes
+            // its per-peer budget, even when receiving data produced another local sync wake.
+            if(!continueSync && generation!=dirtyGeneration
+                    && (success || pending || !backgroundConnection() || generation<retryResetGeneration)){
                 if(success)consecutiveFailures.remove(key);nextAttempt.remove(key);return;
             }
             int failures=success?0:Math.min(6,consecutiveFailures.getOrDefault(key,0)+1);
             if(success)consecutiveFailures.remove(key);else consecutiveFailures.put(key,failures);
-            long delay=crossedRole!=null && foreground && backgroundWindows.get()==0 && !success && !pending
-                    ? RemoteSyncCadence.crossedDialDelay(crossedRole, failures)
-                    : RemoteSyncCadence.delay(backgroundConnection(),pending,success,failures);
+            long delay;
+            if (continueSync) {
+                int turns = catchUpTurns.getOrDefault(key, 0);
+                delay = RemoteSyncCadence.continuationDelay(backgroundConnection(), continuationRole, turns);
+                catchUpTurns.put(key, turns == RemoteSyncCadence.FAST_CONTINUATIONS ? 0 : turns + 1);
+            } else if(crossedRole!=null && foreground && backgroundWindows.get()==0 && !success && !pending) {
+                delay = RemoteSyncCadence.crossedDialDelay(crossedRole, failures);
+            } else {
+                delay = RemoteSyncCadence.delay(backgroundConnection(),pending,success,failures);
+            }
             if(!success)delay+=ThreadLocalRandom.current().nextInt(1000);
             nextAttempt.put(key,SystemClock.elapsedRealtime()+delay);
         }
@@ -896,6 +906,7 @@ public final class RemoteFeature {
     private void untrack(PeerTransport.Connection connection){connections.remove(connection);connectionDeadlines.remove(connection);pairingConnections.remove(connection);}
     private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner,long generation,boolean foregroundDial) {
         String key=key(peer);boolean success=false;
+        RemoteProtocol.Role continuationRole=null;
         OutboundHello hello=null;
         try (NetworkWake wake=hasConnectedService()?new NetworkWake(context,deadline):null) {
             RemoteStore.Peer requested=peer;
@@ -916,7 +927,8 @@ public final class RemoteFeature {
                 if(peer.state==RemoteStore.State.PENDING)success=pairing(active).resume(selected,peer);
                 else if(peer.state==RemoteStore.State.REVOKED){session(active).sendRevocation(selected,peer,deadline);success=true;}
                 else {
-                    session(active).outgoing(selected,peer,deadline,hello==null?null:hello::acknowledged);
+                    if (session(active).outgoing(selected,peer,deadline,hello==null?null:hello::acknowledged))
+                        continuationRole=peer.localRole;
                     success=true;
                 }
             } finally{untrack(connection);}
@@ -931,7 +943,7 @@ public final class RemoteFeature {
                 if (hello.finish()) crossedRole=hello.role;
                 outboundHellos.remove(key,hello);
             }
-            finishAttempt(key,generation,success,peer.state!=RemoteStore.State.ACTIVE,crossedRole);
+            finishAttempt(key,generation,success,peer.state!=RemoteStore.State.ACTIVE,continuationRole,crossedRole);
         }
         return success;
     }
@@ -1233,6 +1245,7 @@ public final class RemoteFeature {
     }
     private void incoming(PeerTransport active,PeerTransport.Connection connection,JSONObject first,long deadline) {
         String reservation=null;long attempt=attemptGeneration();boolean exchanged=false;
+        RemoteProtocol.Role continuationRole=null;
         try(PeerTransport.Connection selected=connection) {
             store.authorityAccess(()->null);
             String type=first.optString("type");
@@ -1263,15 +1276,14 @@ public final class RemoteFeature {
             connections.put(selected,reservation);
             try(NetworkWake wake=hasConnectedService()?new NetworkWake(context,deadline):null){
                 if("revoke".equals(type))session(active).receiveRevocation(selected,first,deadline);
-                else session(active).incoming(selected,first,deadline);
+                else if (session(active).incoming(selected,first,deadline)) continuationRole=peer.localRole;
                 store.putMetadata(peer.identity,peer.generation,"connection_error","");
                 exchanged=peer.state==RemoteStore.State.ACTIVE && !"revoke".equals(type);
             }
         }catch(Exception unavailable){logSessionFailure("incoming",unavailable);}
         finally{untrack(connection);if(reservation!=null){
-                // A verified duplex exchange already carried both directions. Do not immediately dial
-                // the same peer again unless newer local data arrived while that exchange was running.
-                if(exchanged)finishAttempt(reservation,attempt,true,false);
+                // Either side may continue a verified duplex exchange that left eligible work.
+                if(exchanged)finishAttempt(reservation,attempt,true,false,continuationRole,null);
                 busy.remove(reservation);
             }synchronizeBackground();scheduleConnectedSync(0);
             suspendIfIdle();}
@@ -1319,9 +1331,9 @@ public final class RemoteFeature {
                             com.subhub.app.journal.JournalRuntime.scope(peer));
                 }
             }
-            @Override public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+            @Override public boolean journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);
-                com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
+                return com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
             }
             @Override public int profileVersion() { return 1; }
             @Override public int profileDetailsVersion() { return 1; }
@@ -1351,10 +1363,11 @@ public final class RemoteFeature {
                 ExtraTimePeer.exchange(context, store, active.localIdentity(), connection, peer, deadline);
             }
             @Override public int taskCancelVersion() { return 1; }
-            @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+            @Override public boolean tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);
-                com.subhub.app.tasks.TaskPeer.exchange(context, connection, peer, deadline);
+                return com.subhub.app.tasks.TaskPeer.exchange(context, connection, peer, deadline);
             }
+            @Override public boolean unpublishedActivity(RemoteStore.Peer peer) { return activity.hasPendingPublication(peer); }
             @Override public String displayName(RemoteStore.Peer peer) {
                 return withActivePeer(peer,()->com.subhub.app.people.ProfileNames.get(context,peer.localRole==RemoteProtocol.Role.DOM));
             }
@@ -1451,11 +1464,15 @@ public final class RemoteFeature {
                         if(observed==null){observed=new long[]{peer.lastSyncedAt,generation};observedSync.put(key,observed);}
                         // An already-running foreground/inbound owner can satisfy this window. A completed
                         // receipt must advance this exact peer/generation, with no intervening local mutation.
-                        if(!busy.contains(key)&&peer.lastSyncedAt>observed[0]&&observed[1]==generation){
-                            results.put(key,true);completedGeneration.put(key,generation);
+                        if (!busy.contains(key)) {
+                            if (peer.lastSyncedAt>observed[0] && observed[1]==generation) {
+                                results.put(key,true);completedGeneration.put(key,generation);
+                            }
+                            observed[0]=peer.lastSyncedAt;observed[1]=generation;
                         }
-                        // A successful snapshot needs no repeated payload in this window unless local data changed.
-                        if(Boolean.TRUE.equals(results.get(key))&&Objects.equals(completedGeneration.get(key),generation))continue;
+                        // A successful snapshot can still leave a proven continuation in this window.
+                        if(Boolean.TRUE.equals(results.get(key))&&Objects.equals(completedGeneration.get(key),generation)
+                                &&!catchUpTurns.containsKey(key))continue;
                         if(now<nextAttempt.getOrDefault(key,0L))continue;
                         if(!busy.add(key)){results.putIfAbsent(key,false);continue;}
                         Future<Boolean> attempt=schedulePeer(peer,deadline);
@@ -1475,6 +1492,7 @@ public final class RemoteFeature {
             // Reconcile an external owner that completed after the last periodic inventory refresh.
             for(RemoteStore.Peer peer:store.peers(true)){
                 String key=key(peer);long[] observed=observedSync.get(key);
+                if(peer.state==RemoteStore.State.ACTIVE&&catchUpTurns.containsKey(key))return false;
                 if(observed!=null&&!busy.contains(key)&&peer.lastSyncedAt>observed[0]&&observed[1]==finalGeneration){
                     results.put(key,true);completedGeneration.put(key,finalGeneration);
                 }

@@ -4,7 +4,14 @@ package com.subhub.app.remote;
 final class RemoteSyncCadence {
     static final long BACKGROUND_IDLE_MILLIS = 15 * 60_000L;
     static final long BACKGROUND_RETRY_MAX_MILLIS = 15 * 60_000L;
+    static final int FAST_CONTINUATIONS = 4;
     private RemoteSyncCadence() { }
+
+    static long continuationDelay(boolean backgroundConnection, RemoteProtocol.Role role, int fastTurns) {
+        long delay = fastTurns < FAST_CONTINUATIONS ? 2_000L : backgroundConnection ? 30_000L : 15_000L;
+        // If both sides have work, reserve the earlier slot for Dom, as on a crossed foreground retry.
+        return role == RemoteProtocol.Role.SUB ? delay + 3_500L : delay;
+    }
 
     static long delay(boolean backgroundConnection, boolean urgent, boolean success, int failures) {
         if (success) return urgent ? 2_000L : backgroundConnection ? BACKGROUND_IDLE_MILLIS : 30_000L;

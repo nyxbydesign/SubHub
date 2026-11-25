@@ -13,6 +13,7 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
@@ -1253,8 +1254,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    public synchronized void acknowledge(String identity, RemoteProtocol.Ack ack) {
+    public synchronized boolean acknowledge(String identity, RemoteProtocol.Ack ack) {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        boolean advanced;
         try {
             active(db,identity,ack.generation);
             try (Cursor c = db.rawQuery("SELECT offered,digest,acked FROM outgoing WHERE peer=? AND generation=? AND stream=?",
@@ -1262,20 +1264,24 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 if (!c.moveToFirst() || ack.through != c.getLong(0) || !ack.digest.equals(c.getString(1))) {
                     throw new SecurityException("Unmatched acknowledgement");
                 }
-                if (ack.through < c.getLong(2)) throw new SecurityException("Regressing acknowledgement");
+                long before = c.getLong(2);
+                if (ack.through < before) throw new SecurityException("Regressing acknowledgement");
+                advanced = ack.through > before;
             }
             db.execSQL("UPDATE outgoing SET acked=? WHERE peer=? AND generation=? AND stream=?",new Object[]{ack.through,identity,ack.generation,ack.stream.name()});
             db.delete("outbox","peer=? AND generation=? AND stream=? AND seq<=?",new String[]{identity,ack.generation,ack.stream.name(),Long.toString(ack.through)});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        return advanced;
     }
 
     static final class BatchReceipt {
         final RemoteProtocol.Ack ack;
-        final boolean acceptedData;
-        BatchReceipt(RemoteProtocol.Ack ack, boolean acceptedData) {
+        final boolean acceptedData, advanced;
+        BatchReceipt(RemoteProtocol.Ack ack, boolean acceptedData, boolean advanced) {
             this.ack = ack;
             this.acceptedData = acceptedData;
+            this.advanced = advanced;
         }
     }
 
@@ -1286,7 +1292,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     synchronized BatchReceipt receiveBatch(String identity, RemoteProtocol.Batch batch) {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         RemoteProtocol.Ack ack;Peer receivedPeer=null;
-        boolean acceptedData = false;
+        boolean acceptedData = false, advanced;
         try {
             Peer peer = active(db,identity,batch.generation);
             if (peer.remoteRole() != batch.stream.writer) throw new SecurityException("Peer cannot write this stream");
@@ -1296,7 +1302,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 if (c.moveToFirst()) current = c.getLong(0);
             }
             if (batch.after > current) throw new IllegalStateException("Sync checkpoint gap");
-            if (batch.through > current) {
+            advanced = batch.through > current;
+            if (advanced) {
                 for (RemoteProtocol.Change change : batch.changes) {
                     if (change.sequence > current) {
                         boolean retired=batch.stream==RemoteProtocol.Stream.CONTRACTS
@@ -1314,7 +1321,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         if(receivedPeer!=null)activityReceived.accept(receivedPeer);
-        return new BatchReceipt(ack, acceptedData);
+        return new BatchReceipt(ack, acceptedData, advanced);
     }
 
     /** An old sender can offer the same state under a new sequence. Its receipt still advances. */
@@ -1403,7 +1410,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
     synchronized void confirmHeads(String identity,String generation,JSONObject heads) throws JSONException {
         confirmHeads(identity,generation,heads,false);
     }
-    synchronized void confirmHeads(String identity,String generation,JSONObject heads,boolean activity) throws JSONException {
+    synchronized EnumSet<RemoteProtocol.Stream> confirmHeads(String identity,String generation,JSONObject heads,boolean activity) throws JSONException {
+        EnumSet<RemoteProtocol.Stream> pending = EnumSet.noneOf(RemoteProtocol.Stream.class);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             Peer peer=active(db,identity,generation);int expected=0;long observed=System.currentTimeMillis();
@@ -1417,11 +1425,13 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 }
                 if(head<received || head<0)throw new SecurityException("Regressing source checkpoint");
                 if(head==received)putMetadata(identity,generation,"confirmed_"+stream.name(),Long.toString(observed));
+                else if(stream!=RemoteProtocol.Stream.CONTRACTS)pending.add(stream);
             }
             if(heads.length()!=expected)throw new JSONException("Unsupported source streams");
             putMetadata(identity,generation,"last_contact",Long.toString(observed));
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
+        return pending;
     }
 
     /** Retired library payloads never consume configuration revisions or active artwork. */

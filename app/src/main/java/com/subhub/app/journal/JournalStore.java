@@ -178,6 +178,14 @@ public final class JournalStore extends SQLiteOpenHelper {
                 new String[]{relationship}, null, null, null)) { return c.moveToFirst() ? c.getLong(0) : 0; }
     }
 
+    synchronized boolean hasOutgoingAfter(String relationship, long through) {
+        scope(relationship);
+        try (Cursor row = getReadableDatabase().rawQuery("SELECT 1 FROM outgoing WHERE scope=? AND seq>? LIMIT 1",
+                new String[]{relationship, Long.toString(through)})) {
+            return row.moveToFirst();
+        }
+    }
+
     public synchronized JSONArray outgoing(String relationship, long after) throws JSONException {
         scope(relationship);
         if (after < 0 || after > cursor(relationship, "offered")) throw new SecurityException("Unmatched journal cursor");

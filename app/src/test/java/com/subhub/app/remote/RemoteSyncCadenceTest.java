@@ -29,6 +29,15 @@ public final class RemoteSyncCadenceTest {
         assertEquals(900_000,RemoteSyncCadence.delay(true,false,true,6));
     }
 
+    @Test public void durableCatchUpUsesFourFastTurnsThenYieldsToOtherWork() {
+        for (int turn = 0; turn < RemoteSyncCadence.FAST_CONTINUATIONS; turn++) {
+            assertEquals(2_000, RemoteSyncCadence.continuationDelay(true, RemoteProtocol.Role.DOM, turn));
+            assertEquals(5_500, RemoteSyncCadence.continuationDelay(false, RemoteProtocol.Role.SUB, turn));
+        }
+        assertEquals(30_000, RemoteSyncCadence.continuationDelay(true, RemoteProtocol.Role.DOM, 4));
+        assertEquals(18_500, RemoteSyncCadence.continuationDelay(false, RemoteProtocol.Role.SUB, 4));
+    }
+
     @Test public void crossedDialRetryKeepsTheFirstSlotAtTheNormalFloorAndSeparatesPolling() {
         long dom = RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.DOM, 1);
         long sub = RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.SUB, 1);

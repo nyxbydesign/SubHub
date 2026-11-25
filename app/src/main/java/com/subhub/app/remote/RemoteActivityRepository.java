@@ -237,6 +237,17 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         return published;
     }
 
+    boolean hasPendingPublication(RemoteStore.Peer peer) {
+        synchronized (store) {
+            if (!activeSource(peer)) return false;
+            try (Cursor row = store.getReadableDatabase().rawQuery(
+                    "SELECT 1 FROM activity_source WHERE peer=? AND generation=? AND published=0 LIMIT 1",
+                    new String[]{peer.identity, peer.generation})) {
+                return row.moveToFirst();
+            }
+        }
+    }
+
     void prepare(RemoteStore.Peer peer) throws Exception {
         if (peer.localRole != RemoteProtocol.Role.SUB) return;
         payments();

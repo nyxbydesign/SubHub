@@ -22,10 +22,10 @@ public final class TaskPeer {
         this.connection = connection; this.deadline = deadline;
         if (!peer.identity.equals(connection.authenticatedPeerIdentity())) throw new SecurityException("Task peer mismatch");
     }
-    public static void exchange(Context context, PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
-        new TaskPeer(context, connection, peer, deadline).exchange();
+    public static boolean exchange(Context context, PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+        return new TaskPeer(context, connection, peer, deadline).exchange();
     }
-    private void exchange() throws Exception {
+    private boolean exchange() throws Exception {
         runtime.sweep(target);
         boolean localAllowed = runtime.enabled(target) && (!runtime.store.load(target.scope).hasCancellations()
                 || "1".equals(runtime.authorityLock().metadata(target.peer.identity, target.peer.generation, "tasks_cancel_version", "0")));
@@ -62,13 +62,15 @@ public final class TaskPeer {
                 runtime.store.changed();
         }
         boolean enabled = remoteAllowed && localAllowed && runtime.enabled(target);
-        if (!enabled) return; // Neither side reads, writes or acknowledges the private journal while disabled.
+        if (!enabled) return false; // Neither side reads, writes or acknowledges the private journal while disabled.
         long remoteThrough = RemoteProtocol.integer(remote, "received");
-        if (dom) { push(remoteThrough); pull(); }
-        else { pull(); push(remoteThrough); }
+        boolean outgoing, incoming;
+        if (dom) { outgoing = push(remoteThrough); incoming = pull(); }
+        else { incoming = pull(); outgoing = push(remoteThrough); }
         synchronized (SubFeaturePolicy.LOCK) { check(); runtime.effects(target); }
+        return outgoing || incoming;
     }
-    private void push(long through) throws Exception {
+    private boolean push(long through) throws Exception {
         JSONArray actions;
         synchronized (SubFeaturePolicy.LOCK) { check(); actions = runtime.store.outgoing(target.scope, through); }
         send(frame("tasks_actions").put("actions", actions));
@@ -80,6 +82,7 @@ public final class TaskPeer {
         if (wants.length() > MAX_WANTS) throw new IOException("Too many task attachments requested");
         Map<String, TaskAttachment> references = TaskMedia.published(runtime.store.load(target.scope), target.peer.localRole == RemoteProtocol.Role.DOM);
         Set<String> selected = new HashSet<>(); int chunks = 0;
+        boolean assetsRemaining = false;
         for (int i = 0; i < wants.length(); i++) {
             JSONObject request = wants.getJSONObject(i);
             String hash = TaskJson.text(request, "hash", 64);
@@ -98,16 +101,24 @@ public final class TaskPeer {
                     throw new SecurityException("Unmatched task attachment receipt");
                 offset += bytes.length; chunks++;
             }
+            assetsRemaining |= offset < reference.length;
         }
         send(frame("tasks_assets_complete")); read("tasks_phase_complete");
+        synchronized (SubFeaturePolicy.LOCK) {
+            check();
+            return (expected > through && runtime.store.hasOutgoingAfter(target.scope, expected))
+                    || (chunks > 0 && assetsRemaining);
+        }
     }
-    private void pull() throws Exception {
-        JSONObject incoming = read("tasks_actions"); long through;
+    private boolean pull() throws Exception {
+        JSONArray actions = read("tasks_actions").getJSONArray("actions");
+        long before, through;
         Map<String, TaskAttachment> needs = new LinkedHashMap<>(); JSONArray wants = new JSONArray();
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (runtime.authorityLock()) {
                 check();
-                through = runtime.store.receive(target.scope, incoming.getJSONArray("actions"), target.peer.localRole == RemoteProtocol.Role.SUB,
+                before = runtime.store.received(target.scope);
+                through = runtime.store.receive(target.scope, actions, target.peer.localRole == RemoteProtocol.Role.SUB,
                         target.peer.localRole == RemoteProtocol.Role.DOM);
                 RemoteAssets assets = runtime.assets(target.scope);
                 for (TaskAttachment attachment : TaskMedia.published(runtime.store.load(target.scope), target.peer.localRole == RemoteProtocol.Role.SUB).values()) {
@@ -127,7 +138,7 @@ public final class TaskPeer {
             }
         }
         send(frame("tasks_receipt").put("received", through).put("assets", wants));
-        int chunks = 0;
+        int chunks = 0, completed = 0;
         while (true) {
             JSONObject message = read(null);
             if ("tasks_assets_complete".equals(message.getString("type"))) break;
@@ -145,6 +156,7 @@ public final class TaskPeer {
                     offset = assets.append(hash, actual, bytes);
                     if (offset == attachment.length) {
                         TaskMedia.requireHeader(assets.finish(hash), attachment.mime);
+                        completed++;
                         runtime.store.changed();
                     }
                 }
@@ -152,6 +164,9 @@ public final class TaskPeer {
             send(frame("tasks_chunk_receipt").put("hash", hash).put("offset", offset));
         }
         send(frame("tasks_phase_complete"));
+        // A full legacy page warrants one probe. An empty or replayed page cannot extend the burst.
+        return (through > before && actions.length() == TaskStore.PAGE_SIZE)
+                || (chunks > 0 && (completed < needs.size() || needs.size() == MAX_WANTS));
     }
     private void check() {
         runtime.requireActive(target);

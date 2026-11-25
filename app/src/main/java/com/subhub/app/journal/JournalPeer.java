@@ -30,12 +30,12 @@ public final class JournalPeer {
         scope = JournalRuntime.scope(peer);
     }
 
-    public static void exchange(JournalRuntime runtime, PeerTransport.Connection connection,
+    public static boolean exchange(JournalRuntime runtime, PeerTransport.Connection connection,
             RemoteStore.Peer peer, long deadline) throws Exception {
-        new JournalPeer(runtime, connection, peer, deadline).exchange();
+        return new JournalPeer(runtime, connection, peer, deadline).exchange();
     }
 
-    private void exchange() throws Exception {
+    private boolean exchange() throws Exception {
         boolean dom = peer.localRole == RemoteProtocol.Role.DOM;
         synchronized (runtime.authority) {
             check();
@@ -46,11 +46,13 @@ public final class JournalPeer {
         if (dom) { send(status); remote = read("journal_status"); }
         else { remote = read("journal_status"); send(status); }
         long after = RemoteProtocol.integer(remote, "received");
-        if (dom) { push(after); pull(); }
-        else { pull(); push(after); }
+        boolean outgoing, incoming;
+        if (dom) { outgoing = push(after); incoming = pull(); }
+        else { incoming = pull(); outgoing = push(after); }
+        return outgoing || incoming;
     }
 
-    private void push(long after) throws Exception {
+    private boolean push(long after) throws Exception {
         JSONArray changes;
         synchronized (runtime.authority) {
             check();
@@ -85,6 +87,10 @@ public final class JournalPeer {
             }
         }
         send(frame("journal_assets_end"));
+        synchronized (runtime.authority) {
+            check();
+            return through > after && runtime.entries.hasOutgoingAfter(scope, through);
+        }
     }
 
     static JSONArray projectedChanges(JSONArray rows, boolean titles) throws Exception {
@@ -96,12 +102,14 @@ public final class JournalPeer {
         return copy;
     }
 
-    private void pull() throws Exception {
-        JSONObject page = read("journal_changes");
+    private boolean pull() throws Exception {
+        JSONArray changes = read("journal_changes").getJSONArray("changes");
         JSONArray wants = new JSONArray(); Map<String, JournalAttachment> needed = new LinkedHashMap<>();
-        long through;
+        long before, through;
         synchronized (runtime.authority) {
-            check(); through = runtime.entries.receive(scope, page.getJSONArray("changes"));
+            check();
+            before = runtime.entries.received(scope);
+            through = runtime.entries.receive(scope, changes);
             RemoteAssets assets = runtime.assets(peer);
             for (int offset = 0; offset < JournalStore.MAX_ENTRIES && needed.size() < MAX_WANTS; offset += JournalStore.PAGE_SIZE) {
                 List<JournalEntry> entries = runtime.entries.shared(scope, offset);
@@ -118,7 +126,7 @@ public final class JournalPeer {
                     .put("length", file.length).put("offset", assets.offset(file.hash)));
             send(frame("journal_receipt").put("received", through).put("assets", wants));
         }
-        int chunks = 0;
+        int chunks = 0, completed = 0;
         while (true) {
             JSONObject message = read(null);
             if ("journal_assets_end".equals(message.getString("type"))) break;
@@ -133,10 +141,16 @@ public final class JournalPeer {
                 long offset = RemoteProtocol.integer(message, "offset");
                 if (offset != assets.offset(hash)) throw new SecurityException("Journal media offset mismatch");
                 long complete = assets.append(hash, offset, bytes);
-                if (complete == needed.get(hash).length) assets.finish(hash);
+                if (complete == needed.get(hash).length) {
+                    assets.finish(hash);
+                    completed++;
+                }
             }
         }
         synchronized (runtime.authority) { check(); runtime.pruneRemote(peer); }
+        // The legacy sender offers at most one page. A replay or empty page ends the probe.
+        return (through > before && changes.length() == JournalStore.SYNC_PAGE)
+                || (chunks > 0 && (completed < needed.size() || needed.size() == MAX_WANTS));
     }
 
     private JSONObject frame(String type) throws Exception {

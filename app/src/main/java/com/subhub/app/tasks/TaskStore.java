@@ -210,6 +210,14 @@ public final class TaskStore extends SQLiteOpenHelper {
             return rows;
         }
     }
+    boolean hasOutgoingAfter(String scope, long through) {
+        synchronized (lock) {
+            try (Cursor row = getReadableDatabase().rawQuery("SELECT 1 FROM journal WHERE scope=? AND seq>? LIMIT 1",
+                    new String[]{scope, Long.toString(through)})) {
+                return row.moveToFirst();
+            }
+        }
+    }
     public long received(String scope) { synchronized (lock) { return cursor(getReadableDatabase(), scope, "received"); } }
     private static long cursor(SQLiteDatabase db, String scope, String field) {
         try (Cursor c = db.rawQuery("SELECT " + field + " FROM cursors WHERE scope=?", new String[]{scope})) {

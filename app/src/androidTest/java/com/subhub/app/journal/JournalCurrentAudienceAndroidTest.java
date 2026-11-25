@@ -91,7 +91,7 @@ public final class JournalCurrentAudienceAndroidTest {
         RemoteAssets assets=new RemoteAssets(new File(root,runtime==dr?"empty-dom":"empty-sub"));
         return new RemoteSession.Hooks(){
             public int journalVersion(){return 1;}
-            public void journal(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception {JournalPeer.exchange(runtime,connection,peer,deadline);}
+            public boolean journal(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception {return JournalPeer.exchange(runtime,connection,peer,deadline);}
             public void prepare(RemoteStore.Peer peer){}
             public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){}
             public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer){return List.of();}

@@ -104,10 +104,11 @@ public class JournalPeerAndroidTest {
                 runtime.requireActive(peer);
                 runtime.entries.republishTitles(peer.localRole == RemoteProtocol.Role.DOM, JournalRuntime.scope(peer));
             }
-            public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+            public boolean journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 calls.incrementAndGet();
-                if (strictLegacy) legacySubJournal(connection, peer);
-                else JournalPeer.exchange(runtime, connection, peer, deadline);
+                if (!strictLegacy) return JournalPeer.exchange(runtime, connection, peer, deadline);
+                legacySubJournal(connection, peer);
+                return false;
             }
             public void prepare(RemoteStore.Peer peer) { }
             public void received(RemoteStore.Peer peer, RemoteProtocol.Stream stream) { }
@@ -116,22 +117,22 @@ public class JournalPeerAndroidTest {
             public void complete(RemoteStore.Peer peer) { completions.incrementAndGet(); }
         };
     }
-    private void session(boolean supported) throws Exception {
-        session(supported, true, false);
+    private boolean[] session(boolean supported) throws Exception {
+        return session(supported, true, false);
     }
-    private void session(boolean supported, boolean titles, boolean strictLegacy) throws Exception {
+    private boolean[] session(boolean supported, boolean titles, boolean strictLegacy) throws Exception {
         RemoteSession.Hooks dh = hooks(dr, true), sh = hooks(sr, supported, titles, strictLegacy);
-        Future<?> receiver = serving.submit(() -> {
+        Future<Boolean> receiver = serving.submit(() -> {
             try (PeerTransport.Connection connection = st.accept(10_000)) {
                 JSONObject hello = RemoteProtocol.read(connection.input());
                 assertEquals(dt.localIdentity(), connection.authenticatedPeerIdentity());
-                new RemoteSession(sub, st, sh).incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
+                return new RemoteSession(sub, st, sh).incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
             } catch (Exception failure) { throw new RuntimeException(failure); }
         });
         try (PeerTransport.Connection connection = dt.connect(st.localIdentity(), st.inviteRoute(), 10_000)) {
-            new RemoteSession(dom, dt, dh).outgoing(connection, dp, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
+            boolean outbound = new RemoteSession(dom, dt, dh).outgoing(connection, dp, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
+            return new boolean[]{outbound, receiver.get(35, TimeUnit.SECONDS)};
         }
-        receiver.get(35, TimeUnit.SECONDS);
     }
 
     private JSONObject legacyFrame(String type, RemoteStore.Peer peer) throws Exception {
@@ -205,11 +206,24 @@ public class JournalPeerAndroidTest {
         assertEquals("1", dom.metadata(dp.identity, generation, "journal_version", ""));
         assertEquals(0, sub.mirror(sp.identity, generation, RemoteProtocol.Stream.EVENTS).size());
     }
+    @Test public void journalContinuesAnIncomingLegacyPageAndStopsAtTheDurableHead() throws Exception {
+        for (int i = 0; i < JournalStore.SYNC_PAGE + 1; i++)
+            sr.entries.save(false, entry("Shared Sub entry " + i, null), Set.of(JournalRuntime.scope(sp)));
+
+        assertArrayEquals(new boolean[]{true, false}, session(true, false, true));
+        assertEquals(JournalStore.SYNC_PAGE, dr.entries.shared(JournalRuntime.scope(dp), 0).size());
+        assertArrayEquals(new boolean[]{false, false}, session(true, false, true));
+        assertEquals(JournalStore.SYNC_PAGE + 1, dr.entries.shared(JournalRuntime.scope(dp), 0).size());
+        assertArrayEquals(new boolean[]{false, false}, session(true, false, true));
+    }
+
     @Test public void mediaResumesAcrossBoundedSessionsAndWithdrawalRemovesRemoteReferenceAndBytes() throws Exception {
         JournalAttachment file = media(64L * RemoteAssets.CHUNK_BYTES + 123);
         JournalEntry entry = entry("Shared file", file); dr.entries.save(true, entry, Set.of(JournalRuntime.scope(dp)));
-        session(true); assertFalse(sr.assets(sp).isComplete(file.hash)); assertEquals(64L * RemoteAssets.CHUNK_BYTES, sr.assets(sp).offset(file.hash));
-        session(true); assertTrue(sr.assets(sp).isComplete(file.hash)); assertEquals(file.hash, RemoteAssets.digest(sr.assets(sp).finish(file.hash)));
+        assertArrayEquals(new boolean[]{false, true}, session(true));
+        assertFalse(sr.assets(sp).isComplete(file.hash)); assertEquals(64L * RemoteAssets.CHUNK_BYTES, sr.assets(sp).offset(file.hash));
+        assertArrayEquals(new boolean[]{false, false}, session(true));
+        assertTrue(sr.assets(sp).isComplete(file.hash)); assertEquals(file.hash, RemoteAssets.digest(sr.assets(sp).finish(file.hash)));
         dr.entries.save(true, entry, Set.of()); session(true);
         assertTrue(sr.entries.shared(JournalRuntime.scope(sp), 0).isEmpty());
         assertFalse(new File(root, "sub/" + JournalRuntime.scope(sp) + "/" + file.hash + ".blob").exists());
