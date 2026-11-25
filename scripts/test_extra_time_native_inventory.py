@@ -23,10 +23,10 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_default_inventory_includes_the_foreground_decision_notice(self):
         self.assertEqual(native.selectors(""), native.ALL_SELECTORS)
-        self.assertEqual(22, len(native.selectors("")))
+        self.assertEqual(24, len(native.selectors("")))
         self.assertEqual({
             "ExtraTimeRequestAndroidTest": 4, "ExtraTimeTributeAndroidTest": 2,
-            "ExtraTimeWireAndroidTest": 7, "ExtraTimeUiAndroidTest": 6,
+            "ExtraTimeWireAndroidTest": 9, "ExtraTimeUiAndroidTest": 6,
             "TributeSettingsRestoreAndroidTest": 3,
         }, {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.NATIVE.items()})
         selector = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#decisionFailureShowsBottomSnackbarWithoutRepeatingOnRefresh"
@@ -36,8 +36,8 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_pass_adds_32_exact_methods_without_repeating_the_new_extra_time_case(self):
         selected = native.selectors("", "subhub-pass")
-        self.assertEqual(54, len(selected))
-        self.assertEqual(54, len(set(selected)))
+        self.assertEqual(56, len(selected))
+        self.assertEqual(56, len(set(selected)))
         self.assertTrue(set(native.ALL_SELECTORS) < set(selected))
         self.assertEqual({
             "DurationChoicesAndroidTest": 2, "ServiceDurationRetentionAndroidTest": 3,
@@ -50,13 +50,14 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual(1, selected.count(already_selected))
         legacy_end = "com.subhub.app.remote.RemoteSessionControlsAndroidTest#legacyEndPollRetainsUnchangedRowsAndUpdatesReceipts"
         self.assertEqual([legacy_end], native.selectors(legacy_end, "subhub-pass"))
-        self.assertEqual(native.ALL_SELECTORS[:-1], selected[:21])
+        self.assertEqual(native.ALL_SELECTORS[:-1], selected[:len(native.ALL_SELECTORS) - 1])
         self.assertEqual(native.LARGE_FONT, selected[-1])
 
     def test_subsets_follow_suite_order_not_user_order(self):
         selected = native.suite_selectors("subhub-pass")
-        raw = f" {selected[-1]} ,\n{selected[21]}\n{selected[0]}, "
-        self.assertEqual([selected[0], selected[21], selected[-1]], native.selectors(raw, "subhub-pass"))
+        first_integration = selected[len(native.ALL_SELECTORS) - 1]
+        raw = f" {selected[-1]} ,\n{first_integration}\n{selected[0]}, "
+        self.assertEqual([selected[0], first_integration, selected[-1]], native.selectors(raw, "subhub-pass"))
 
     def test_reconnect_selects_only_six_reviewed_contracts_and_keeps_original_suites(self):
         selected = native.selectors("", "reconnect")
@@ -138,7 +139,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_default_rejects_an_integration_method(self):
         with self.assertRaisesRegex(ValueError, "unique subset"):
-            native.selectors(native.SUBHUB_PASS_SELECTORS[21])
+            native.selectors(native.SUBHUB_PASS_SELECTORS[len(native.ALL_SELECTORS) - 1])
 
     def test_manual_subsets_cannot_admit_classes_wildcards_or_unknown_methods(self):
         for suite in native.SUITES:
@@ -154,7 +155,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
                     native.selectors(f"{cls}#{method}", "subhub-pass")
 
     def test_duplicate_manual_selectors_fail_closed(self):
-        value = native.SUBHUB_PASS_SELECTORS[21]
+        value = native.SUBHUB_PASS_SELECTORS[len(native.ALL_SELECTORS) - 1]
         with self.assertRaisesRegex(ValueError, "unique subset"):
             native.selectors(f"{value}, {value}", "subhub-pass")
 
@@ -166,7 +167,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
     def test_missing_or_duplicate_suite_members_fail_admission(self):
         values = native.SUITES["subhub-pass"]
         for changed in (values[:-1], values[:-2] + [values[0], values[-1]]):
-            with mock.patch.dict(native.SUITES, {"subhub-pass": changed}), self.assertRaisesRegex(ValueError, "54 unique"):
+            with mock.patch.dict(native.SUITES, {"subhub-pass": changed}), self.assertRaisesRegex(ValueError, "56 unique"):
                 native.suite_selectors("subhub-pass")
 
     def test_global_font_case_cannot_precede_other_cases(self):
@@ -264,7 +265,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
     def test_receipt_retains_suite_complete_selection_and_remaining_subset(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            selected = [native.SUBHUB_PASS_SELECTORS[21], native.LARGE_FONT]
+            selected = [native.SUBHUB_PASS_SELECTORS[len(native.ALL_SELECTORS) - 1], native.LARGE_FONT]
             env = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_ARCH": "X64", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
                    "RUNNER_TEMP": folder, "ANDROID_HOME": str(root / "sdk"),
                    "EXTRA_TIME_SELECTORS": ",".join(reversed(selected))}
@@ -275,7 +276,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
             self.assertEqual(native.SUBHUB_PASS_SELECTORS, receipt["suiteSelectors"])
             self.assertEqual(selected, receipt["selected"])
             self.assertEqual(selected, receipt["remaining"])
-            self.assertEqual(52, len(receipt["notSelected"]))
+            self.assertEqual(54, len(receipt["notSelected"]))
             self.assertEqual(35 * 60, receipt["producerSoftTimeoutSeconds"])
             self.assertTrue(receipt["hostedFreshGuest"])
 
@@ -292,7 +293,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual(producer.selected, methods)
         self.assertEqual(("settings", "system", "font_scale", "1.0"), events[0])
         self.assertEqual(("settings", "system", "font_scale", "1.5"), events[-2])
-        self.assertEqual(("method", native.LARGE_FONT, 54), events[-1])
+        self.assertEqual(("method", native.LARGE_FONT, 56), events[-1])
         self.assertEqual("selected_native_passed", producer.record["state"])
 
     def test_failed_method_is_not_retried_and_remaining_work_does_not_run(self):
@@ -308,7 +309,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual("selected_native_running", producer.record["state"])
 
     def test_cli_check_uses_dispatch_environment_and_honors_exact_subset(self):
-        selected = native.SUBHUB_PASS_SELECTORS[21]
+        selected = native.SUBHUB_PASS_SELECTORS[len(native.ALL_SELECTORS) - 1]
         with mock.patch.dict(os.environ, {"EXTRA_TIME_SUITE": "subhub-pass", "EXTRA_TIME_SELECTORS": selected}), \
                 mock.patch.object(sys, "argv", ["run_extra_time_native.py", "--check-inventory"]), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
@@ -316,14 +317,14 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         value = json.loads(output.getvalue())
         self.assertEqual("subhub-pass", value["suite"])
         self.assertEqual([selected], value["selectors"])
-        self.assertEqual(54, len(value["suiteSelectors"]))
+        self.assertEqual(56, len(value["suiteSelectors"]))
 
     def test_cli_suite_argument_overrides_environment(self):
         with mock.patch.dict(os.environ, {"EXTRA_TIME_SUITE": "subhub-pass", "EXTRA_TIME_SELECTORS": ""}), \
                 mock.patch.object(sys, "argv", ["run_extra_time_native.py", "--check-inventory", "--suite", "extra-time"]), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             native.main()
-        self.assertEqual(22, len(json.loads(output.getvalue())["selectors"]))
+        self.assertEqual(24, len(json.loads(output.getvalue())["selectors"]))
 
 
 class NativePrSubsetTest(unittest.TestCase):
@@ -331,7 +332,7 @@ class NativePrSubsetTest(unittest.TestCase):
         event = mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": "", "EXTRA_TIME_SELECTORS": ""})
         event.start()
         self.addCleanup(event.stop)
-        self.chosen = [native.SUBHUB_PASS_SELECTORS[21], native.LARGE_FONT]
+        self.chosen = [native.SUBHUB_PASS_SELECTORS[len(native.ALL_SELECTORS) - 1], native.LARGE_FONT]
 
     def block(self, values=None):
         return native.PR_SUBSET_START + "\n" + json.dumps(self.chosen if values is None else values) + "\n" + native.PR_SUBSET_END
@@ -427,7 +428,7 @@ class NativePrSubsetTest(unittest.TestCase):
 
     def test_selector_and_body_size_bounds_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "nonempty JSON array"):
-            native.pr_subset(self.block([self.chosen[0]] * 55), "subhub-pass")
+            native.pr_subset(self.block([self.chosen[0]] * 57), "subhub-pass")
         for body in (None, 12, self.block() + "x" * native.MAX_PR_BODY_BYTES,
                      self.block() + "é" * (native.MAX_PR_BODY_BYTES // 2)):
             with self.subTest(type=type(body)), self.assertRaisesRegex(ValueError, "bounded PR body"):
@@ -477,8 +478,8 @@ class NativePrSubsetTest(unittest.TestCase):
             self.assertEqual("subhub-pass", receipt["suite"])
             self.assertEqual(self.chosen, receipt["selected"])
             self.assertEqual(self.chosen, receipt["remaining"])
-            self.assertEqual(52, len(receipt["notSelected"]))
-            self.assertEqual(54, len(receipt["suiteSelectors"]))
+            self.assertEqual(54, len(receipt["notSelected"]))
+            self.assertEqual(56, len(receipt["suiteSelectors"]))
             self.assertEqual("admission", receipt["state"])
             self.assertEqual({}, receipt["methods"])
 
