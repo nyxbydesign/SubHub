@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.UnaryOperator;
 
 /** Private keyboard suggestions. Only the IME may supply confirmed input from eligible editors. */
 public final class GagPersonalDictionary {
@@ -24,6 +25,8 @@ public final class GagPersonalDictionary {
     private static final int MAX_WORDS = 256;
     private static final int MAX_CUSTOM = 64;
     private static final int MAX_OPENINGS = 64;
+    private static final int MAX_TRANSITIONS = 256;
+    private static final int MIN_TRANSITION_COUNT = 2;
     private static final int MAX_WORD_CODE_POINTS = 32;
     private static final int MAX_COUNT = 255;
     private static final long WRITE_DELAY_MS = 750;
@@ -62,10 +65,20 @@ public final class GagPersonalDictionary {
 
     /** Pass a committed word and, optionally, a short opener ending in that word. */
     public void recordToken(String token, String openingPhrase) {
+        recordToken(token, openingPhrase, null);
+    }
+
+    /** The optional predecessor must also have been committed by the IME in this editor. */
+    boolean recordToken(String token, String openingPhrase, String predecessor) {
         synchronized (store) {
-            if (!store.learning || !store.model.record(token, openingPhrase)) return;
+            if (!store.learning || !store.model.record(token, openingPhrase, predecessor)) return false;
             store.scheduleWrite();
+            return true;
         }
+    }
+
+    List<String> nextWords(String previous, List<String> base) {
+        synchronized (store) { return store.learning ? store.model.nextWords(previous, base) : base; }
     }
 
     public List<String> suggestions(String prefix, List<String> generic, int limit) {
@@ -96,6 +109,7 @@ public final class GagPersonalDictionary {
         synchronized (store) {
             store.model.words.clear();
             store.model.openings.clear();
+            store.model.transitions.clear();
             store.persistNow();
         }
     }
@@ -113,7 +127,8 @@ public final class GagPersonalDictionary {
             this.writer = writer;
             Map<String, ?> state = preferences.getAll();
             learning = !Boolean.FALSE.equals(state.get("learning"));
-            model.restore(text(state, "words"), text(state, "openings"), text(state, "custom"));
+            model.restore(text(state, "words"), text(state, "openings"), text(state, "custom"),
+                    text(state, "transitions"));
         }
 
         private static String text(Map<String, ?> state, String key) {
@@ -150,32 +165,62 @@ public final class GagPersonalDictionary {
 
         private Snapshot snapshot() {
             return new Snapshot(learning, List.copyOf(model.words.values()),
-                    List.copyOf(model.openings.values()), List.copyOf(model.custom.values()));
+                    List.copyOf(model.openings.values()), List.copyOf(model.custom.values()),
+                    List.copyOf(model.transitions.values()));
         }
 
         private SharedPreferences.Editor encodeSnapshot(Snapshot snapshot) {
             return preferences.edit().putBoolean("learning", snapshot.learning())
                     .putString("words", encode(snapshot.words()))
                     .putString("openings", encode(snapshot.openings()))
+                    .putString("transitions", encode(snapshot.transitions()))
                     .putString("custom", new JSONArray(snapshot.custom()).toString());
         }
     }
 
-    private record Snapshot(boolean learning, List<Learned> words, List<Learned> openings, List<String> custom) {}
+    private record Snapshot(boolean learning, List<Learned> words, List<Learned> openings,
+            List<String> custom, List<Learned> transitions) {}
 
     static final class Model {
         private final Map<String, Learned> words = new LinkedHashMap<>();
         private final Map<String, Learned> openings = new LinkedHashMap<>();
+        private final Map<String, Learned> transitions = new LinkedHashMap<>();
         private final Map<String, String> custom = new LinkedHashMap<>();
 
         boolean record(String token, String openingPhrase) {
+            return record(token, openingPhrase, null);
+        }
+
+        boolean record(String token, String openingPhrase, String predecessor) {
             String word = word(token);
             if (word == null) return false;
+            String previous = word(predecessor);
+            if (previous != null && words.containsKey(key(previous)))
+                increment(transitions, previous + " " + word, MAX_TRANSITIONS);
             increment(words, word, MAX_WORDS);
             String opening = opening(openingPhrase);
             if (opening != null && key(opening.substring(opening.lastIndexOf(' ') + 1)).equals(key(word)))
                 increment(openings, opening, MAX_OPENINGS);
             return true;
+        }
+
+        List<String> nextWords(String previous, List<String> base) {
+            String word = word(previous);
+            if (word == null || transitions.isEmpty()) return base;
+            String prefix = key(word) + " ";
+            Map<String, String> ranked = new LinkedHashMap<>();
+            rankLearned(ranked, transitions, prefix, MIN_TRANSITION_COUNT);
+            if (ranked.isEmpty()) return base;
+            List<String> results = new ArrayList<>(3);
+            for (String pair : ranked.values()) {
+                results.add(pair.substring(pair.indexOf(' ') + 1));
+                if (results.size() == 3) return List.copyOf(results);
+            }
+            for (String candidate : base) {
+                if (!containsWord(results, key(candidate))) results.add(candidate);
+                if (results.size() == 3) break;
+            }
+            return List.copyOf(results);
         }
 
         boolean addCustomWord(String input) {
@@ -241,9 +286,10 @@ public final class GagPersonalDictionary {
                 result.putIfAbsent(key(candidate.text), withInitialCase(prefix, candidate.text));
         }
 
-        void restore(String savedWords, String savedOpenings, String savedCustom) {
-            readLearned(words, savedWords, MAX_WORDS, false);
-            readLearned(openings, savedOpenings, MAX_OPENINGS, true);
+        void restore(String savedWords, String savedOpenings, String savedCustom, String savedTransitions) {
+            readLearned(words, savedWords, MAX_WORDS, GagPersonalDictionary::word);
+            readLearned(openings, savedOpenings, MAX_OPENINGS, GagPersonalDictionary::opening);
+            readLearned(transitions, savedTransitions, MAX_TRANSITIONS, GagPersonalDictionary::transition);
             if (savedCustom.length() > 50_000) return;
             try {
                 JSONArray array = new JSONArray(savedCustom);
@@ -310,6 +356,14 @@ public final class GagPersonalDictionary {
         return String.join(" ", parts);
     }
 
+    private static String transition(String input) {
+        int space = input.indexOf(' ');
+        if (space <= 0 || input.length() > MAX_WORD_CODE_POINTS * 4 + 1) return null;
+        String previous = word(input.substring(0, space));
+        String next = word(input.substring(space + 1));
+        return previous != null && next != null ? previous + " " + next : null;
+    }
+
     private static void increment(Map<String, Learned> entries, String text, int maximum) {
         String key = key(text);
         Learned previous = entries.remove(key);
@@ -323,7 +377,8 @@ public final class GagPersonalDictionary {
         return result.toString();
     }
 
-    private static void readLearned(Map<String, Learned> entries, String value, int maximum, boolean phrases) {
+    private static void readLearned(Map<String, Learned> entries, String value, int maximum,
+            UnaryOperator<String> validate) {
         if (value.length() > 50_000) return;
         try {
             JSONArray array = new JSONArray(value);
@@ -331,7 +386,7 @@ public final class GagPersonalDictionary {
                 JSONArray row = array.optJSONArray(index);
                 if (row == null) continue;
                 String raw = row.optString(0, "");
-                String text = phrases ? opening(raw) : word(raw);
+                String text = validate.apply(raw);
                 int count = row.optInt(1, 0);
                 if (text != null && count > 0 && count <= MAX_COUNT)
                     entries.put(key(text), new Learned(text, count));

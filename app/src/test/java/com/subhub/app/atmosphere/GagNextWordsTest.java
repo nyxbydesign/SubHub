@@ -1,6 +1,7 @@
 package com.subhub.app.atmosphere;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import java.util.List;
 import org.junit.Test;
@@ -51,5 +52,16 @@ public final class GagNextWordsTest {
         assertEquals(GagNextWords.starters("en"), GagNextWords.predict("Hello. ", "en"));
         assertEquals(GagNextWords.starters("de"), GagNextWords.predict("Hallo\n", "de"));
         assertEquals(List.of("and", "but", "or"), GagNextWords.predict("Well, ", "en"));
+    }
+
+    @Test public void personalContextUsesTheLastCompletedWholeWord() {
+        assertEquals("can't", GagNextWords.completedWord("I Can’t  "));
+        assertNull(GagNextWords.completedWord("hello"));
+        assertNull(GagNextWords.completedWord("hello. "));
+        assertNull(GagNextWords.completedWord("hello\n "));
+        assertNull(GagNextWords.completedWord("hello_world "));
+        assertNull(GagNextWords.completedWord("hello-world "));
+        assertNull(GagNextWords.completedWord("42hello "));
+        assertNull(GagNextWords.completedWord("a".repeat(GagNextWords.CONTEXT_LIMIT - 1) + " "));
     }
 }

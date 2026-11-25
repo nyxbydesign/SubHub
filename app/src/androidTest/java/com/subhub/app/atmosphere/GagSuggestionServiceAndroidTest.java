@@ -188,6 +188,31 @@ public final class GagSuggestionServiceAndroidTest {
         assertSuggestions("and", "but", "or");
     }
 
+    @Test public void repeatedTypedWordPairPromotesItsContinuationInTheStrip() throws Exception {
+        for (String starter : new String[]{"a", "b"}) {
+            openEditor(false);
+            typeWordAndSpace(starter);
+            typeWordAndSpace("dolvak");
+            typeWordAndSpace("zembok");
+            assertText(starter + " dolvak zembok ");
+        }
+
+        openEditor(false);
+        typeWordAndSpace("dolvak");
+        assertText("dolvak ");
+        var resources = InstrumentationRegistry.getInstrumentation().getTargetContext().getResources();
+        String language = resources.getConfiguration().getLocales().get(0).getLanguage();
+        var baseline = GagNextWords.predict("dolvak ", language);
+        var learned = await(By.pkg("com.subhub.app").text("zembok"));
+        int first = await(By.pkg("com.subhub.app").text(baseline.get(0))).getVisibleCenter().x;
+        int second = await(By.pkg("com.subhub.app").text(baseline.get(1))).getVisibleCenter().x;
+        int learnedCenter = learned.getVisibleCenter().x;
+        assertTrue("The highest ranked suggestion occupies the middle slot",
+                Math.min(first, second) < learnedCenter && learnedCenter < Math.max(first, second));
+        learned.click();
+        assertText("dolvak zembok");
+    }
+
     @Test public void apostropheReturnsTheRenderedSymbolPageToLetters() throws Exception {
         openEditor(false);
         keyDescription(R.string.gag_keyboard_symbols);
@@ -378,6 +403,11 @@ public final class GagSuggestionServiceAndroidTest {
 
     private static void key(String text) {
         await(By.pkg("com.subhub.app").text(text)).click();
+    }
+
+    private static void typeWordAndSpace(String word) {
+        for (char letter : word.toCharArray()) key(String.valueOf(letter));
+        keyDescription(R.string.gag_keyboard_space);
     }
 
     private static void keyDescription(int stringResource) {

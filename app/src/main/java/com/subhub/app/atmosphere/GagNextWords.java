@@ -105,6 +105,15 @@ final class GagNextWords {
         return "de".equals(language) ? GERMAN_STARTERS : ENGLISH_STARTERS;
     }
 
+    static String completedWord(CharSequence before) {
+        int end = skipSpaces(before, before.length());
+        if (end == 0 || end == before.length()) return null;
+        int start = predictionWordStart(before, end);
+        if (start == end || !atWordBoundary(before, start)) return null;
+        if (start > 0 && before.charAt(start - 1) == '-') return null;
+        return predictionWord(before, start, end);
+    }
+
     static List<String> after(CharSequence before, String language) {
         int length = before.length();
         int end = skipSpaces(before, length);

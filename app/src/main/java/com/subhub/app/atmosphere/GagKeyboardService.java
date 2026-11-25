@@ -80,6 +80,7 @@ public final class GagKeyboardService extends InputMethodService {
     private final StringBuilder sentenceOpening = new StringBuilder();
     private boolean collectOpening;
     private int openingWords;
+    private String previousLearnedWord;
     private GagPersonalDictionary personalDictionary;
     private final List<LetterKey> letters = new ArrayList<>();
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -478,7 +479,7 @@ public final class GagKeyboardService extends InputMethodService {
             resetOpening(false);
             return false;
         }
-        if (completed.equals(proposed)) rememberCompletion(completed);
+        if (completed.equals(proposed)) rememberCompletion(input, completed, suffix);
         else resetOpening(false);
         return true;
     }
@@ -539,30 +540,63 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void resetOpening(boolean collect) {
+        resetSentenceOpening(collect);
+        previousLearnedWord = null;
+    }
+
+    private void resetSentenceOpening(boolean collect) {
         sentenceOpening.setLength(0);
         openingWords = 0;
         collectOpening = collect;
     }
 
-    private void rememberWord(String learned) {
-        if (!editorAllowed) return;
-        GagPersonalDictionary personal = personalDictionary();
-        if (!personal.isLearningEnabled()) {
-            resetOpening(false);
-            return;
-        }
+    private boolean rememberWord(GagPersonalDictionary personal, String learned, String predecessor) {
         String opener = null;
         if (collectOpening) {
             if (openingWords > 0) sentenceOpening.append(' ');
             sentenceOpening.append(learned);
             if (++openingWords >= 2) opener = sentenceOpening.toString();
-            if (openingWords == 3) resetOpening(false);
+            if (openingWords == 3) resetSentenceOpening(false);
         }
-        personal.recordToken(learned, opener);
+        return personal.recordToken(learned, opener, predecessor);
     }
 
-    private void rememberCompletion(String completed) {
-        for (String token : completed.split(" ")) rememberWord(token);
+    private void rememberCompletion(InputConnection input, String completed, String suffix) {
+        EditorInfo editor = getCurrentInputEditorInfo();
+        if (!editorAllowed || !GagEditorPolicy.allowsReplacement(editor, getPackageName())) {
+            resetOpening(false);
+            return;
+        }
+        GagPersonalDictionary personal = personalDictionary();
+        if (!personal.isLearningEnabled()) {
+            resetOpening(false);
+            return;
+        }
+        String[] tokens = completed.split(" ");
+        String predecessor = tokens.length == 1 && previousLearnedWord != null
+                && followsLearnedWord(input, completed, suffix) ? previousLearnedWord : null;
+        // A multi-word spelling repair still learns its words but does not train context.
+        previousLearnedWord = null;
+        for (String token : tokens) {
+            if (rememberWord(personal, token, predecessor) && tokens.length == 1)
+                previousLearnedWord = token;
+        }
+    }
+
+    private boolean followsLearnedWord(InputConnection input, String completed, String suffix) {
+        // Check only the two current words. Never retain preceding editor contents.
+        String ending = previousLearnedWord + " " + completed + suffix;
+        try {
+            CharSequence before = input.getTextBeforeCursor(ending.length() + 1, 0);
+            if (before == null || !before.toString().endsWith(ending)) return false;
+            int start = before.length() - ending.length();
+            if (start == 0) return true;
+            int boundary = Character.codePointBefore(before, start);
+            return !GagRules.wordCharacter(boundary) && !GagRules.apostrophe(boundary)
+                    && !Character.isDigit(boundary) && boundary != '_' && boundary != '-';
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     private synchronized GagPersonalDictionary personalDictionary() {
@@ -1893,7 +1927,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private List<String> nextWords(String before) {
         String language = getResources().getConfiguration().getLocales().get(0).getLanguage();
-        if (!before.isEmpty()) return GagNextWords.predict(before, language);
+        if (!before.isEmpty()) return personalizeNextWords(before, GagNextWords.predict(before, language));
         List<String> candidates = new ArrayList<>(3);
         GagPersonalDictionary personal = personalDictionary();
         if (personal.isLearningEnabled()) candidates.addAll(personal.suggestions("", List.of(), 3));
@@ -1904,6 +1938,11 @@ public final class GagKeyboardService extends InputMethodService {
         return candidates;
     }
 
+    private List<String> personalizeNextWords(String before, List<String> base) {
+        String previous = GagNextWords.completedWord(before);
+        return previous == null ? base : personalDictionary().nextWords(previous, base);
+    }
+
     private void acceptNextWord(long generation, long epoch, InputConnection input,
             GagSuggestionContext context, String candidate, boolean clipboardSeparator) {
         refreshReplacementAuthority();
@@ -1912,11 +1951,16 @@ public final class GagKeyboardService extends InputMethodService {
         clearSuggestions();
         GagSuggestionSpace space = suggestionSpace;
         clearPendingSpace();
-        if (!context.commit(input, candidate, token -> applyGag(token, token),
-                completed -> commitSuggestion(input, 0,
-                        clipboardSeparator || (space != null && space.matches(input))
-                                ? " " + completed : completed))) return;
-        resetOpening(false);
+        if (!context.commit(input, candidate, token -> applyGag(token, token), completed -> {
+            String insertion = clipboardSeparator || (space != null && space.matches(input))
+                    ? " " + completed : completed;
+            if (!commitSuggestion(input, 0, insertion)) return false;
+            if (completed.equals(candidate)) {
+                resetSentenceOpening(false);
+                rememberCompletion(input, completed, "");
+            } else resetOpening(false);
+            return true;
+        })) return;
         literalWord = false;
         lastShiftTap = 0;
         if (shifted && !capsLock) {
@@ -1982,7 +2026,7 @@ public final class GagKeyboardService extends InputMethodService {
                     input.finishComposingText();
                     return;
                 }
-                if (completed.equals(candidate)) rememberCompletion(candidate);
+                if (completed.equals(candidate)) rememberCompletion(input, candidate, "");
             } finally {
                 input.endBatchEdit();
             }

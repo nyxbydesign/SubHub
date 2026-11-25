@@ -83,6 +83,56 @@ public final class GagPersonalDictionaryTest {
     }
 
     @Test
+    public void repeatedTransitionsRankDistinctSuggestionsAfterTheMatchingWord() {
+        GagPersonalDictionary.Model model = new GagPersonalDictionary.Model();
+        List<String> base = List.of("there", "friend", "again");
+        assertTrue(model.record("Friend", null, "Hello"));
+        assertTrue(model.record("Hello", null));
+        assertTrue(model.record("friend", null, "HELLO"));
+        assertEquals(base, model.nextWords("hello", base));
+        assertTrue(model.record("Friend", null, "hello"));
+        assertTrue(model.record("partner", null, "Hello"));
+        assertTrue(model.record("partner", null, "Hello"));
+        assertEquals(List.of("partner", "Friend", "there"), model.nextWords("HELLO", base));
+        assertEquals(base, model.nextWords("unrelated", base));
+        assertEquals(base, model.nextWords(null, base));
+    }
+
+    @Test
+    public void olderPreferencesStillLoadAndOptOutAndClearCoverTransitions() throws Exception {
+        ScheduledThreadPoolExecutor writer = immediateWriter();
+        PreferencesFixture fixture = new PreferencesFixture(false);
+        try {
+            SharedPreferences preferences = fixture.preferences();
+            preferences.edit().putString("words", "[[\"good\",1]]")
+                    .putString("openings", "[[\"Good morning\",2]]")
+                    .putString("custom", "[\"Example\"]").apply();
+            GagPersonalDictionary dictionary = new GagPersonalDictionary(preferences, writer);
+            List<String> base = List.of("morning", "day", "afternoon");
+            assertEquals(List.of("Good morning"), dictionary.suggestions("", List.of(), 3));
+            assertEquals(List.of("Example"), dictionary.customWords());
+            assertEquals(base, dictionary.nextWords("good", base));
+
+            assertTrue(dictionary.recordToken("evening", null, "good"));
+            assertTrue(dictionary.recordToken("evening", null, "good"));
+            writer.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            GagPersonalDictionary reopened = new GagPersonalDictionary(preferences, writer);
+            assertEquals(List.of("evening", "morning", "day"), reopened.nextWords("good", base));
+
+            reopened.setLearningEnabled(false);
+            assertFalse(reopened.recordToken("night", null, "good"));
+            assertEquals(base, reopened.nextWords("good", base));
+            reopened.setLearningEnabled(true);
+            reopened.clearLearned();
+            GagPersonalDictionary cleared = new GagPersonalDictionary(preferences, writer);
+            assertEquals(base, cleared.nextWords("good", base));
+            assertEquals(List.of("Example"), cleared.customWords());
+        } finally {
+            writer.shutdownNow();
+        }
+    }
+
+    @Test
     public void ordinaryLearningCoalescesAndPersistsTheLatestWords() throws Exception {
         ScheduledThreadPoolExecutor writer = immediateWriter();
         CountDownLatch releaseWriter = new CountDownLatch(1);
