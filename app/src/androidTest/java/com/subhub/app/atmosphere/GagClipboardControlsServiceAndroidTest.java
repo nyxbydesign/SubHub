@@ -48,6 +48,46 @@ public final class GagClipboardControlsServiceAndroidTest {
         assertCapturedLabel(await(By.pkg(APP).text(label(R.string.gag_clipboard_title))), "clipboard panel");
     }
 
+    @Test public void clipboardSharesTheSuggestionRowAndDragDoesNotPaste() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        openFixture(false, false, " --es " + GagEditorFixtureActivity.SEED_CLIPBOARD_AFTER_TEXT + " 'thanks '");
+        BySelector fixedTool = By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard));
+        Rect toolBounds = await(fixedTool).getVisibleBounds();
+        BySelector space = By.pkg(APP).desc(label(R.string.gag_keyboard_space));
+        for (char letter : "thanks".toCharArray()) await(By.pkg(APP).text(String.valueOf(letter))).click();
+        await(space).click();
+
+        BySelector clip = By.pkg(APP).desc(GagEditorFixtureActivity.CLIPBOARD_TEXT);
+        Rect clipBounds = await(clip).getVisibleBounds();
+        Rect wordBounds = await(By.pkg(APP).text("for")).getVisibleBounds();
+        await(By.pkg(APP).text("again"));
+        assertTrue(Math.abs(clipBounds.width() - wordBounds.width()) <= 1);
+        assertEquals(wordBounds.right, clipBounds.left);
+        BySelector trailingWord = By.pkg(APP).text("and");
+        assertFalse(device().hasObject(trailingWord));
+
+        int travel = clipBounds.width() + 24;
+        assertTrue(device().swipe(clipBounds.centerX(), clipBounds.centerY(),
+                clipBounds.centerX() - travel, clipBounds.centerY(), 32));
+        Rect revealed = await(trailingWord).getVisibleBounds();
+        assertTrue(revealed.width() >= wordBounds.width() - 1);
+        assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
+        assertEditor("thanks ");
+
+        await(clip).click();
+        assertEditor("thanks " + GagEditorFixtureActivity.CLIPBOARD_TEXT);
+        assertTrue(device().wait(Until.gone(clip), TIMEOUT));
+        await(space).click();
+        Rect left = await(By.pkg(APP).text("but")).getVisibleBounds();
+        Rect middle = await(trailingWord).getVisibleBounds();
+        Rect right = await(By.pkg(APP).text("or")).getVisibleBounds();
+        assertEquals(left.right, middle.left);
+        assertEquals(middle.right, right.left);
+        assertEquals(clipBounds.right, right.right);
+        assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
+    }
+
     @Test public void editSavesPrivatelyWhileTapPastesAndHoldSlidesToPinOrDelete() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals("Grant full photo access in the synthetic guest to isolate the controls from the permission prompt",
@@ -137,13 +177,18 @@ public final class GagClipboardControlsServiceAndroidTest {
     }
 
     private static void openFixture(boolean seed, boolean longText) throws Exception {
+        openFixture(seed, longText, "");
+    }
+
+    private static void openFixture(boolean seed, boolean longText, String extra) throws Exception {
         assertEquals(APP + "/.atmosphere.GagKeyboardService",
                 shell("settings get secure default_input_method").trim());
         String started = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + "/" + GagEditorFixtureActivity.class.getName()
                 + " --ez gag_seed_clipboard " + seed
                 + " --ez " + GagEditorFixtureActivity.SEED_LONG_CLIPBOARD + " " + longText
-                + " --ez " + GagEditorFixtureActivity.SUPPRESS_CLIPBOARD_OVERLAY + " " + seed);
+                + " --ez " + GagEditorFixtureActivity.SUPPRESS_CLIPBOARD_OVERLAY + " " + (seed || !extra.isEmpty())
+                + extra);
         assertTrue(started, started.contains("Status: ok"));
         await(By.pkg(APP).text("q"));
         assertEditor("");

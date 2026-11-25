@@ -45,6 +45,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodSubtype;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -103,7 +104,8 @@ public final class GagKeyboardService extends InputMethodService {
     private PendingBracket pendingBracket;
     private char pendingPunctuation;
     private int punctuationCursor = -1;
-    private LinearLayout suggestionStrip;
+    private List<TextView> suggestionSlots;
+    private HorizontalScrollView suggestionViewport;
     private LinearLayout toolbar;
     private LinearLayout keyRows;
     private ImageButton clipboardButton;
@@ -684,7 +686,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean canShowDeletionActions() {
-        return editorAllowed && isInputViewShown() && suggestionStrip != null && clipboardPanel == null
+        return editorAllowed && isInputViewShown() && suggestionSlots != null && clipboardPanel == null
                 && page != Page.EMOJI && deletionStart == null && deletionHistory.hasEntries();
     }
 
@@ -702,7 +704,7 @@ public final class GagKeyboardService extends InputMethodService {
             return false;
         }
         long generation = suggestionGeneration;
-        bindSuggestionSlots(suggestionStrip, List.of(), null);
+        bindSuggestionSlots(suggestionSlots, List.of(), null);
         bindDeletionAction(input, 0, GagDeletionHistory.Action.UNDO, R.string.gag_keyboard_undo, undo, generation);
         bindDeletionAction(input, 1, GagDeletionHistory.Action.REDO, R.string.gag_keyboard_redo, redo, generation);
         return true;
@@ -710,7 +712,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void bindDeletionAction(InputConnection input, int slot, GagDeletionHistory.Action action,
             int label, boolean enabled, long generation) {
-        TextView view = (TextView) suggestionStrip.getChildAt(slot);
+        TextView view = suggestionSlots.get(slot);
         view.setText(label);
         view.setVisibility(View.VISIBLE);
         view.setEnabled(enabled);
@@ -1080,31 +1082,24 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardButton.setPadding(0, 0, 0, 0);
         clipboardButton.setOnClickListener(view -> showClipboard());
         tools.addView(clipboardButton, new LinearLayout.LayoutParams(gutter, height));
-        suggestionStrip = new LinearLayout(tools.getContext());
-        // Keep all three equal-width slots even when their candidate is absent.
-        suggestionStrip.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        tools.addView(suggestionStrip, new LinearLayout.LayoutParams(0, height, 1));
-        // The clipboard chip occupies the existing opposite gutter without replacing any suggestions.
-        clipboardChip = clipboardLabel(tools.getContext(), "", 13);
-        clipboardChip.setGravity(Gravity.CENTER);
-        clipboardChip.setSingleLine();
-        clipboardChip.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        clipboardChip.setPadding(dp(4), 0, dp(4), 0);
-        clipboardChip.setBackground(keyFace(MODIFIER_SURFACE, 7));
+        clipboardChip = suggestionLabel(tools.getContext());
         clipboardChip.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         clipboardChip.setSaveEnabled(false);
-        clipboardChip.setVisibility(View.INVISIBLE);
+        clipboardChip.setVisibility(View.GONE);
         clipboardChip.setTag("gag_clipboard_suggestion");
-        tools.addView(clipboardChip, new LinearLayout.LayoutParams(gutter, height));
+        suggestionViewport = new SuggestionViewport(tools.getContext(), clipboardChip);
+        suggestionViewport.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        suggestionViewport.setHorizontalScrollBarEnabled(false);
+        suggestionViewport.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        tools.addView(suggestionViewport, new LinearLayout.LayoutParams(0, height, 1));
+        tools.addView(new Space(tools.getContext()), new LinearLayout.LayoutParams(gutter, height));
+
+        LinearLayout strip = new LinearLayout(tools.getContext());
+        strip.setBaselineAligned(false);
+        suggestionViewport.addView(strip, new FrameLayout.LayoutParams(-1, -1));
+        suggestionSlots = new ArrayList<>(3);
         for (int index = 0; index < 3; index++) {
-            TextView choice = new TextView(tools.getContext());
-            choice.setTextColor(LABEL_COLOR);
-            choice.setTextSize(16);
-            choice.setGravity(Gravity.CENTER);
-            choice.setSingleLine();
-            choice.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            choice.setPadding(dp(6), 0, dp(6), 0);
-            choice.setBackground(keyFace(MODIFIER_SURFACE, 7));
+            TextView choice = suggestionLabel(tools.getContext());
             choice.setOnTouchListener(new View.OnTouchListener() {
                 private long pressedGeneration;
 
@@ -1120,15 +1115,48 @@ public final class GagKeyboardService extends InputMethodService {
                     return false;
                 }
             });
-            suggestionStrip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
+            suggestionSlots.add(choice);
+            strip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
+        }
+        // Keep the two lead word slots in place and let the third word scroll into view.
+        strip.addView(clipboardChip, 2, new LinearLayout.LayoutParams(0, -1, 1));
+    }
+
+    private TextView suggestionLabel(Context context) {
+        TextView label = new TextView(context);
+        label.setTextColor(LABEL_COLOR);
+        label.setTextSize(16);
+        label.setGravity(Gravity.CENTER);
+        label.setSingleLine();
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setPadding(dp(6), 0, dp(6), 0);
+        label.setBackground(keyFace(MODIFIER_SURFACE, 7));
+        return label;
+    }
+
+    private static final class SuggestionViewport extends HorizontalScrollView {
+        private final View clipboard;
+
+        SuggestionViewport(Context context, View clipboard) {
+            super(context);
+            this.clipboard = clipboard;
+        }
+
+        @Override protected void measureChildWithMargins(View child, int parentWidthSpec, int widthUsed,
+                int parentHeightSpec, int heightUsed) {
+            // Three equal slots fill the viewport. The clipboard adds a fourth slot of the same width.
+            int width = MeasureSpec.getSize(parentWidthSpec);
+            if (clipboard.getVisibility() == View.VISIBLE) width += (width + 2) / 3;
+            int heightSpec = getChildMeasureSpec(parentHeightSpec, heightUsed, child.getLayoutParams().height);
+            child.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), heightSpec);
         }
     }
 
     /** Rank zero owns the middle physical slot, including when either side is blank. */
-    static void bindSuggestionSlots(LinearLayout strip, List<String> ranked,
+    static void bindSuggestionSlots(List<TextView> slots, List<String> ranked,
             java.util.function.Consumer<String> accept) {
         for (int slot = 0; slot < 3; slot++) {
-            TextView view = (TextView) strip.getChildAt(slot);
+            TextView view = slots.get(slot);
             int rank = slot == 0 ? 1 : slot == 1 ? 0 : 2;
             String candidate = rank < ranked.size() ? ranked.get(rank) : "";
             view.setVisibility(candidate.isEmpty() ? View.INVISIBLE : View.VISIBLE);
@@ -1663,7 +1691,8 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearClipboardSuggestion() {
         if (clipboardSuggestion == null) return;
-        clipboardChip.setVisibility(View.INVISIBLE);
+        clipboardChip.setVisibility(View.GONE);
+        suggestionViewport.scrollTo(0, 0);
         clipboardChip.setText(null);
         clipboardChip.setContentDescription(null);
         clipboardChip.setCompoundDrawablesRelative(null, null, null, null);
@@ -1750,7 +1779,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private boolean canSuggest() {
-        return editorAllowed && suggestionStrip != null && page == Page.LETTERS && clipboardPanel == null;
+        return editorAllowed && suggestionSlots != null && page == Page.LETTERS && clipboardPanel == null;
     }
 
     private void scheduleSuggestions() { scheduleSuggestions(-1); }
@@ -1759,7 +1788,7 @@ public final class GagKeyboardService extends InputMethodService {
         if (clipboardSuggestion != null && word.length() != 0) refreshClipboardSuggestion();
         invalidateSuggestionRequest();
         if (!canSuggest() && !canShowDeletionActions()) {
-            if (suggestionStrip != null) bindSuggestionSlots(suggestionStrip, List.of(), null);
+            if (suggestionSlots != null) bindSuggestionSlots(suggestionSlots, List.of(), null);
             return;
         }
         committedCursor = cursor;
@@ -1768,7 +1797,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearSuggestions() {
         invalidateSuggestionRequest();
-        if (suggestionStrip != null) bindSuggestionSlots(suggestionStrip, List.of(), null);
+        if (suggestionSlots != null) bindSuggestionSlots(suggestionSlots, List.of(), null);
     }
 
     private void invalidateSuggestionRequest() {
@@ -1810,7 +1839,7 @@ public final class GagKeyboardService extends InputMethodService {
                 }
                 candidates = uppercase;
             }
-            bindSuggestionSlots(suggestionStrip, candidates,
+            bindSuggestionSlots(suggestionSlots, candidates,
                     candidate -> acceptNextWord(generation, epoch, input, context, candidate));
             return;
         }
@@ -1835,7 +1864,7 @@ public final class GagKeyboardService extends InputMethodService {
                 if (cursor >= 0 && !token.equals(readCommittedPrefix(input, cursor))) { clearSuggestions(); return; }
                 List<String> candidates = phraseRepairAllowed() && phrase != null
                         ? GagLexicon.prioritizePhrase(token, known, singleWords, phrase) : singleWords;
-                bindSuggestionSlots(suggestionStrip, candidates,
+                bindSuggestionSlots(suggestionSlots, candidates,
                         candidate -> acceptSuggestion(generation, epoch, input, cursor, token, candidate));
             });
         });

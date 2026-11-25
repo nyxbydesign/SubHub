@@ -80,9 +80,11 @@ public final class GagKeyPressAndroidTest {
             host.onActivity(activity -> {
                 LinearLayout strip = new LinearLayout(activity);
                 strip.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+                List<TextView> slots = new ArrayList<>();
                 for (int index = 0; index < 3; index++) {
                     TextView slot = new TextView(activity);
                     slot.setGravity(android.view.Gravity.CENTER);
+                    slots.add(slot);
                     strip.addView(slot, new LinearLayout.LayoutParams(0, -1, 1));
                 }
                 activity.setContentView(strip);
@@ -91,7 +93,7 @@ public final class GagKeyPressAndroidTest {
                 for (int width : new int[]{317, 389, 721}) {
                     List<String> candidates = List.of("HELLO", "help", "held", "helm");
                     for (int count = 0; count <= candidates.size(); count++) {
-                        GagKeyboardService.bindSuggestionSlots(strip, candidates.subList(0, count), accepted::add);
+                        GagKeyboardService.bindSuggestionSlots(slots, candidates.subList(0, count), accepted::add);
                         strip.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                                 View.MeasureSpec.makeMeasureSpec(43, View.MeasureSpec.EXACTLY));
                         strip.layout(0, 0, width, 43);
