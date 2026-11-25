@@ -39,7 +39,7 @@ public final class ExtraTimeWireAndroidTest {
     private final List<String> frames = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean dropReceipt, revokeBeforeSubReceive;
     private volatile String dropHandshake;
-    private volatile boolean malformedHello;
+    private volatile boolean malformedHello, omitControlPlan;
 
     @Before public void setup() throws Exception {
         domDatabase = "extra-time-wire-dom-" + UUID.randomUUID();
@@ -78,7 +78,74 @@ public final class ExtraTimeWireAndroidTest {
         }
     }
 
+    @Test public void earlyPhaseKeepsCoreFirstAndPreservesLegacyOrderForEitherInitiator() throws Exception {
+        int revision = 0;
+        for (int controlPlan = 0; controlPlan < 3; controlPlan++) {
+            dh.priority = sh.priority = controlPlan != 0;
+            omitControlPlan = controlPlan == 1;
+            for (boolean domInitiates : new boolean[]{false, true}) {
+                for (boolean domSupports : new boolean[]{false, true}) {
+                    for (boolean subSupports : new boolean[]{false, true}) {
+                        dh.earlyVersion = domSupports ? 1 : 0;
+                        sh.earlyVersion = subSupports ? 1 : 0;
+                        revision++;
+                        dom.publish(st.localIdentity(), generation, RemoteProtocol.Stream.CONFIGURATION,
+                                "desired", new JSONObject().put("revision", revision), false, revision);
+                        sub.publish(dt.localIdentity(), generation, RemoteProtocol.Stream.STATS,
+                                "history", new JSONObject().put("count", revision), false, revision);
+                        frames.clear();
+                        exchange(domInitiates).success();
+                        versions("1");
+                        int core = frames.indexOf("batch:CONFIGURATION");
+                        int bulk = frames.indexOf("batch:STATS");
+                        int extraStart = frames.indexOf("extra_time_status");
+                        int extraEnd = frames.indexOf("extra_time_complete_ack");
+                        assertTrue(frames.toString(), core >= 0 && bulk >= 0 && extraStart >= 0 && extraEnd >= 0);
+                        assertTrue(frames.toString(), core < extraStart);
+                        boolean early = domSupports && subSupports;
+                        if (early) assertTrue(frames.toString(), extraEnd < bulk);
+                        else assertTrue(frames.toString(), bulk < extraStart);
+                        for (RemoteProtocol.Role role : RemoteProtocol.Role.values()) {
+                            int control = frames.indexOf("control:" + role.name());
+                            if (controlPlan == 0) assertEquals(-1, control);
+                            else {
+                                assertTrue(frames.toString(), core < control && control < extraEnd);
+                                if (early || controlPlan == 2) assertTrue(frames.toString(), control < bulk);
+                                else assertTrue(frames.toString(), bulk < control);
+                            }
+                        }
+                        assertEquals(2, Collections.frequency(frames, "extra_time_receipt"));
+                    }
+                }
+            }
+        }
+    }
+
+    @Test public void onlyPendingSubConfigurationKeepsExtraTimeAfterBulk() throws Exception {
+        dh.earlyVersion = sh.earlyVersion = 1;
+        int revision = 0;
+        for (boolean domInitiates : new boolean[]{false, true}) {
+            for (boolean subMissing : new boolean[]{false, true}) {
+                sh.missingReadinessAsset = subMissing;
+                dh.missingReadinessAsset = !subMissing;
+                dom.publish(st.localIdentity(), generation, RemoteProtocol.Stream.CONFIGURATION,
+                        "desired", new JSONObject().put("revision", ++revision), false, revision);
+                sub.publish(dt.localIdentity(), generation, RemoteProtocol.Stream.STATS,
+                        "history", new JSONObject().put("count", revision), false, revision);
+                frames.clear();
+                exchange(domInitiates).success();
+                int asset = frames.indexOf("asset_unavailable");
+                int bulk = frames.indexOf("batch:STATS");
+                int extra = frames.indexOf("extra_time_status");
+                assertTrue(frames.toString(), asset >= 0 && bulk >= 0 && extra > asset);
+                if (subMissing) assertTrue(frames.toString(), bulk < extra);
+                else assertTrue(frames.toString(), extra < bulk);
+            }
+        }
+    }
+
     @Test public void legacyPeerSkipsPhaseInBothDirectionsAndClearsOldCapability() throws Exception {
+        dh.earlyVersion = sh.earlyVersion = 1;
         for (boolean domSupports : new boolean[]{false, true}) for (boolean domInitiates : new boolean[]{false, true}) {
             dh.version = domSupports ? 1 : 0; sh.version = domSupports ? 0 : 1;
             dom.putMetadata(st.localIdentity(), generation, "extra_time_version", "1");
@@ -177,21 +244,30 @@ public final class ExtraTimeWireAndroidTest {
 
     private final class Hooks implements RemoteSession.Hooks {
         final Endpoint endpoint;
-        int version = 1, calls;
-        boolean priority;
+        int version = 1, earlyVersion, calls;
+        boolean priority, missingReadinessAsset;
         Hooks(RemoteStore store, String remote, RemoteProtocol.Role role, String record) {
             endpoint = new Endpoint(store, remote, role, record);
         }
         public int extraTimeVersion() { return version; }
+        public int extraTimePriorityVersion() { return earlyVersion; }
         public int sessionControlVersion() { return priority ? 1 : 0; }
-        public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean ready) { }
-        public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) { }
+        public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean ready) {
+            sessionControl(connection, peer, deadline);
+        }
+        public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) {
+            frames.add("control:" + peer.localRole.name());
+        }
         public void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
             calls++; ExtraTimePeer.exchange(endpoint, connection, peer, deadline);
         }
         public void prepare(RemoteStore.Peer peer) { }
         public void received(RemoteStore.Peer peer, RemoteProtocol.Stream stream) { }
-        public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) { return Collections.emptyList(); }
+        public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) {
+            return missingReadinessAsset
+                    ? List.of(new RemoteSession.AssetNeed("a".repeat(64), 123, 0))
+                    : Collections.emptyList();
+        }
         public RemoteAssets assets(RemoteStore.Peer peer) { return null; }
         public void complete(RemoteStore.Peer peer) { }
     }
@@ -257,8 +333,10 @@ public final class ExtraTimeWireAndroidTest {
                 public void write(byte[] bytes, int offset, int length) { buffer.write(bytes, offset, length); }
                 public void flush() throws IOException {
                     JSONObject value = RemoteProtocol.read(new ByteArrayInputStream(buffer.toByteArray()));
-                    String type = value.optString("type"); frames.add(type);
+                    String type = value.optString("type");
+                    frames.add("batch".equals(type) ? "batch:" + value.optString("stream") : type);
                     if (type.equals(dropHandshake)) throw new IOException("Synthetic lost handshake");
+                    if (omitControlPlan && "hello".equals(type)) value.remove("phasePlanVersion");
                     if (malformedHello && "hello".equals(type)) {
                         try { value.put("extraTimeVersion", 0); }
                         catch (org.json.JSONException invalid) { throw new IOException(invalid); }

@@ -1352,6 +1352,7 @@ public final class RemoteFeature {
             }
             @Override public int tasksVersion() { return 1; }
             @Override public int extraTimeVersion() { return ExtraTimePeer.VERSION; }
+            @Override public int extraTimePriorityVersion() { return 1; }
             @Override public boolean gagRulesSupported() { return true; }
             @Override public boolean gagPairsSupported() { return true; }
             @Override public boolean gagPairOptionsSupported() { return true; }

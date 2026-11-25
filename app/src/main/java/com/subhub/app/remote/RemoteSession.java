@@ -39,6 +39,7 @@ public final class RemoteSession {
         default JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception { return profile(peer, details); }
         default int tasksVersion() { return 0; }
         default int extraTimeVersion() { return 0; }
+        default int extraTimePriorityVersion() { return 0; }
         default boolean gagRulesSupported() { return false; }
         default boolean gagPairsSupported() { return false; }
         default boolean gagPairOptionsSupported() { return false; }
@@ -68,6 +69,8 @@ public final class RemoteSession {
     }
     private static final int MAX_ASSET_REQUESTS=16,MAX_ASSET_CHUNKS=64,MAX_BATCHES=64;
     private static final int NEEDS_ASSETS=1,BULK_PENDING=2;
+    private static final String EXTRA_TIME_PRIORITY = "extraTimePriorityVersion";
+    private enum ExtraTimeOrder { UNSUPPORTED, LEGACY, EARLY }
     private static final String PROFILE_DIGEST = "profileDigestV1";
     private static final int MIN_PROFILE_REFERENCE_CHARS = 1024;
     private final RemoteStore store;
@@ -101,7 +104,10 @@ public final class RemoteSession {
         hello.put("fullAccessVersion", FullAccessChannel.VERSION);
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
-        if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
+        if (hooks.extraTimeVersion() == 1) {
+            hello.put("extraTimeVersion", 1);
+            if (hooks.extraTimePriorityVersion() == 1) hello.put(EXTRA_TIME_PRIORITY, 1);
+        }
         if (hooks.gagRulesSupported()) {
             hello.put("gagVersion", 1);
             if (hooks.gagPairsSupported()) {
@@ -131,8 +137,8 @@ public final class RemoteSession {
         requireType(response,"hello_ack",peer);
         if (helloAcknowledged != null) helloAcknowledged.run();
         rememberFullAccess(peer, response);
-        boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
-        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
+        ExtraTimeOrder extraTime = extraTimeOrder(response);
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime != ExtraTimeOrder.UNSUPPORTED ? "1" : "0");
         rememberGag(peer, response);
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
         boolean priority = phasePlanVersion(response) == 1 && controls;
@@ -186,9 +192,10 @@ public final class RemoteSession {
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
         rememberFullAccess(peer, hello);
         if (supportsFullAccess(hello)) ready.put("fullAccessVersion", FullAccessChannel.VERSION);
-        boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
-        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
-        if (extraTime) ready.put("extraTimeVersion", 1);
+        ExtraTimeOrder extraTime = extraTimeOrder(hello);
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime != ExtraTimeOrder.UNSUPPORTED ? "1" : "0");
+        if (extraTime != ExtraTimeOrder.UNSUPPORTED) ready.put("extraTimeVersion", 1);
+        if (extraTime == ExtraTimeOrder.EARLY) ready.put(EXTRA_TIME_PRIORITY, 1);
         if (rememberGag(peer, hello)) {
             ready.put("gagVersion", 1);
             if (GagContractFields.pairsSupported(store, peer)) ready.put("gagPairsVersion", 1);
@@ -374,6 +381,14 @@ public final class RemoteSession {
         return value;
     }
 
+    private ExtraTimeOrder extraTimeOrder(JSONObject frame) throws JSONException {
+        if (extraTimeVersion(frame) != 1 || hooks.extraTimeVersion() != 1) return ExtraTimeOrder.UNSUPPORTED;
+        if (hooks.extraTimePriorityVersion() != 1 || !frame.has(EXTRA_TIME_PRIORITY)) return ExtraTimeOrder.LEGACY;
+        long version = RemoteProtocol.integer(frame, EXTRA_TIME_PRIORITY);
+        if (version <= 0) throw new JSONException("Invalid Extra Time priority capability");
+        return version == 1 ? ExtraTimeOrder.EARLY : ExtraTimeOrder.LEGACY;
+    }
+
     private boolean rememberGag(RemoteStore.Peer peer, JSONObject frame) throws JSONException {
         boolean supported = hooks.gagRulesSupported() && frame.has("gagVersion")
                 && RemoteProtocol.integer(frame, "gagVersion") == 1;
@@ -433,10 +448,14 @@ public final class RemoteSession {
                 || stream == RemoteProtocol.Stream.RUNTIME || stream == RemoteProtocol.Stream.BASELINE;
     }
 
-    private boolean exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls,boolean appIcons,boolean priority,boolean extraTime) throws Exception {
+    private boolean exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls,boolean appIcons,boolean priority,ExtraTimeOrder extraTime) throws Exception {
         hooks.prepare(peer);
+        // Extra Time decisions use the Sub's applied allowance. Both peers observe the same Sub
+        // configuration readiness, while the Dom's mirrored assets do not change that allowance.
+        boolean phased = priority || extraTime == ExtraTimeOrder.EARLY;
+        boolean extraTimePending = extraTime != ExtraTimeOrder.UNSUPPORTED;
         if(peer.localRole==RemoteProtocol.Role.DOM) {
-            if (priority) {
+            if (phased) {
                 int outgoing=pushState(connection,peer,deadline,activity,0);
                 int incoming=pullState(connection,peer,deadline,activity,0);
                 // A START for a new revision must not be rejected just because its assets arrived later.
@@ -444,6 +463,11 @@ public final class RemoteSession {
                 if((outgoing&NEEDS_ASSETS)!=0)remoteReady=pushAssets(connection,peer,deadline,true);
                 if((incoming&NEEDS_ASSETS)!=0)localReady=pullAssets(connection,peer,deadline,true);
                 if (controls) { checkActive(peer); hooks.sessionControl(connection,peer,deadline,remoteReady&&localReady); }
+                if (extraTime == ExtraTimeOrder.EARLY && remoteReady) {
+                    checkActive(peer);
+                    hooks.extraTime(connection, peer, deadline);
+                    extraTimePending = false;
+                }
                 if((outgoing&BULK_PENDING)!=0)pushState(connection,peer,deadline,activity,1);
                 if((incoming&BULK_PENDING)!=0)pullState(connection,peer,deadline,activity,1);
             } else {
@@ -452,16 +476,16 @@ public final class RemoteSession {
             }
             if (tasks) continuation |= hooks.tasks(connection,peer,deadline);
             if (journal) continuation |= journal(connection,peer,deadline);
-            if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
+            if (controls && !phased) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
-            if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
+            if (extraTimePending) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
             send(connection,message("done",peer),deadline);
             JSONObject doneAck = read(connection, deadline);
             requireType(doneAck, "done_ack", peer);
             receivePresence(connection, doneAck);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
-            if (priority) {
+            if (phased) {
                 int incoming=pullState(connection,peer,deadline,activity,0);
                 hooks.prepare(peer);
                 int outgoing=pushState(connection,peer,deadline,activity,0);
@@ -469,6 +493,11 @@ public final class RemoteSession {
                 if((incoming&NEEDS_ASSETS)!=0)localReady=pullAssets(connection,peer,deadline,true);
                 if((outgoing&NEEDS_ASSETS)!=0)remoteReady=pushAssets(connection,peer,deadline,true);
                 if (controls) { checkActive(peer); hooks.sessionControl(connection,peer,deadline,remoteReady&&localReady); }
+                if (extraTime == ExtraTimeOrder.EARLY && localReady) {
+                    checkActive(peer);
+                    hooks.extraTime(connection, peer, deadline);
+                    extraTimePending = false;
+                }
                 if((incoming&BULK_PENDING)!=0)pullState(connection,peer,deadline,activity,1);
                 if((outgoing&BULK_PENDING)!=0)pushState(connection,peer,deadline,activity,1);
             } else {
@@ -478,9 +507,9 @@ public final class RemoteSession {
             }
             if (tasks) continuation |= hooks.tasks(connection,peer,deadline);
             if (journal) continuation |= journal(connection,peer,deadline);
-            if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
+            if (controls && !phased) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
-            if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
+            if (extraTimePending) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
             JSONObject done = read(connection, deadline);
             requireType(done, "done", peer);
             receivePresence(connection, done);
