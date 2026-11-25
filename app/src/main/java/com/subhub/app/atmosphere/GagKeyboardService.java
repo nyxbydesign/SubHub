@@ -158,7 +158,6 @@ public final class GagKeyboardService extends InputMethodService {
     private boolean screenshotRescan;
     private boolean clipboardVisible;
     private InputConnection clipboardConnection;
-    private android.view.Window clipboardSecuredWindow;
     private Bitmap backdrop;
     private Page renderedPage;
     private int renderedInputType;
@@ -1353,7 +1352,6 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardPanel.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         clipboardPanel.setBackgroundColor(0xff171717);
         clipboardPanel.setPadding(dp(8), 0, dp(8), 0);
-        updateClipboardWindowSecurity();
         int height = keyboard.getHeight();
         keyboard.setVisibility(View.GONE);
         keyboardHost.addView(clipboardPanel, new LinearLayout.LayoutParams(-1, height));
@@ -1372,24 +1370,8 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardPanel = null;
         clipboardConnection = null;
         clipboardEditing = false;
-        updateClipboardWindowSecurity();
         keyboard.setVisibility(View.VISIBLE);
         if (clipboardVisible) scheduleSuggestions();
-    }
-
-    private void updateClipboardWindowSecurity() {
-        android.app.Dialog ime = getWindow();
-        Window window = ime == null ? null : ime.getWindow();
-        int secure = WindowManager.LayoutParams.FLAG_SECURE;
-        if ((clipboardPanel != null || clipboardSuggestion != null) && window != null) {
-            if ((window.getAttributes().flags & secure) == 0) {
-                window.addFlags(secure);
-                clipboardSecuredWindow = window;
-            }
-        } else if (clipboardSecuredWindow != null) {
-            clipboardSecuredWindow.clearFlags(secure);
-            clipboardSecuredWindow = null;
-        }
     }
 
     private void refreshClipboard() {
@@ -1687,7 +1669,6 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardChip.setCompoundDrawablesRelative(null, null, null, null);
         clipboardChip.setOnClickListener(null);
         clipboardSuggestion = null;
-        updateClipboardWindowSecurity();
     }
 
     private void dismissClipboardSuggestion() {
@@ -1721,7 +1702,6 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardSuggestion = offered;
         if (offered.copiedAt() == clipboardOfferCandidateAt && now < clipboardOfferExpiry(offered))
             clipboardOfferedThrough = Math.max(clipboardOfferedThrough, offered.copiedAt());
-        updateClipboardWindowSecurity();
         clipboardChip.setContentDescription(clipboardTitle(offered));
         if (offered.image() == null) clipboardChip.setText(clipboardTitle(offered));
         else {

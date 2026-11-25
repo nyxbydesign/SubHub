@@ -5,6 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
@@ -33,6 +35,18 @@ public final class GagClipboardControlsServiceAndroidTest {
     private static final String APP = "com.subhub.app";
     private static final String FIXTURE = "com.subhub.app.test";
     private static final String EDITED = "Synthetic edited clipboard text";
+
+    @Test public void screenshotsIncludeClipboardSuggestionAndKeyboardPanel() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals("Grant full photo access in the synthetic guest to avoid its permission prompt",
+                GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        openFixture(true);
+        assertCapturedLabel(await(By.pkg(APP).desc(GagEditorFixtureActivity.CLIPBOARD_TEXT)),
+                "clipboard suggestion");
+
+        openClipboard();
+        assertCapturedLabel(await(By.pkg(APP).text(label(R.string.gag_clipboard_title))), "clipboard panel");
+    }
 
     @Test public void editSavesPrivatelyWhileTapPastesAndHoldSlidesToPinOrDelete() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -156,6 +170,49 @@ public final class GagClipboardControlsServiceAndroidTest {
     private static boolean systemClipboardOverlayPresent() {
         return InstrumentationRegistry.getInstrumentation().getUiAutomation().getWindows().stream()
                 .anyMatch(window -> "ClipboardOverlay".equals(String.valueOf(window.getTitle())));
+    }
+
+    private static void assertCapturedLabel(UiObject2 label, String surface) throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        Rect bounds = label.getVisibleBounds();
+        long deadline = SystemClock.uptimeMillis() + 2_000;
+        do {
+            Bitmap screen = instrumentation.getUiAutomation().takeScreenshot();
+            assertNotNull(screen);
+            try {
+                Rect sample = new Rect(bounds);
+                assertTrue("Label bounds outside screenshot: " + bounds,
+                        sample.intersect(0, 0, screen.getWidth(), screen.getHeight()));
+                int labelPixels = 0;
+                for (int y = sample.top; y < sample.bottom; y++) {
+                    for (int x = sample.left; x < sample.right; x++) {
+                        int pixel = screen.getPixel(x, y);
+                        // Gag draws these labels in #f6f6f6. Their pixels must survive the capture.
+                        if (Math.abs(Color.red(pixel) - 246) <= 2
+                                && Math.abs(Color.green(pixel) - 246) <= 2
+                                && Math.abs(Color.blue(pixel) - 246) <= 2
+                                && ++labelPixels >= 8) return;
+                    }
+                }
+                if (SystemClock.uptimeMillis() >= deadline) {
+                    Bitmap crop = Bitmap.createBitmap(screen, sample.left, sample.top,
+                            sample.width(), sample.height());
+                    try {
+                        try (var output = instrumentation.getTargetContext().openFileOutput(
+                                "gag-keyboard-screenshot-failure.png", android.content.Context.MODE_PRIVATE)) {
+                            crop.compress(Bitmap.CompressFormat.PNG, 100, output);
+                        }
+                    } finally {
+                        crop.recycle();
+                    }
+                    throw new AssertionError("Screenshot captured " + labelPixels + " pixels from the "
+                            + surface + " label at " + bounds);
+                }
+            } finally {
+                screen.recycle();
+            }
+            SystemClock.sleep(50);
+        } while (true);
     }
 
     private static UiObject2 openEditPopup() {
