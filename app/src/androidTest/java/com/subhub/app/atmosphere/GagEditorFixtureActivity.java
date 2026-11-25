@@ -22,7 +22,6 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String LONG_CLIPBOARD_PREFIX = "Long clipboard fixture ";
     static final String LONG_CLIPBOARD_TEXT = LONG_CLIPBOARD_PREFIX + "abc 123 ".repeat(768) + "tail";
     static final String SEED_LONG_CLIPBOARD = "gag_seed_long_clipboard";
-    static final String SEED_CLIPBOARD_AFTER_TEXT = "gag_seed_clipboard_after_text";
     static final String DELETION_TEXT = "keep über café tail";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private EditText editor;
@@ -61,19 +60,6 @@ public final class GagEditorFixtureActivity extends Activity {
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
         editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
-        String seedAfter = getIntent().getStringExtra(SEED_CLIPBOARD_AFTER_TEXT);
-        if (seedAfter != null) {
-            editor.addTextChangedListener(new TextWatcher() {
-                private boolean seeded;
-                @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
-                @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
-                @Override public void afterTextChanged(Editable text) {
-                    if (seeded || !TextUtils.equals(seedAfter, text)) return;
-                    seeded = true;
-                    editor.post(() -> seedClipboard(CLIPBOARD_TEXT));
-                }
-            });
-        }
         if (longClipboard) {
             editor.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
@@ -108,18 +94,14 @@ public final class GagEditorFixtureActivity extends Activity {
             seedClipboard = false;
             String text = getIntent().getBooleanExtra(SEED_LONG_CLIPBOARD, false)
                     ? LONG_CLIPBOARD_TEXT : CLIPBOARD_TEXT;
-            seedClipboard(text);
+            ClipData clip = ClipData.newPlainText("Fixture", text);
+            if (getIntent().getBooleanExtra(SUPPRESS_CLIPBOARD_OVERLAY, false)) {
+                // Android honors this for emulator clipboard synchronization.
+                PersistableBundle extras = new PersistableBundle();
+                extras.putBoolean("com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY", true);
+                clip.getDescription().setExtras(extras);
+            }
+            getSystemService(ClipboardManager.class).setPrimaryClip(clip);
         }
-    }
-
-    private void seedClipboard(String text) {
-        ClipData clip = ClipData.newPlainText("Fixture", text);
-        if (getIntent().getBooleanExtra(SUPPRESS_CLIPBOARD_OVERLAY, false)) {
-            // Android honors this for emulator clipboard synchronization.
-            PersistableBundle extras = new PersistableBundle();
-            extras.putBoolean("com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY", true);
-            clip.getDescription().setExtras(extras);
-        }
-        getSystemService(ClipboardManager.class).setPrimaryClip(clip);
     }
 }

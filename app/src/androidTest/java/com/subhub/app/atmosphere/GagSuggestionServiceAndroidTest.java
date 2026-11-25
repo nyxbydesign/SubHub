@@ -168,17 +168,20 @@ public final class GagSuggestionServiceAndroidTest {
         assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text("there")), TIMEOUT_MS));
     }
 
-    @Test public void explicitSpaceShowsThreeWordsWhileTheEmptyEditorPrefersTheClipboard() throws Exception {
+    @Test public void explicitSpaceShowsThreeWordsAndTheClipboardKeepsStarterSuggestions() throws Exception {
         openEditor(false, true);
         await(By.pkg("com.subhub.app").text(GagEditorFixtureActivity.CLIPBOARD_TEXT));
-        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text("You")), TIMEOUT_MS));
+        await(By.pkg("com.subhub.app").text("You"));
+        await(By.pkg("com.subhub.app").text("I"));
         assertText("");
 
+        keyDescription(R.string.gag_keyboard_clipboard);
+        keyDescription(R.string.gag_keyboard_back_to_keys);
+        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text(GagEditorFixtureActivity.CLIPBOARD_TEXT)),
+                TIMEOUT_MS));
         for (char letter : "thanks".toCharArray()) key(String.valueOf(letter));
         keyDescription(R.string.gag_keyboard_space);
         assertSuggestions("for", "again", "and");
-        assertTrue(device().wait(Until.gone(By.pkg("com.subhub.app").text(GagEditorFixtureActivity.CLIPBOARD_TEXT)),
-                TIMEOUT_MS));
         assertText("thanks ");
         key("again");
         assertText("thanks again");
