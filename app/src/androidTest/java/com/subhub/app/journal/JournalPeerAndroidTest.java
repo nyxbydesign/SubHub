@@ -15,7 +15,13 @@ import com.subhub.app.remote.RemoteSession;
 import com.subhub.app.remote.RemoteStore;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.util.Comparator;
@@ -72,13 +78,14 @@ public class JournalPeerAndroidTest {
         return new JournalEntry(UUID.randomUUID().toString().replace("-", ""), 100, 101, text, null,
                 attachment == null ? List.of() : List.of(attachment));
     }
-    private JournalAttachment media(long length) throws Exception {
+    private JournalAttachment media(long length) throws Exception { return media(length, dr, dp); }
+    private JournalAttachment media(long length, JournalRuntime sender, RemoteStore.Peer peer) throws Exception {
         File source = new File(root, "source.bin"); Random random = new Random(42);
         try (FileOutputStream output = new FileOutputStream(source)) {
             byte[] buffer = new byte[8192]; long left = length;
             while (left > 0) { random.nextBytes(buffer); int count = (int) Math.min(left, buffer.length); output.write(buffer, 0, count); left -= count; }
         }
-        String hash = RemoteAssets.digest(source); RemoteAssets assets = dr.ownAssets(dp); assets.reserve(hash, length);
+        String hash = RemoteAssets.digest(source); RemoteAssets assets = sender.ownAssets(peer); assets.reserve(hash, length);
         try (RandomAccessFile input = new RandomAccessFile(source, "r")) {
             long offset = 0;
             while (offset < length) { byte[] buffer = new byte[(int) Math.min(RemoteAssets.CHUNK_BYTES, length - offset)];
@@ -90,6 +97,10 @@ public class JournalPeerAndroidTest {
         return hooks(runtime, supported, true, false);
     }
     private RemoteSession.Hooks hooks(JournalRuntime runtime, boolean supported, boolean titles, boolean strictLegacy) throws Exception {
+        return hooks(runtime, supported, titles, strictLegacy, true);
+    }
+    private RemoteSession.Hooks hooks(JournalRuntime runtime, boolean supported, boolean titles, boolean strictLegacy,
+            boolean reportContinuation) throws Exception {
         RemoteAssets empty = new RemoteAssets(new File(root, runtime == dr ? "empty-dom" : "empty-sub"));
         return new RemoteSession.Hooks() {
             public int profileVersion() { return 1; }
@@ -106,7 +117,10 @@ public class JournalPeerAndroidTest {
             }
             public boolean journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 calls.incrementAndGet();
-                if (!strictLegacy) return JournalPeer.exchange(runtime, connection, peer, deadline);
+                if (!strictLegacy) {
+                    boolean continuation = JournalPeer.exchange(runtime, connection, peer, deadline);
+                    return reportContinuation && continuation;
+                }
                 legacySubJournal(connection, peer);
                 return false;
             }
@@ -133,6 +147,41 @@ public class JournalPeerAndroidTest {
             boolean outbound = new RemoteSession(dom, dt, dh).outgoing(connection, dp, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
             return new boolean[]{outbound, receiver.get(35, TimeUnit.SECONDS)};
         }
+    }
+
+    private boolean sendingWithLegacyReceiver(boolean domSends) throws Exception {
+        PeerTransport source = domSends ? dt : st, destination = domSends ? st : dt;
+        RemoteStore sourceStore = domSends ? dom : sub, destinationStore = domSends ? sub : dom;
+        RemoteStore.Peer sender = domSends ? dp : sp;
+        RemoteSession.Hooks sourceHooks = hooks(domSends ? dr : sr, true);
+        RemoteSession.Hooks destinationHooks = hooks(domSends ? sr : dr, true, false, false, false);
+        // Use loopback TCP for this receipt regression. The Iroh test below covers encrypted media transport.
+        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
+             Socket client = new Socket(InetAddress.getLoopbackAddress(), listener.getLocalPort());
+             Socket server = listener.accept()) {
+            PeerTransport.Connection send = socket(client, destination.localIdentity());
+            PeerTransport.Connection receive = socket(server, source.localIdentity());
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            Future<Boolean> remote = serving.submit(() -> new RemoteSession(destinationStore, destination, destinationHooks)
+                    .incoming(receive, RemoteProtocol.read(receive.input()), deadline));
+            boolean continuation = new RemoteSession(sourceStore, source, sourceHooks).outgoing(send, sender, deadline);
+            assertFalse("The legacy receiver cannot request continuation", remote.get(35, TimeUnit.SECONDS));
+            return continuation;
+        }
+    }
+
+    private static PeerTransport.Connection socket(Socket socket, String remoteIdentity) {
+        return new PeerTransport.Connection() {
+            public String authenticatedPeerIdentity() { return remoteIdentity; }
+            public InputStream input() throws IOException { return socket.getInputStream(); }
+            public OutputStream output() throws IOException { return socket.getOutputStream(); }
+            public void setReadTimeoutMillis(long timeout) {
+                try { socket.setSoTimeout((int) timeout); }
+                catch (IOException failure) { throw new IllegalStateException(failure); }
+            }
+            public boolean isDirect() { return true; }
+            public void close() throws IOException { socket.close(); }
+        };
     }
 
     private JSONObject legacyFrame(String type, RemoteStore.Peer peer) throws Exception {
@@ -217,10 +266,36 @@ public class JournalPeerAndroidTest {
         assertArrayEquals(new boolean[]{false, false}, session(true, false, true));
     }
 
+    @Test public void senderContinuesMediaOnlyBacklogForALegacyReceiverInEitherDirection() throws Exception {
+        for (boolean domSends : new boolean[]{true, false}) {
+            JournalRuntime source = domSends ? dr : sr, destination = domSends ? sr : dr;
+            RemoteStore.Peer sender = domSends ? dp : sp, receiver = domSends ? sp : dp;
+            String sourceScope = JournalRuntime.scope(sender), destinationScope = JournalRuntime.scope(receiver);
+            long pageBytes = 64L * RemoteAssets.CHUNK_BYTES;
+            JournalAttachment file = media(pageBytes + 123, source, sender);
+            JournalEntry entry = entry("Already acknowledged metadata", file);
+            source.entries.save(domSends, entry, Set.of(sourceScope));
+            long after = destination.entries.received(destinationScope);
+            long head = destination.entries.receive(destinationScope, source.entries.outgoing(sourceScope, after));
+            assertTrue(head > after);
+
+            assertTrue(sendingWithLegacyReceiver(domSends));
+            RemoteAssets assets = destination.assets(receiver);
+            assertFalse(assets.isComplete(file.hash));
+            assertEquals(pageBytes, assets.offset(file.hash));
+            assertEquals(head, destination.entries.received(destinationScope));
+
+            assertFalse(sendingWithLegacyReceiver(domSends));
+            assertTrue(assets.isComplete(file.hash));
+            assertEquals(file.hash, RemoteAssets.digest(assets.finish(file.hash)));
+            assertEquals(head, destination.entries.received(destinationScope));
+        }
+    }
+
     @Test public void mediaResumesAcrossBoundedSessionsAndWithdrawalRemovesRemoteReferenceAndBytes() throws Exception {
         JournalAttachment file = media(64L * RemoteAssets.CHUNK_BYTES + 123);
         JournalEntry entry = entry("Shared file", file); dr.entries.save(true, entry, Set.of(JournalRuntime.scope(dp)));
-        assertArrayEquals(new boolean[]{false, true}, session(true));
+        assertArrayEquals(new boolean[]{true, true}, session(true));
         assertFalse(sr.assets(sp).isComplete(file.hash)); assertEquals(64L * RemoteAssets.CHUNK_BYTES, sr.assets(sp).offset(file.hash));
         assertArrayEquals(new boolean[]{false, false}, session(true));
         assertTrue(sr.assets(sp).isComplete(file.hash)); assertEquals(file.hash, RemoteAssets.digest(sr.assets(sp).finish(file.hash)));

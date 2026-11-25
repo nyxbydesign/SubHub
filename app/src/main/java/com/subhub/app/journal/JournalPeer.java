@@ -65,6 +65,7 @@ public final class JournalPeer {
         JSONArray wants = receipt.getJSONArray("assets");
         if (wants.length() > MAX_WANTS) throw new IOException("Too many journal asset requests");
         Set<String> selected = new HashSet<>(); int chunks = 0;
+        boolean assetsRemaining = false;
         for (int i = 0; i < wants.length(); i++) {
             JSONObject request = wants.getJSONObject(i);
             JournalEntry.keys(request, Set.of("hash", "length", "offset"));
@@ -85,11 +86,14 @@ public final class JournalPeer {
                     offset += bytes.length; chunks++;
                 }
             }
+            assetsRemaining |= offset < length;
         }
         send(frame("journal_assets_end"));
         synchronized (runtime.authority) {
             check();
-            return through > after && runtime.entries.hasOutgoingAfter(scope, through);
+            // The session uses this result only after the peer has finished reading and persisting this phase.
+            return (through > after && runtime.entries.hasOutgoingAfter(scope, through))
+                    || (chunks > 0 && assetsRemaining);
         }
     }
 
