@@ -95,6 +95,38 @@ public final class GagClipboardControlsServiceAndroidTest {
         assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
     }
 
+    @Test
+    @SdkSuppress(minSdkVersion = 33)
+    public void textPasteRefreshesPredictionsWithoutAnotherKeypress() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        var prefs = GagScreenshotClipboard.preferences(target);
+        String clipboardOpened = "screenshots_clipboard_opened";
+        boolean hadSetting = prefs.contains(clipboardOpened);
+        boolean previouslyOpened = prefs.getBoolean(clipboardOpened, false);
+        assertTrue(prefs.edit().putBoolean(clipboardOpened, true).commit());
+        try {
+            openFixture(true);
+            String copied = GagEditorFixtureActivity.CLIPBOARD_TEXT;
+            await(By.pkg(APP).desc(copied)).click();
+            await(editor().text(copied));
+            BySelector nextWord = By.pkg(APP).text("and");
+            await(nextWord);
+
+            // Pasting from the panel over a same-length selection leaves the caret at the old end.
+            shell("input keycombination " + KeyEvent.KEYCODE_CTRL_LEFT + " " + KeyEvent.KEYCODE_A);
+            openClipboard();
+            await(By.pkg(APP).text(copied)).click();
+            await(editor().text(copied));
+            await(nextWord).click();
+            await(editor().text(copied + " and"));
+        } finally {
+            var edit = prefs.edit();
+            if (hadSetting) edit.putBoolean(clipboardOpened, previouslyOpened);
+            else edit.remove(clipboardOpened);
+            assertTrue(edit.commit());
+        }
+    }
+
     @Test public void editSavesPrivatelyWhileTapPastesAndHoldSlidesToPinOrDelete() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals("Grant full photo access in the synthetic guest to isolate the controls from the permission prompt",

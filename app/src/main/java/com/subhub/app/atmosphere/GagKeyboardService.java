@@ -101,6 +101,7 @@ public final class GagKeyboardService extends InputMethodService {
     private int observedComposingStart = -1;
     private int committedCursor = -1;
     private GagSuggestionSpace suggestionSpace;
+    private GagSuggestionContext clipboardPasteContext;
     private PendingBracket pendingBracket;
     private char pendingPunctuation;
     private int punctuationCursor = -1;
@@ -440,6 +441,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearPendingSpace() {
         suggestionSpace = null;
+        clipboardPasteContext = null;
         pendingBracket = null;
         pendingPunctuation = 0;
         punctuationCursor = -1;
@@ -1632,11 +1634,20 @@ public final class GagKeyboardService extends InputMethodService {
         clearSuggestions();
         resetOpening(false);
         word.setLength(0);
-        if (!input.commitText(completed, 1)) input.finishComposingText();
+        boolean pasted = input.commitText(completed, 1);
+        if (!pasted) input.finishComposingText();
         literalWord = false;
         if (!completed.isEmpty()) {
             int last = completed.codePointBefore(completed.length());
             literalWord = GagRules.wordCharacter(last) || GagRules.apostrophe(last);
+        }
+        if (pasted) {
+            GagSuggestionContext context = GagSuggestionContext.read(input);
+            String insertedTail = completed.substring(Math.max(0, completed.length() - GagNextWords.CONTEXT_LIMIT));
+            if (!insertedTail.isEmpty() && context != null && context.before().endsWith(insertedTail)) {
+                clipboardPasteContext = context;
+            }
+            if (panel == null) scheduleSuggestions();
         }
         closeClipboard();
     }
@@ -1829,7 +1840,10 @@ public final class GagKeyboardService extends InputMethodService {
                 return;
             }
             String before = context.before();
-            if (suggestionSpace != null && suggestionSpace.matches(input)) before += " ";
+            // A paste completes the text for prediction without altering the editor or literal typing.
+            boolean clipboardSeparator = context.equals(clipboardPasteContext) && !before.isEmpty()
+                    && !Character.isWhitespace(before.codePointBefore(before.length()));
+            if (clipboardSeparator || (suggestionSpace != null && suggestionSpace.matches(input))) before += " ";
             List<String> candidates = nextWords(before);
             if (shifted) {
                 List<String> uppercase = new ArrayList<>(candidates.size());
@@ -1840,7 +1854,7 @@ public final class GagKeyboardService extends InputMethodService {
                 candidates = uppercase;
             }
             bindSuggestionSlots(suggestionSlots, candidates,
-                    candidate -> acceptNextWord(generation, epoch, input, context, candidate));
+                    candidate -> acceptNextWord(generation, epoch, input, context, candidate, clipboardSeparator));
             return;
         }
         GagLexicon source = lexicon;
@@ -1891,7 +1905,7 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void acceptNextWord(long generation, long epoch, InputConnection input,
-            GagSuggestionContext context, String candidate) {
+            GagSuggestionContext context, String candidate, boolean clipboardSeparator) {
         refreshReplacementAuthority();
         if (!isCurrentSuggestion(generation, epoch, input) || word.length() != 0) return;
         clearDeletionHistory();
@@ -1900,7 +1914,8 @@ public final class GagKeyboardService extends InputMethodService {
         clearPendingSpace();
         if (!context.commit(input, candidate, token -> applyGag(token, token),
                 completed -> commitSuggestion(input, 0,
-                        space != null && space.matches(input) ? " " + completed : completed))) return;
+                        clipboardSeparator || (space != null && space.matches(input))
+                                ? " " + completed : completed))) return;
         resetOpening(false);
         literalWord = false;
         lastShiftTap = 0;
