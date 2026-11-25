@@ -798,7 +798,7 @@ public final class GagKeyboardService extends InputMethodService {
         keyboard.setOrientation(LinearLayout.VERTICAL);
         keyboard.setMotionEventSplittingEnabled(true);
         keyboard.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 13));
+        keyboard.setPadding(dp(2), 0, dp(2), dp(compact() ? 5 : 17));
         if (backdrop == null) backdrop = BitmapFactory.decodeResource(getResources(), R.drawable.bg_gag_keyboard);
         keyboard.setBackground(new KeyboardBackdrop(backdrop));
         keyboardHost = surface;
