@@ -792,6 +792,17 @@ public final class TasksAndroidTest {
             androidx.test.espresso.Espresso.pressBack();
             openTask(page, approved);
             assertCompletionText(page, approved, requested);
+            page.onActivity(activity -> {
+                View root = activity.findViewById(android.R.id.content);
+                String id = occurrenceId(approved);
+                View detail = root.findViewWithTag("task_detail:" + id);
+                View submission = root.findViewWithTag("task_submission:" + id);
+                String pending = activity.getString(R.string.tasks_pending);
+                assertNotNull(detail);
+                assertNotNull(submission);
+                assertFalse(containsText(detail, pending));
+                assertTrue(containsText(submission, pending));
+            });
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "tasks_history"); tap("tasks_history");
             onView(withTagValue(is("task_completion_time:" + occurrenceId(approved)))).check(doesNotExist());

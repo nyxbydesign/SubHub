@@ -533,7 +533,8 @@ public final class TasksActivity extends RolePage {
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
-        int status = (occurrence.status == TaskEngine.Status.ACCEPTED
+        int status = (occurrence.submission != null
+                || occurrence.status == TaskEngine.Status.ACCEPTED
                 || occurrence.status == TaskEngine.Status.DENIED) ? 0 : statusLabel(occurrence.status);
         TasksUi.occurrenceHeader(card, occurrence, status);
     }
