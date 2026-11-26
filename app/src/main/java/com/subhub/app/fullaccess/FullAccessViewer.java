@@ -1265,6 +1265,7 @@ final class FullAccessViewer implements AutoCloseable {
         return switch (status) {
             case "disabled" -> R.string.full_access_disabled;
             case "permission_required" -> demo == null ? R.string.full_access_permission_needed : R.string.demo_full_access_permission_missing;
+            case "demo_notification_setup_required" -> R.string.demo_full_access_notifications_setup_required;
             case "update_required" -> R.string.full_access_update_required;
             case "declined" -> R.string.full_access_screen_declined;
             case "capture_in_use" -> R.string.full_access_screen_busy;

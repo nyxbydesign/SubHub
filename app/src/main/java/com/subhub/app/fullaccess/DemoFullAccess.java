@@ -7,6 +7,7 @@ import com.subhub.app.people.DummySubPreview;
 import com.subhub.app.security.ControllerPinManager;
 import java.io.IOException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -15,7 +16,11 @@ import org.json.JSONObject;
 final class DemoFullAccess {
     private static final String CHOICES = "demo_full_access_choices";
     private static final Object HISTORY_LOCK = new Object();
+    private static volatile long grantRevision;
     private static volatile long notificationRevision;
+    private static volatile boolean failedGrantWrite;
+    private static volatile boolean failedNotificationWrite;
+    private static volatile boolean failedNotificationTextWrite;
     private final Context app;
     private final String generation;
     private final long revision;
@@ -31,18 +36,33 @@ final class DemoFullAccess {
     boolean current() { return available() && enabled(app, generation); }
 
     static boolean enabled(Context context, String generation) {
-        return generation.equals(choices(context).getString("enabled_generation", ""));
+        return generation.equals(choices(context).getString("enabled_generation", "")) && !failedGrantWrite;
     }
 
+    long grantRevision() { return grantRevision; }
+
     boolean setEnabled(boolean enabled) {
+        return setEnabled(enabled, SharedPreferences.Editor::commit);
+    }
+
+    boolean setEnabled(boolean enabled, Predicate<SharedPreferences.Editor> persist) {
         synchronized (HISTORY_LOCK) {
             if (!available()) return false;
             if (enabled && current()) return true;
-            boolean saved = (enabled ? choices(app).edit().putString("enabled_generation", generation)
-                    : choices(app).edit().clear()).commit();
+            // A failed commit can publish values to memory before reporting the disk error.
+            failedGrantWrite = true;
+            grantRevision++;
             notificationRevision++;
-            FullAccessNotificationHistory.clear(app, true);
-            FullAccessSmsExport.clearDemo(app);
+            boolean saved = persist.test(enabled ? choices(app).edit().putString("enabled_generation", generation)
+                    : choices(app).edit().clear());
+            if (!saved && !enabled) saved = app.deleteSharedPreferences(CHOICES);
+            failedGrantWrite = !saved;
+            if (saved || !enabled) {
+                failedNotificationWrite = false;
+                failedNotificationTextWrite = false;
+                FullAccessNotificationHistory.clear(app, true);
+                FullAccessSmsExport.clearDemo(app);
+            }
             return saved;
         }
     }
@@ -114,8 +134,9 @@ final class DemoFullAccess {
     private JSONObject notifications(String operation, String node, String cursor, long textSince)
             throws JSONException {
         synchronized (HISTORY_LOCK) {
-            long since = choice(app, "notifications", generation);
-            if (since <= 0 || !FullAccessDataSources.hasNotificationAccess(app)) return status("permission_required");
+            long since = notificationSince(app, generation);
+            if (!FullAccessDataSources.hasNotificationAccess(app)) return status("permission_required");
+            if (since <= 0) return status("demo_notification_setup_required");
             if (textSince != notificationTextSince(app))
                 return status("unavailable");
             long now = System.currentTimeMillis();
@@ -130,40 +151,54 @@ final class DemoFullAccess {
         synchronized (HISTORY_LOCK) {
             requireCurrent();
             if (!FullAccessDataSources.hasNotificationAccess(app)) return false;
-            if (choice(app, "notifications", generation) > 0) return true;
-            FullAccessNotificationHistory.clear(app, true);
+            if (notificationSince(app, generation) > 0) return true;
+            failedNotificationWrite = true;
             notificationRevision++;
             long now = System.currentTimeMillis();
             SharedPreferences.Editor editor = choices(app).edit().putString("notifications_generation", generation)
                     .putLong("notifications_since", now).remove(FullAccessNotificationListener.TEXT_SINCE);
             if (notificationsDisclosed) editor.putLong(FullAccessNotificationListener.TEXT_SINCE, now + 1);
             boolean saved = editor.commit();
-            if (saved) FullAccessNotificationListener.reconcileIfConnected();
+            failedNotificationWrite = !saved;
+            if (saved) {
+                failedNotificationTextWrite = false;
+                FullAccessNotificationHistory.clear(app, true);
+                FullAccessNotificationListener.reconcileIfConnected();
+            }
             return saved;
         }
     }
 
     static FullAccessNotificationListener.Choice notificationChoice(Context context) {
-        SharedPreferences prefs = choices(context);
         long observedChange = notificationRevision;
-        String generation = prefs.getString("notifications_generation", "");
-        long since = choice(context, "notifications", generation);
-        return since <= 0 || !enabled(context, generation) ? null : new FullAccessNotificationListener.Choice(
-                observedChange, generation, ControllerPinManager.domWorkspaceRevision(), since,
-                notificationTextSince(context));
+        String generation = choices(context).getString("notifications_generation", "");
+        long since = notificationSince(context, generation);
+        long textSince = notificationTextSince(context);
+        return since <= 0 || !enabled(context, generation) || observedChange != notificationRevision
+                ? null : new FullAccessNotificationListener.Choice(observedChange, generation,
+                        ControllerPinManager.domWorkspaceRevision(), since, textSince);
     }
 
     boolean renewNotifications(FullAccessNotificationListener.Choice expected) {
         synchronized (HISTORY_LOCK) {
             if (!current() || expected.textSince() > 0 || !expected.equals(notificationChoice(app))
                     || !FullAccessDataSources.hasNotificationAccess(app)) return false;
-            return choices(app).edit().putLong(FullAccessNotificationListener.TEXT_SINCE,
+            failedNotificationTextWrite = true;
+            boolean saved = choices(app).edit().putLong(FullAccessNotificationListener.TEXT_SINCE,
                     System.currentTimeMillis() + 1).commit();
+            failedNotificationTextWrite = !saved;
+            return saved;
         }
     }
 
     private static long notificationTextSince(Context context) {
-        return choices(context).getLong(FullAccessNotificationListener.TEXT_SINCE, 0);
+        long since = choices(context).getLong(FullAccessNotificationListener.TEXT_SINCE, 0);
+        return failedNotificationWrite || failedNotificationTextWrite ? 0 : since;
+    }
+
+    private static long notificationSince(Context context, String generation) {
+        long since = choice(context, "notifications", generation);
+        return failedNotificationWrite ? 0 : since;
     }
 
     static void recordNotification(Context context, FullAccessNotificationListener.Choice expected,

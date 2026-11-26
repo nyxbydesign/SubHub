@@ -19,26 +19,28 @@ import com.subhub.app.util.PreferencePage;
 public final class DemoFullAccessActivity extends PreferencePage {
     private static final String SCOPE = "blackmail_scope";
     private static final String SCROLL = "blackmail_scroll";
+    private static final String PENDING_SCREEN_GRANT = "blackmail_pending_screen_grant";
     private DemoFullAccess source;
     private LinearLayout controls;
     private FullAccessViewer viewer;
     private boolean resumed;
     private String restoredScope;
     private int restoredScroll;
+    private Long restoredScreenGrant;
     private ScreenRequest screenRequest;
     private boolean screenResultReady;
     private Intent screenApproval;
 
-    private record ScreenRequest(FullAccessViewer viewer, long selection) {
-        boolean matches(FullAccessViewer selected) {
-            return viewer == selected && selection == viewer.screenSelection();
+    private record ScreenRequest(FullAccessViewer viewer, long selection, long grant) {
+        boolean matches(FullAccessViewer selected, long currentGrant) {
+            return viewer == selected && selection == viewer.screenSelection() && grant == currentGrant;
         }
     }
 
     private final ActivityResultLauncher<Intent> screen = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (screenRequest == null) return;
-                if (!allowed() || !screenRequest.matches(viewer)) {
+                if (screenResultReady || screenRequest == null && restoredScreenGrant == null) return;
+                if (!allowed() || !pendingScreenMatches(source.grantRevision())) {
                     clearScreenRequest();
                     return;
                 }
@@ -60,6 +62,10 @@ public final class DemoFullAccessActivity extends PreferencePage {
         if (state != null) {
             restoredScope = state.getString(SCOPE);
             restoredScroll = state.getInt(SCROLL);
+            if ("screen".equals(restoredScope) && state.containsKey(PENDING_SCREEN_GRANT)
+                    && state.getLong(PENDING_SCREEN_GRANT) == source.grantRevision() && allowed()) {
+                restoredScreenGrant = state.getLong(PENDING_SCREEN_GRANT);
+            }
         }
     }
 
@@ -85,6 +91,13 @@ public final class DemoFullAccessActivity extends PreferencePage {
             controls.removeAllViews();
             viewer = new FullAccessViewer(this, controls, source);
             viewer.restoreNavigation(restoredScope, restoredScroll);
+            if (restoredScreenGrant != null) {
+                long selection = viewer.screenSelection();
+                if (selection != 0 && restoredScreenGrant == source.grantRevision())
+                    screenRequest = new ScreenRequest(viewer, selection, restoredScreenGrant);
+                else clearScreenRequest();
+                restoredScreenGrant = null;
+            }
             restoredScope = null;
             restoredScroll = 0;
         }
@@ -100,9 +113,11 @@ public final class DemoFullAccessActivity extends PreferencePage {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
-        if (viewer != null && allowed()) {
-            state.putString(SCOPE, viewer.selectedScope());
-            state.putInt(SCROLL, viewer.navigationScroll());
+        if (allowed()) {
+            state.putString(SCOPE, viewer == null ? restoredScope : viewer.selectedScope());
+            state.putInt(SCROLL, viewer == null ? restoredScroll : viewer.navigationScroll());
+            long grant = source.grantRevision();
+            if (!screenResultReady && pendingScreenMatches(grant)) state.putLong(PENDING_SCREEN_GRANT, grant);
         }
     }
 
@@ -124,7 +139,8 @@ public final class DemoFullAccessActivity extends PreferencePage {
 
     void requestScreen() {
         FullAccessViewer requested = viewer;
-        if (!viewerCurrent() || requested == null || screenRequest != null) return;
+        if (!viewerCurrent() || requested == null || screenRequest != null || restoredScreenGrant != null) return;
+        long grant = source.grantRevision();
         long selection = requested.screenSelection();
         if (selection == 0) return;
         if (MediaProjectionLeaseRegistry.owner() != null) {
@@ -146,7 +162,11 @@ public final class DemoFullAccessActivity extends PreferencePage {
                         .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
                 return;
             }
-            screenRequest = new ScreenRequest(requested, selection);
+            if (!viewerCurrent() || source.grantRevision() != grant) {
+                requested.screenRequestEnded();
+                return;
+            }
+            screenRequest = new ScreenRequest(requested, selection, grant);
             screen.launch(projection.createScreenCaptureIntent());
         } catch (RuntimeException unavailable) {
             clearScreenRequest();
@@ -160,14 +180,20 @@ public final class DemoFullAccessActivity extends PreferencePage {
         ScreenRequest completed = screenRequest;
         Intent approval = screenApproval;
         clearScreenRequest();
-        if (!viewerCurrent() || !completed.matches(viewer)) return;
+        if (!viewerCurrent() || !completed.matches(viewer, source.grantRevision())) return;
         if (approval == null) viewer.screenRequestEnded();
         else viewer.showLocalScreen(approval);
     }
 
     private void clearScreenRequest() {
+        restoredScreenGrant = null;
         screenRequest = null;
         screenResultReady = false;
         screenApproval = null;
+    }
+
+    private boolean pendingScreenMatches(long grant) {
+        return restoredScreenGrant != null ? restoredScreenGrant == grant && "screen".equals(restoredScope)
+                : screenRequest != null && screenRequest.matches(viewer, grant);
     }
 }

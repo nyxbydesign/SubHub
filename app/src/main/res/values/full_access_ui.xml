@@ -111,6 +111,7 @@
     <string name="demo_full_access_enable_disclosure">Blackmail can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. Notification access includes future titles and messages Android makes available, including text hidden on your lock screen. This view stays on this phone.</string>
     <string name="demo_full_access_enable_profile">Turn on Blackmail in the Demo Sub profile to view your phone data.</string>
     <string name="demo_full_access_permission_missing">This view needs Android permission. You can enable it in your phone’s settings.</string>
+    <string name="demo_full_access_notifications_setup_required">In Edit profile, choose Review notification access to start saving new notifications on this phone.</string>
     <string name="full_access_browse_files">Browse files</string>
     <string name="full_access_close_view">Close</string>
 </resources>

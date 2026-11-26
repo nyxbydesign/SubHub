@@ -190,8 +190,8 @@ public final class FullAccessSetup {
         if (!state.enabled && !state.eligible && demo == null)
             PersonUi.text(panel, host.getString(R.string.full_access_pair_needed), false);
         if (state.enabled && pending == null && remaining.isEmpty()) {
-            boolean reviewNotifications = state.notifications != null && state.notifications.textSince() == 0
-                    && FullAccessDataSources.hasNotificationAccess(app);
+            boolean reviewNotifications = FullAccessDataSources.hasNotificationAccess(app)
+                    && (state.notifications == null ? demo != null : state.notifications.textSince() == 0);
             boolean reviewFiles = state.files == FullAccessFiles.Setup.PAIRED_REVIEW;
             if (reviewNotifications || reviewFiles) {
                 int title = reviewNotifications && reviewFiles ? R.string.blackmail_access_review
@@ -260,8 +260,7 @@ public final class FullAccessSetup {
             return;
         }
         work.loadSerial("profile-full-access-write", () -> current(state.epoch)
-                && (demo == null ? FullAccessDataSources.renewNotifications(app, state.notifications)
-                : demo.renewNotifications(state.notifications)), saved -> {
+                && approveNotificationReview(state), saved -> {
             if (!saved) notice(R.string.full_access_setup_failed);
             else FullAccessNotificationListener.reconcileIfConnected();
             advance();
@@ -271,6 +270,12 @@ public final class FullAccessSetup {
             advance();
             refresh();
         });
+    }
+
+    private boolean approveNotificationReview(State state) {
+        if (demo == null) return FullAccessDataSources.renewNotifications(app, state.notifications);
+        if (state.notifications == null) return demo.enableNotifications(true);
+        return demo.renewNotifications(state.notifications);
     }
 
     private void confirm(State state) {

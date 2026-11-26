@@ -3,20 +3,26 @@ package com.subhub.app.people;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.*;
 
 import android.Manifest;
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.app.NotificationManager;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.os.Build;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,6 +39,7 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 import com.subhub.app.OwnedUiIntegrationFixture;
+import com.subhub.app.NativeUiActions;
 import com.subhub.app.R;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.fullaccess.DemoFullAccessActivity;
@@ -56,6 +63,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.RuleChain;
@@ -135,6 +144,154 @@ public final class DemoFullAccessAndroidTest {
             assertLanding(restored);
             assertNull(MediaProjectionLeaseRegistry.owner());
         });
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 35, maxSdkVersion = 35)
+    public void demoScreenApprovalSurvivesViewerRecreation() throws Exception {
+        assertOwnedGuest();
+        assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS));
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        String systemUi = "com.android.systemui";
+        withViewer(viewer -> {
+            assertNull(MediaProjectionLeaseRegistry.owner());
+            tapEntry("screen");
+            assertNotNull(device.wait(Until.findObject(By.pkg(systemUi).text("Cancel")), 10_000));
+            instrumentation.runOnMainSync(viewer::recreate);
+            await(() -> onMain(viewer::isDestroyed));
+            UiObject2 spinner = device.findObject(By.res(systemUi, "screen_share_mode_spinner"));
+            if (spinner == null) spinner = device.findObject(By.res(systemUi, "screen_share_mode_options"));
+            assertNotNull("Android consent stays open across recreation", spinner);
+            spinner.click();
+            UiObject2 entire = device.wait(Until.findObject(By.pkg(systemUi)
+                    .text(Pattern.compile("(?i)(?:share )?entire screen"))), 8_000);
+            assertNotNull(entire);
+            entire.click();
+            UiObject2 approve = device.wait(Until.findObject(By.pkg(systemUi)
+                    .text(Pattern.compile("Start|Start now|Start recording|Start sharing|Share"))), 8_000);
+            assertNotNull(approve);
+            approve.click();
+            DemoFullAccessActivity restored = awaitResumed(DemoFullAccessActivity.class);
+            assertNotSame(viewer, restored);
+            await(() -> MediaProjectionLeaseRegistry.owner() == MediaProjectionLeaseRegistry.Owner.FULL_ACCESS);
+            assertTrue(device.pressBack());
+            assertLanding(restored);
+            await(() -> MediaProjectionLeaseRegistry.owner() == null);
+        });
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 35, maxSdkVersion = 35)
+    public void demoLateNotificationPermissionRequiresProfileReviewAndRetainsSms() throws Exception {
+        assertOwnedGuest();
+        var manager = context.getSystemService(NotificationManager.class);
+        var listener = new ComponentName(context, "com.subhub.app.fullaccess.FullAccessNotificationListener");
+        assertNotNull(manager);
+        boolean wasAllowed = manager.isNotificationListenerAccessGranted(listener);
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        try {
+            setNotificationListener(listener, false);
+            await(() -> !manager.isNotificationListenerAccessGranted(listener));
+            withViewer(viewer -> {
+                String generation = InternalSubData.peek(context).acknowledged().generation;
+                SharedPreferences choices = context.getSharedPreferences("demo_full_access_choices", 0);
+                try (AutoCloseable transcript = FullAccessDataPresentationAndroidTest.seedDemoTranscript(
+                        context, generation, new String[]{"Synthetic consent fixture message"})) {
+                    long smsSince = choices.getLong("sms_since", 0);
+                    assertTrue(smsSince > 0);
+                    tapEntry("notifications");
+                    awaitViewerText(viewer, R.string.demo_full_access_permission_missing);
+                    setNotificationListener(listener, true);
+                    await(() -> manager.isNotificationListenerAccessGranted(listener));
+                    assertTrue(device.pressBack());
+                    assertLanding(viewer);
+                    tapEntry("notifications");
+                    awaitViewerText(viewer, R.string.demo_full_access_notifications_setup_required);
+                    assertFalse("Android permission alone does not start collection", choices.contains("notifications_since"));
+
+                    instrumentation.runOnMainSync(() -> viewer.startActivity(
+                            DummySubPreview.childIntent(viewer, ProfileEditorActivity.class)));
+                    ProfileEditorActivity profile = awaitResumed(ProfileEditorActivity.class);
+                    awaitViewerText(profile, R.string.blackmail_notifications_review);
+                    onView(withText(R.string.blackmail_notifications_review))
+                            .perform(NativeUiActions.revealAboveNavigation(), click());
+                    assertFalse("Opening the review does not start collection", choices.contains("notifications_since"));
+                    long confirmedAfter = System.currentTimeMillis();
+                    onView(withId(android.R.id.button1)).perform(click());
+                    await(() -> choices.getLong("notifications_since", 0) >= confirmedAfter);
+                    assertEquals(generation, choices.getString("notifications_generation", ""));
+                    assertEquals(smsSince, choices.getLong("sms_since", 0));
+                    instrumentation.runOnMainSync(profile::finish);
+                    assertSame(viewer, awaitResumed(DemoFullAccessActivity.class));
+                    await(() -> onMain(viewer::hasWindowFocus));
+                    assertTrue(device.pressBack());
+                    assertLanding(viewer);
+                    tapEntry("sms");
+                    await(() -> onMain(() -> visible(viewer, "blackmail_conversation") != null));
+                } catch (Exception failure) {
+                    throw new AssertionError(failure);
+                }
+            });
+        } finally {
+            setNotificationListener(listener, wasAllowed);
+            await(() -> manager.isNotificationListenerAccessGranted(listener) == wasAllowed);
+        }
+    }
+
+    @Test public void demoEnableRetriesAnUnacknowledgedPreferenceWrite() throws Exception {
+        assertOwnedGuest();
+        withViewer(viewer -> {
+            try {
+                var field = DemoFullAccessActivity.class.getDeclaredField("source");
+                field.setAccessible(true);
+                Object source = field.get(viewer);
+                var setEnabled = source.getClass().getDeclaredMethod("setEnabled", boolean.class, Predicate.class);
+                setEnabled.setAccessible(true);
+                var current = source.getClass().getDeclaredMethod("current");
+                current.setAccessible(true);
+                Predicate<SharedPreferences.Editor> acknowledge = SharedPreferences.Editor::commit;
+                assertTrue((Boolean) setEnabled.invoke(source, false, acknowledge));
+                Predicate<SharedPreferences.Editor> memoryOnly = editor -> {
+                    editor.apply(); // Publish values to memory while withholding a durability acknowledgement.
+                    return false;
+                };
+                assertFalse((Boolean) setEnabled.invoke(source, true, memoryOnly));
+                String generation = InternalSubData.peek(context).acknowledged().generation;
+                assertEquals(generation, context.getSharedPreferences("demo_full_access_choices", 0)
+                        .getString("enabled_generation", ""));
+                assertFalse((Boolean) current.invoke(source));
+                AtomicInteger writes = new AtomicInteger();
+                Predicate<SharedPreferences.Editor> retry = editor -> {
+                    writes.incrementAndGet();
+                    return editor.commit();
+                };
+                assertTrue((Boolean) setEnabled.invoke(source, true, retry));
+                assertEquals(1, writes.get());
+                assertTrue((Boolean) current.invoke(source));
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError(failure);
+            }
+        });
+    }
+
+    private void awaitViewerText(Activity activity, int id) {
+        String text = context.getString(id);
+        await(() -> onMain(() -> contains(activity.findViewById(android.R.id.content), text)));
+    }
+
+    private static void assertOwnedGuest() {
+        assertEquals("Run only on the owned guest", "true",
+                InstrumentationRegistry.getArguments().getString("blackmail_owned_guest"));
+    }
+
+    private void setNotificationListener(ComponentName listener, boolean enable) throws IOException {
+        String operation = enable ? "allow_listener" : "disallow_listener";
+        try (var output = new ParcelFileDescriptor.AutoCloseInputStream(instrumentation.getUiAutomation()
+                .executeShellCommand("cmd notification " + operation + " " + listener.flattenToString()))) {
+            byte[] buffer = new byte[1024];
+            while (output.read(buffer) != -1) {
+                // An independent NotificationManager read checks whether the operation took effect.
+            }
+        }
     }
 
     @Test public void demoSmsThreadLoadsOlderMessagesAutomatically() throws Exception {
