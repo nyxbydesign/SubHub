@@ -719,8 +719,8 @@ final class FullAccessViewer implements AutoCloseable {
         switch (session.scope) {
             case "contacts" -> {
                 JSONObject details = item.optBoolean("hasPhoto") ? session.rowDetails.get(id) : null;
-                LinearLayout row = BlackmailViews.row(card, title, item.optString("detail"), 0, true,
-                        BlackmailViews.photo((details == null ? item : details).optString("photo")), null);
+                LinearLayout row = BlackmailViews.contact(card, title, item.optString("detail"),
+                        BlackmailViews.photo((details == null ? item : details).optString("photo")));
                 row.setTag("blackmail_contact");
             }
             case "notifications" -> {

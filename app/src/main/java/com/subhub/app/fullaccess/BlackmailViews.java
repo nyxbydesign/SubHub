@@ -17,6 +17,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.appcompat.widget.AppCompatButton;
+import androidx.core.view.OneShotPreDrawListener;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonUi;
@@ -111,6 +112,15 @@ final class BlackmailViews {
 
     static LinearLayout row(LinearLayout parent, CharSequence title, CharSequence detail, int icon,
             boolean initials, Bitmap photo, Runnable open) {
+        return row(parent, title, detail, icon, initials, photo, open, false);
+    }
+
+    static LinearLayout contact(LinearLayout parent, String title, String detail, Bitmap photo) {
+        return row(parent, title, detail, 0, true, photo, null, true);
+    }
+
+    private static LinearLayout row(LinearLayout parent, CharSequence title, CharSequence detail,
+            int icon, boolean initials, Bitmap photo, Runnable open, boolean expandDetails) {
         Context context = parent.getContext();
         LinearLayout row = horizontal(context);
         row.setMinimumHeight(dp(context, 48));
@@ -124,20 +134,52 @@ final class BlackmailViews {
             description.setMaxLines(2);
             description.setEllipsize(TextUtils.TruncateAt.END);
             copy.addView(description, new LinearLayout.LayoutParams(-1, -2));
+            if (expandDetails) {
+                description.setTag("blackmail_contact_details");
+                OneShotPreDrawListener.add(description, () -> addDetailDisclosure(row, description));
+            }
         }
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         if (open != null) {
-            ImageView chevron = icon(context, R.drawable.ic_overview_chevron, R.color.accent_text);
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(context, 16), dp(context, 16));
-            size.setMarginStart(dp(context, 8));
-            row.addView(chevron, size);
-            row.setOnClickListener(view -> open.run());
-            row.setFocusable(true);
-            row.setForeground(ripple(context, null));
-            ViewCompat.setScreenReaderFocusable(row, true);
+            addChevron(row);
+            clickable(row, open);
         }
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
+    }
+
+    private static void addDetailDisclosure(LinearLayout row, TextView details) {
+        android.text.Layout layout = details.getLayout();
+        if (layout == null || layout.getLineCount() == 0
+                || layout.getEllipsisCount(layout.getLineCount() - 1) == 0) return;
+        ImageView chevron = addChevron(row);
+        chevron.setRotation(90);
+        chevron.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        ViewCompat.setStateDescription(row, row.getContext().getString(R.string.section_collapsed));
+        clickable(row, () -> {
+            boolean expanded = details.getMaxLines() == 2;
+            details.setMaxLines(expanded ? Integer.MAX_VALUE : 2);
+            details.setEllipsize(expanded ? null : TextUtils.TruncateAt.END);
+            chevron.setRotation(expanded ? -90 : 90);
+            ViewCompat.setStateDescription(row, row.getContext().getString(
+                    expanded ? R.string.section_expanded : R.string.section_collapsed));
+        });
+    }
+
+    private static ImageView addChevron(LinearLayout row) {
+        Context context = row.getContext();
+        ImageView chevron = icon(context, R.drawable.ic_overview_chevron, R.color.accent_text);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(context, 16), dp(context, 16));
+        size.setMarginStart(dp(context, 8));
+        row.addView(chevron, size);
+        return chevron;
+    }
+
+    private static void clickable(LinearLayout row, Runnable open) {
+        row.setOnClickListener(view -> open.run());
+        row.setFocusable(true);
+        row.setForeground(ripple(row.getContext(), null));
+        ViewCompat.setScreenReaderFocusable(row, true);
     }
 
     static void notification(LinearLayout parent, JSONObject item, boolean showApp, String localPackage) {

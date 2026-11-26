@@ -1,5 +1,9 @@
 package com.subhub.app.fullaccess;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
 import android.content.Context;
@@ -15,8 +19,12 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.core.view.ViewCompat;
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.censor.android.NativeTextFixtureActivity;
 import com.subhub.app.people.PersonUi;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -26,10 +34,56 @@ import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.Rule;
 import org.junit.Test;
 
 /** Synthetic Android presenter verification, independent of any personal data or screen-sharing grant. */
 public final class BlackmailViewsAndroidTest {
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+
+    @Test public void tappingATruncatedContactRevealsEveryLineAndCanCollapseIt() {
+        String allValues = "+1 202-555-0104\n+1 202-555-0147\n+1 202-555-0191\n"
+                + "alex@example.test\nbooking@example.test\nrehearsal@example.test";
+        try (ActivityScenario<NativeTextFixtureActivity> scenario = ActivityScenario.launch(NativeTextFixtureActivity.class)) {
+            scenario.onActivity(activity -> {
+                Context themed = new ContextThemeWrapper(activity, R.style.Theme_SubHub);
+                LinearLayout root = panel(themed);
+                BlackmailViews.contact(root, "Alex Rivera", allValues, null).setTag("long_contact");
+                BlackmailViews.contact(root, "Jordan Lee", "+1 202-555-0105", null).setTag("short_contact");
+                activity.setContentView(root);
+            });
+            onView(withTagValue(is("long_contact"))).check((row, missing) -> {
+                if (missing != null) throw missing;
+                TextView details = row.findViewWithTag("blackmail_contact_details");
+                assertEquals(2, details.getLineCount());
+                assertTrue(details.getLayout().getEllipsisCount(1) > 0);
+                assertEquals(row.getContext().getString(R.string.section_collapsed),
+                        ViewCompat.getStateDescription(row));
+            });
+            onView(withTagValue(is("short_contact"))).check((row, missing) -> {
+                if (missing != null) throw missing;
+                assertFalse(row.isClickable());
+            });
+            onView(withTagValue(is("long_contact"))).perform(click()).check((row, missing) -> {
+                if (missing != null) throw missing;
+                TextView details = row.findViewWithTag("blackmail_contact_details");
+                assertEquals(allValues, details.getText().toString());
+                assertTrue(details.getLineCount() >= 6);
+                int last = details.getLineCount() - 1;
+                assertEquals(allValues.length(), details.getLayout().getLineEnd(last));
+                assertEquals(0, details.getLayout().getEllipsisCount(last));
+                assertEquals(row.getContext().getString(R.string.section_expanded),
+                        ViewCompat.getStateDescription(row));
+            });
+            onView(withTagValue(is("long_contact"))).perform(click()).check((row, missing) -> {
+                if (missing != null) throw missing;
+                TextView details = row.findViewWithTag("blackmail_contact_details");
+                assertEquals(2, details.getLineCount());
+                assertTrue(details.getLayout().getEllipsisCount(1) > 0);
+            });
+        }
+    }
+
     @Test public void compactContactPhotosAndChronologicalThreadFitSmallPhones() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         var messages = List.of(
