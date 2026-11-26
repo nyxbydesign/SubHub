@@ -25,11 +25,13 @@ import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.censor.android.ProjectionTargetFixtureActivity;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -46,6 +48,8 @@ import static org.junit.Assert.fail;
 /** Requires an unlocked, owned API 35 guest with SubHub notifications already allowed. */
 @SdkSuppress(minSdkVersion = 35, maxSdkVersion = 35)
 public final class FullAccessScreenAndroidTest {
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+
     private static final String SYSTEM_UI = "com.android.systemui";
     private static final long UI_TIMEOUT = 8_000;
     private static final BySelector START = By.pkg(SYSTEM_UI)

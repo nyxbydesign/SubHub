@@ -907,6 +907,22 @@ public final class RoleExperienceAndroidTest {
             onMain(() -> assertTrue(recreated.findViewById(R.id.role_page_body)
                     .findViewWithTag("contract_details:limits").isShown()));
             assertFalse(ControllerPinManager.isDomModeActive());
+            Map<String, Integer> expected = Map.of("com.android.chrome", 20, "com.android.vending", 10);
+            List<String> appLines = new ArrayList<>();
+            android.content.pm.PackageManager packages = context.getPackageManager();
+            for (Map.Entry<String, Integer> app : expected.entrySet()) {
+                String label = packages.getApplicationLabel(packages.getApplicationInfo(app.getKey(), 0)).toString();
+                appLines.add(context.getString(R.string.arrangement_app_allowance, label, app.getValue()));
+            }
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
+                    org.hamcrest.Matchers.is("contract_details:limits")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+            onMain(() -> {
+                ViewGroup detail = recreated.findViewById(R.id.role_page_body).findViewWithTag("contract_details:limits");
+                TextView individual = (TextView) detail.getChildAt(1);
+                List<String> lines = java.util.Arrays.asList(individual.getText().toString().split("\n"));
+                assertEquals(new LinkedHashSet<>(appLines), new LinkedHashSet<>(lines.subList(2, lines.size())));
+            });
             capture(recreated, "sub-contract-expanded-limits");
         }
     }

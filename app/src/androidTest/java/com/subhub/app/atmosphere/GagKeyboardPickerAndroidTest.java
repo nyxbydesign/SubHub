@@ -18,13 +18,16 @@ import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
 
+import org.junit.Rule;
 import org.junit.Test;
 
 @SdkSuppress(minSdkVersion = 28)
 public final class GagKeyboardPickerAndroidTest {
     private static final long TIMEOUT = 5_000L;
     private static final String STOCK_PACKAGE = "com.google.android.inputmethod.latin";
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
 
     @Test public void holdingSpaceOpensPickerAndOnlyAnotherChoiceSwitchesKeyboard() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();

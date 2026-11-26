@@ -13,6 +13,7 @@ import static org.junit.Assert.*;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.database.Cursor;
 import android.view.View;
@@ -22,14 +23,21 @@ import androidx.test.core.app.ActivityScenario;
 import com.subhub.app.R;
 import com.subhub.app.activity.*;
 import androidx.test.filters.SdkSuppress;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.UiDevice;
 import com.subhub.app.people.PeopleActivity;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.relationships.DomSubjectScope;
+import com.subhub.app.relationships.RelationshipPanel;
 import com.subhub.app.relationships.RelationshipUi;
 import com.subhub.app.relationships.RelationshipPreparationKey;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.settings.SharedPreferenceTestRestore;
+import java.lang.reflect.Field;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +48,7 @@ import org.junit.Test;
 
 /** Uses an owned formal store; no transport, service, or source-history deletion. */
 public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
+    private static final String JOURNAL = "subhub_relationship_presentation";
     @Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @Rule public final com.subhub.app.UiAutomationStateRule uiAutomation = new com.subhub.app.UiAutomationStateRule();
@@ -47,6 +56,12 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
     private ActivityRepository previousActivity;
     private FormalRelationshipProvider formal;
     private RemoteActivityRepository activity;
+    private SharedPreferences targetJournal;
+    private Map<String, ?> originalJournal;
+    private Map<String, Object> journalStates;
+    private Object journalLock;
+    private Object originalJournalState;
+    private String journalIdentity;
     private boolean allowAcknowledgement;
     private final java.util.List<String> acknowledged = new java.util.ArrayList<>();
 
@@ -84,7 +99,7 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
             if (previousActivity != null) ActivitySources.install(previousActivity);
         } finally {
             try { if (activity != null) activity.close(); }
-            finally { assertTrue(context.getSharedPreferences("subhub_relationship_presentation", 0).edit().clear().commit()); }
+            finally { restoreTargetJournal(); }
         }
     }
 
@@ -130,6 +145,7 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
 
     @Test @SdkSuppress(minSdkVersion = 29)
     public void peopleConfirmsAndUnlinksWithCurrentLocalPinAndProductionProvider() throws Exception {
+        isolateTargetJournal();
         assertTrue(target.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
                 .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit());
         // The activity uses the app preferences; the real provider uses the owned fixture's store.
@@ -164,7 +180,38 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
 
     private static void submitLocalPin() {
         onView(withHint(R.string.controller_pin_label)).perform(replaceText("624871"), closeSoftKeyboard());
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).waitForIdle();
         onView(withText(R.string.controller_pin_unlock)).perform(click());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void isolateTargetJournal() throws Exception {
+        Field lock = RelationshipPanel.class.getDeclaredField("JOURNAL_LOCK");
+        lock.setAccessible(true);
+        journalLock = lock.get(null);
+        Field states = RelationshipPanel.class.getDeclaredField("JOURNAL_STATES");
+        states.setAccessible(true);
+        journalStates = (Map<String, Object>) states.get(null);
+        synchronized (journalLock) {
+            targetJournal = target.getSharedPreferences(JOURNAL, Context.MODE_PRIVATE);
+            journalIdentity = target.getApplicationInfo().dataDir + "/" + JOURNAL;
+            originalJournal = new LinkedHashMap<>(targetJournal.getAll());
+            originalJournalState = journalStates.remove(journalIdentity);
+            assertTrue(targetJournal.edit().clear().commit());
+        }
+    }
+
+    private void restoreTargetJournal() {
+        if (originalJournal == null) return;
+        synchronized (journalLock) {
+            try {
+                SharedPreferenceTestRestore.restore(targetJournal, originalJournal);
+                assertEquals(originalJournal, targetJournal.getAll());
+            } finally {
+                if (originalJournalState == null) journalStates.remove(journalIdentity);
+                else journalStates.put(journalIdentity, originalJournalState);
+            }
+        }
     }
 
     private static void tapAction(String tag) {

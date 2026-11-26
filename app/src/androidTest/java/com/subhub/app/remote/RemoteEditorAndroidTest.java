@@ -275,6 +275,57 @@ public class RemoteEditorAndroidTest {
         return ActivityScenario.launch(pairedIntent(AppModeActivity.class));
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void capturePairedLimitsWithTwoDailyAllowances() throws Exception {
+        Map<String, Integer> allowances = new LinkedHashMap<>();
+        allowances.put("com.android.chrome", 20);
+        allowances.put("com.android.vending", 10);
+        JSONObject baseline = feature.contracts.current(peer);
+        JSONObject apps = baseline.getJSONObject("apps");
+        apps.put("packages", new JSONArray(allowances.keySet()));
+        apps.put("allowances", new JSONObject(allowances));
+        JSONObject limits = baseline.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits");
+        limits.put("app_timer_per_app_enabled", true);
+        limits.put("app_timer_total_enabled", false);
+        String dom = source.peers(false).get(0).identity;
+        Map<String, String> labels = new LinkedHashMap<>();
+        android.content.pm.PackageManager packages = context.getPackageManager();
+        for (String app : allowances.keySet()) {
+            String label = packages.getApplicationLabel(packages.getApplicationInfo(app, 0)).toString();
+            labels.put(app, label);
+            source.publish(dom, generation, RemoteProtocol.Stream.APP_CATALOG, app,
+                    new JSONObject().put("label", label), false, 2);
+        }
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.APP_CATALOG));
+        source.publish(dom, generation, RemoteProtocol.Stream.BASELINE, "active", baseline, false, 2);
+        feature.store.receive(peer.identity, source.nextBatch(dom, generation, RemoteProtocol.Stream.BASELINE));
+        try (ActivityScenario<AppModeActivity> page = ActivityScenario.launch(pairedIntent(AppModeActivity.class))) {
+            await(() -> {
+                AtomicReference<Boolean> ready = new AtomicReference<>(false);
+                page.onActivity(activity -> {
+                    View root = activity.getWindow().getDecorView();
+                    ready.set(labels.entrySet().stream().allMatch(app -> {
+                        EditText input = root.findViewWithTag("limit:" + app.getKey());
+                        return input != null && activity.getString(R.string.app_timer_allowance_accessibility,
+                                app.getValue()).contentEquals(input.getContentDescription());
+                    }));
+                });
+                return ready.get();
+            });
+            onView(withId(R.id.per_app_allowances_list)).perform(revealAboveNavigation());
+            page.onActivity(activity -> {
+                ViewGroup rows = activity.findViewById(R.id.per_app_allowances_list);
+                assertEquals("Two allowance rows and their separator", 3, rows.getChildCount());
+                for (Map.Entry<String, Integer> app : allowances.entrySet()) {
+                    EditText input = rows.findViewWithTag("limit:" + app.getKey());
+                    assertTrue(input.isShown());
+                    assertEquals(app.getValue().toString(), input.getText().toString());
+                }
+            });
+            inspectLayout(page, "dom-limits");
+        }
+    }
+
     private Intent pairedIntent(Class<? extends Activity> destination) {
         return new Intent(context, destination)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, RemotePersonRepository.id(peer).value());
@@ -369,8 +420,8 @@ public class RemoteEditorAndroidTest {
         importPopupArtworkAcrossRecreation();
     }
 
-    @androidx.annotation.RequiresApi(29)
     private void importPopupArtworkAcrossRecreation() throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 29) throw new AssertionError("Requires API 29");
         RemoteStore.Command pending = feature.store.latestCommand(peer.identity, generation);
         assertNotNull(pending);
         assertTrue(pending.pending());
@@ -491,15 +542,14 @@ public class RemoteEditorAndroidTest {
             inspectLayout(page, "stats");
         }
     }
-    @androidx.annotation.RequiresApi(29)
     private <T extends Activity> void inspectLayout(ActivityScenario<T> page,String name)throws Exception {
         AtomicReference<T> activity = new AtomicReference<>();
         page.onActivity(activity::set);
         inspectLayout(activity.get(), name);
     }
 
-    @androidx.annotation.RequiresApi(29)
     private void inspectLayout(Activity activity, String name) throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 29) throw new AssertionError("Requires API 29");
         Instrumentation instrument = InstrumentationRegistry.getInstrumentation();
         await(() -> {
             AtomicReference<Boolean> settled = new AtomicReference<>(false);

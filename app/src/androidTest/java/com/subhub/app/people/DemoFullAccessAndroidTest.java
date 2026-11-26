@@ -58,10 +58,14 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.RuleChain;
 
 /** Exercises the Demo route and real Android consent on an owned synthetic guest. */
 public final class DemoFullAccessAndroidTest {
-    @Rule public final OwnedUiIntegrationFixture integration = new OwnedUiIntegrationFixture(false);
+    private final OwnedUiIntegrationFixture integration = new OwnedUiIntegrationFixture(false);
+    @Rule public final RuleChain fixtures = RuleChain
+            .outerRule(new com.subhub.app.UiAutomationStateRule())
+            .around(integration);
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
 
