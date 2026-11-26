@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import android.app.Instrumentation;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -14,6 +15,7 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
@@ -40,6 +42,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 public final class GagClipboardControlsServiceAndroidTest {
     private static final long TIMEOUT = 8_000L;
@@ -80,7 +86,7 @@ public final class GagClipboardControlsServiceAndroidTest {
                 clipboard.remember(GagEditorFixtureActivity.CLIPBOARD_TEXT, wall, wall, elapsed);
                 assertTrue(GagClipboardEditActivity.open(owner, clipboard, clipboard.entries(elapsed).get(0)));
             });
-            await(By.pkg(APP).clazz(Button.class).text("Speichern"));
+            assertVisibleGermanSaveButton(instrumentation);
         } finally {
             try {
                 instrumentation.runOnMainSync(() -> ActivityLifecycleMonitorRegistry.getInstance()
@@ -92,6 +98,58 @@ public final class GagClipboardControlsServiceAndroidTest {
                 if (previous == null) edit.remove(LocaleHelper.KEY_LANGUAGE);
                 else edit.putString(LocaleHelper.KEY_LANGUAGE, previous);
                 assertTrue(edit.commit());
+            }
+        }
+    }
+
+    private record PopupSaveLabel(String locale, String resource, List<String> buttons, Rect visibleBounds) {}
+
+    private static void assertVisibleGermanSaveButton(Instrumentation instrumentation) {
+        AtomicReference<PopupSaveLabel> observation = new AtomicReference<>();
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT;
+        do {
+            instrumentation.runOnMainSync(() -> {
+                var popup = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .stream().filter(GagClipboardEditActivity.class::isInstance).findFirst().orElse(null);
+                if (popup == null) return;
+                View decor = popup.getWindow().getDecorView();
+                List<Button> buttons = new ArrayList<>();
+                collectButtons(decor, buttons);
+                Rect visible = new Rect();
+                for (Button candidate : buttons) {
+                    Rect clipped = new Rect();
+                    if ("Speichern".contentEquals(candidate.getText()) && candidate.isShown()
+                            && candidate.getGlobalVisibleRect(clipped)) {
+                        // Global visibility is relative to the root of this floating window.
+                        int[] screen = new int[2];
+                        decor.getLocationOnScreen(screen);
+                        visible.set(clipped);
+                        visible.offset(screen[0], screen[1]);
+                        break;
+                    }
+                }
+                observation.set(new PopupSaveLabel(
+                        popup.getResources().getConfiguration().getLocales().get(0).getLanguage(),
+                        popup.getString(R.string.gag_clipboard_save),
+                        buttons.stream().map(button -> button.getText().toString()).collect(Collectors.toList()),
+                        visible));
+            });
+            PopupSaveLabel observed = observation.get();
+            if (observed != null && !observed.visibleBounds().isEmpty()) {
+                assertEquals(observed.toString(), "de", observed.locale());
+                assertEquals(observed.toString(), "Speichern", observed.resource());
+                return;
+            }
+            SystemClock.sleep(50);
+        } while (SystemClock.uptimeMillis() < deadline);
+        throw new AssertionError("The native popup did not show a German Save button. Observed " + observation.get());
+    }
+
+    private static void collectButtons(View view, List<Button> buttons) {
+        if (view instanceof Button button) buttons.add(button);
+        if (view instanceof ViewGroup group) {
+            for (int index = 0; index < group.getChildCount(); index++) {
+                collectButtons(group.getChildAt(index), buttons);
             }
         }
     }
