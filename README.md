@@ -27,7 +27,7 @@
 Choose the included apps, set individual or shared daily allowances, and configure the next session. Sub shows the applied rules, current allowances, and session status. On linked devices, check that a change was applied before relying on it.
 
 <p align="center">
-  <a href="docs/screenshots/walkthrough/sub-contract.webp"><img src="docs/screenshots/walkthrough/sub-contract.webp" alt="Sub Contract with six app allowances and a hidden service duration" width="32%" /></a>
+  <a href="docs/screenshots/walkthrough/sub-contract.webp"><img src="docs/screenshots/walkthrough/sub-contract.webp" alt="Sub Contract with two distinct daily app allowances" width="32%" /></a>
   <a href="docs/screenshots/walkthrough/dom-censor.webp"><img src="docs/screenshots/walkthrough/dom-censor.webp" alt="Paired Censor editor with separate appearance, capture, and filter controls" width="32%" /></a>
   <a href="docs/screenshots/walkthrough/dom-wallet.webp"><img src="docs/screenshots/walkthrough/dom-wallet.webp" alt="Dom Wallet controls for spending caps and paid pause" width="32%" /></a>
 </p>

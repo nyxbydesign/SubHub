@@ -2,7 +2,7 @@
 
 [Back to SubHub](../../../README.md)
 
-The paired Android emulators mirror the reference Contract. The profile names, Journal entry, and task submission are demo content created in those emulators.
+The Android captures show Dom and Sub screens with demo profiles, sample records, and synthetic Limits settings.
 
 [Overview and pairing](#overview-and-pairing) · [Contract, apps, and duration](#contract-apps-and-duration) · [Censor](#censor) · [Atmosphere](#atmosphere) · [Wallet and Tributes](#wallet-and-tributes) · [Tasks](#tasks) · [Journal, Profile, and progress](#journal-profile-and-progress) · [Settings, help, and updates](#settings-help-and-updates)
 
@@ -23,11 +23,11 @@ Dom starts from Overview or the Subs list. Sub can open the paired Contract from
 
 ## Contract, apps, and duration
 
-On Dom, open **Subs → Profile → Contract** and choose **Manage included apps** or **Limits**. The paired fixture mirrors six app allowances, with the shared allowance off and time remaining hidden on Sub.
+On Dom, open **Subs → Profile → Contract** and choose **Manage included apps** or **Limits**. Sub can read the applied settings under **Contract → App limits**. The Limits examples show daily allowances of 20 minutes for Chrome and 10 minutes for Google Play Store, with the combined limit off.
 
 <p align="center">
   <a href="dom-contract.webp"><img src="dom-contract.webp" alt="Dom Contract and the Manage included apps button" width="30%" /></a>
-  <a href="sub-contract.webp"><img src="sub-contract.webp" alt="Sub Contract with all six individual allowances" width="30%" /></a>
+  <a href="sub-contract.webp"><img src="sub-contract.webp" alt="Read-only Sub Contract with two daily app allowances" width="30%" /></a>
   <a href="dom-apps.webp"><img src="dom-apps.webp" alt="Paired app selection" width="30%" /></a>
 </p>
 
