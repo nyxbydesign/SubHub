@@ -92,8 +92,9 @@ public final class JournalPeer {
         synchronized (runtime.authority) {
             check();
             // The session uses this result only after the peer has finished reading and persisting this phase.
+            // A full legacy request page can hide more attachments even when this page finished.
             return (through > after && runtime.entries.hasOutgoingAfter(scope, through))
-                    || (chunks > 0 && assetsRemaining);
+                    || (chunks > 0 && (assetsRemaining || wants.length() == MAX_WANTS));
         }
     }
 

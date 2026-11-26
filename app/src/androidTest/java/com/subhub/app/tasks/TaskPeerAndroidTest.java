@@ -190,6 +190,39 @@ public class TaskPeerAndroidTest {
         assertEquals(TaskStore.PAGE_SIZE + 2, runtime.store.received(subScope));
     }
 
+    @Test public void senderContinuesAfterAFullCompletedLegacyAttachmentPage() throws Exception {
+        int requestLimit = 16;
+        List<String> hashes = new ArrayList<>();
+        RemoteAssets source = runtime.assets(domScope), received = runtime.assets(subScope);
+        for (int i = 0; i <= requestLimit; i++) {
+            byte[] bytes = {(byte) 137, 80, 78, 71, 13, 10, 26, 10, (byte) i};
+            String hash = RemoteProtocol.sha256(bytes);
+            hashes.add(hash);
+            source.reserve(hash, bytes.length);
+            source.append(hash, 0, bytes);
+            source.finish(hash);
+            String id = UUID.randomUUID().toString();
+            TaskDefinition queued = new TaskDefinition(id, "Synthetic task " + i, "Read", task.firstStart,
+                    task.zone, task.durationMillis, task.weekdays, task.allowRefusal, task.failureTribute,
+                    new TaskAttachment(hash, "image/png", bytes.length));
+            assertTrue(runtime.store.append(domScope, new TaskAction("media-task-" + i, id, TaskAction.Kind.CREATE,
+                    null, start - 1000, "", "", List.of(), queued), true, false));
+        }
+        long head = runtime.store.receive(subScope, runtime.store.outgoing(domScope, 0), true, false);
+        assertEquals(requestLimit + 1, head);
+        assertFalse(runtime.store.hasOutgoingAfter(domScope, head));
+
+        AtomicInteger calls = new AtomicInteger();
+        assertArrayEquals(new boolean[]{true, false}, session(true, calls, false));
+        int completed = 0;
+        for (String hash : hashes) if (received.isComplete(hash)) completed++;
+        assertEquals(requestLimit, completed);
+        assertArrayEquals(new boolean[]{false, false}, session(true, calls, false));
+        for (String hash : hashes) assertTrue(received.isComplete(hash));
+        assertEquals(head, runtime.store.received(subScope));
+        assertArrayEquals(new boolean[]{false, false}, session(true, calls, false));
+    }
+
     @Test public void newPeersNegotiateTasksOldPeersSkipThemAndReconnectKeepsOneRequestNotification() throws Exception {
         if (android.os.Build.VERSION.SDK_INT >= 33) assertEquals(
                 "The coordinator must grant notification permission before this OS-delivery fixture",
@@ -421,6 +454,9 @@ public class TaskPeerAndroidTest {
         incoming.get(30, TimeUnit.SECONDS);
     }
     private boolean[] session(boolean bothSupportTasks, AtomicInteger calls) throws Exception {
+        return session(bothSupportTasks, calls, true);
+    }
+    private boolean[] session(boolean bothSupportTasks, AtomicInteger calls, boolean receiverReportsContinuation) throws Exception {
         ExecutorService server = Executors.newSingleThreadExecutor();
         try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
                 Socket client = new Socket(InetAddress.getLoopbackAddress(), listener.getLocalPort()); Socket accepted = listener.accept()) {
@@ -428,7 +464,7 @@ public class TaskPeerAndroidTest {
             Future<Boolean> receiving = server.submit(() -> {
                 try {
                     JSONObject hello = RemoteProtocol.read(incoming.input());
-                    return new RemoteSession(store, transport(subId), hooks(bothSupportTasks, calls))
+                    return new RemoteSession(store, transport(subId), hooks(bothSupportTasks, calls, receiverReportsContinuation))
                             .incoming(incoming, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(20));
                 } catch (Exception failure) { throw new RuntimeException(failure); }
             });
@@ -438,12 +474,16 @@ public class TaskPeerAndroidTest {
         } finally { server.shutdownNow(); assertTrue(server.awaitTermination(5, TimeUnit.SECONDS)); }
     }
     private RemoteSession.Hooks hooks(boolean support, AtomicInteger calls) {
+        return hooks(support, calls, true);
+    }
+    private RemoteSession.Hooks hooks(boolean support, AtomicInteger calls, boolean reportContinuation) {
         return new RemoteSession.Hooks() {
             @Override public int tasksVersion() { return support ? 1 : 0; }
             @Override public int taskCancelVersion() { return support && cancelSupport ? 1 : 0; }
             @Override public boolean tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 calls.incrementAndGet();
-                return exchangeTasks(connection, peer, deadline);
+                boolean continuation = exchangeTasks(connection, peer, deadline);
+                return reportContinuation && continuation;
             }
             @Override public void prepare(RemoteStore.Peer peer) { }
             @Override public void received(RemoteStore.Peer peer, RemoteProtocol.Stream stream) { }

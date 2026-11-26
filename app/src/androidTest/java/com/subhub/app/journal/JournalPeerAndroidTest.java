@@ -24,6 +24,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -290,6 +291,31 @@ public class JournalPeerAndroidTest {
             assertEquals(file.hash, RemoteAssets.digest(assets.finish(file.hash)));
             assertEquals(head, destination.entries.received(destinationScope));
         }
+    }
+
+    @Test public void senderContinuesAfterAFullCompletedLegacyAssetPage() throws Exception {
+        String sourceScope = JournalRuntime.scope(dp), destinationScope = JournalRuntime.scope(sp);
+        int requestLimit = 16;
+        List<JournalAttachment> files = new ArrayList<>();
+        for (int i = 0; i <= requestLimit; i++) {
+            JournalAttachment file = media(32L + i);
+            files.add(file);
+            dr.entries.save(true, entry("Shared attachment " + i, file), Set.of(sourceScope));
+        }
+        long first = sr.entries.receive(destinationScope, dr.entries.outgoing(sourceScope, 0));
+        long head = sr.entries.receive(destinationScope, dr.entries.outgoing(sourceScope, first));
+        assertEquals(requestLimit + 1, head);
+        assertFalse(dr.entries.hasOutgoingAfter(sourceScope, head));
+
+        RemoteAssets received = sr.assets(sp);
+        assertTrue(sendingWithLegacyReceiver(true));
+        int completed = 0;
+        for (JournalAttachment file : files) if (received.isComplete(file.hash)) completed++;
+        assertEquals(requestLimit, completed);
+        assertFalse(sendingWithLegacyReceiver(true));
+        for (JournalAttachment file : files) assertTrue(received.isComplete(file.hash));
+        assertEquals(head, sr.entries.received(destinationScope));
+        assertFalse(sendingWithLegacyReceiver(true));
     }
 
     @Test public void mediaResumesAcrossBoundedSessionsAndWithdrawalRemovesRemoteReferenceAndBytes() throws Exception {

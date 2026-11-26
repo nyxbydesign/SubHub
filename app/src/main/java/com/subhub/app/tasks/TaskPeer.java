@@ -106,8 +106,9 @@ public final class TaskPeer {
         send(frame("tasks_assets_complete")); read("tasks_phase_complete");
         synchronized (SubFeaturePolicy.LOCK) {
             check();
+            // A legacy receiver may have more attachments after a full request page.
             return (expected > through && runtime.store.hasOutgoingAfter(target.scope, expected))
-                    || (chunks > 0 && assetsRemaining);
+                    || (chunks > 0 && (assetsRemaining || wants.length() == MAX_WANTS));
         }
     }
     private boolean pull() throws Exception {
