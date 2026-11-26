@@ -17,6 +17,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -27,27 +28,72 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.help.HelpActivity;
+import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.util.LocaleHelper;
+import org.junit.Rule;
 import org.junit.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 public final class GagClipboardControlsServiceAndroidTest {
     private static final long TIMEOUT = 8_000L;
     private static final String APP = "com.subhub.app";
     private static final String FIXTURE = "com.subhub.app.test";
     private static final String EDITED = "Synthetic edited clipboard text";
+    @Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
 
     @Test public void screenshotsIncludeClipboardSuggestionAndKeyboardPanel() throws Exception {
+        Path failedCapture = GagEditorFixtureActivity.reserveFailureCapture("gag-keyboard-screenshot");
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals("Grant full photo access in the synthetic guest to avoid its permission prompt",
                 GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
         openFixture(true);
         assertCapturedLabel(await(By.pkg(APP).desc(GagEditorFixtureActivity.CLIPBOARD_TEXT)),
-                "clipboard suggestion");
+                "clipboard suggestion", failedCapture);
 
         openClipboard();
-        assertCapturedLabel(await(By.pkg(APP).text(label(R.string.gag_clipboard_title))), "clipboard panel");
+        assertCapturedLabel(await(By.pkg(APP).text(label(R.string.gag_clipboard_title))), "clipboard panel",
+                failedCapture);
+    }
+
+    @Test
+    @SdkSuppress(maxSdkVersion = 32)
+    public void clipboardPopupUsesTheSavedAppLanguageOnOlderAndroid() {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        var target = instrumentation.getTargetContext();
+        var settings = target.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        String previous = settings.getString(LocaleHelper.KEY_LANGUAGE, null);
+        assertEquals("Use an English system locale for this fixture", "en",
+                android.content.res.Resources.getSystem().getConfiguration().getLocales().get(0).getLanguage());
+        assertTrue(settings.edit().putString(LocaleHelper.KEY_LANGUAGE, "de").commit());
+        try (var scenario = ActivityScenario.launch(HelpActivity.class)) {
+            scenario.onActivity(owner -> {
+                var clipboard = new GagClipboard();
+                long wall = System.currentTimeMillis();
+                long elapsed = SystemClock.elapsedRealtime();
+                clipboard.remember(GagEditorFixtureActivity.CLIPBOARD_TEXT, wall, wall, elapsed);
+                assertTrue(GagClipboardEditActivity.open(owner, clipboard, clipboard.entries(elapsed).get(0)));
+            });
+            await(By.pkg(APP).clazz(Button.class).text("Speichern"));
+        } finally {
+            try {
+                instrumentation.runOnMainSync(() -> ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED).stream()
+                        .filter(GagClipboardEditActivity.class::isInstance).findFirst()
+                        .ifPresent(android.app.Activity::finish));
+            } finally {
+                var edit = settings.edit();
+                if (previous == null) edit.remove(LocaleHelper.KEY_LANGUAGE);
+                else edit.putString(LocaleHelper.KEY_LANGUAGE, previous);
+                assertTrue(edit.commit());
+            }
+        }
     }
 
     @Test
@@ -251,7 +297,7 @@ public final class GagClipboardControlsServiceAndroidTest {
                 .anyMatch(window -> "ClipboardOverlay".equals(String.valueOf(window.getTitle())));
     }
 
-    private static void assertCapturedLabel(UiObject2 label, String surface) throws Exception {
+    private static void assertCapturedLabel(UiObject2 label, String surface, Path failedCapture) throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         Rect bounds = label.getVisibleBounds();
         long deadline = SystemClock.uptimeMillis() + 2_000;
@@ -277,15 +323,16 @@ public final class GagClipboardControlsServiceAndroidTest {
                     Bitmap crop = Bitmap.createBitmap(screen, sample.left, sample.top,
                             sample.width(), sample.height());
                     try {
-                        try (var output = instrumentation.getTargetContext().openFileOutput(
-                                "gag-keyboard-screenshot-failure.png", android.content.Context.MODE_PRIVATE)) {
-                            crop.compress(Bitmap.CompressFormat.PNG, 100, output);
+                        try (var output = Files.newOutputStream(failedCapture, StandardOpenOption.CREATE_NEW,
+                                StandardOpenOption.WRITE)) {
+                            assertTrue("Could not encode " + failedCapture,
+                                    crop.compress(Bitmap.CompressFormat.PNG, 100, output));
                         }
                     } finally {
                         crop.recycle();
                     }
                     throw new AssertionError("Screenshot captured " + labelPixels + " pixels from the "
-                            + surface + " label at " + bounds);
+                            + surface + " label at " + bounds + ". Evidence: " + failedCapture);
                 }
             } finally {
                 screen.recycle();

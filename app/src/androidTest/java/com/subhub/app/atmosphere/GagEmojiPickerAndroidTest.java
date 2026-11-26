@@ -23,8 +23,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.help.HelpActivity;
 
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -37,6 +39,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
 public final class GagEmojiPickerAndroidTest {
+    @Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
+
     @Test public void commaTapAndHoldHaveDistinctActions() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         instrumentation.getUiAutomation();

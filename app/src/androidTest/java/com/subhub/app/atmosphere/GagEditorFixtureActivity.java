@@ -12,6 +12,12 @@ import android.text.TextWatcher;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /** Shell-only synthetic editor in the instrumentation APK's separate package. */
 public final class GagEditorFixtureActivity extends Activity {
     static final String ACTION = "com.subhub.app.test.GAG_EDITOR_FIXTURE";
@@ -23,6 +29,8 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String LONG_CLIPBOARD_TEXT = LONG_CLIPBOARD_PREFIX + "abc 123 ".repeat(768) + "tail";
     static final String SEED_LONG_CLIPBOARD = "gag_seed_long_clipboard";
     static final String DELETION_TEXT = "keep über café tail";
+    static final String GRAPHEME_DELETE = "gag_grapheme_delete";
+    static final String GRAPHEME_PREFIX = "definately\u2764\ufe0f";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private EditText editor;
     private boolean keyboardRequested;
@@ -58,8 +66,9 @@ public final class GagEditorFixtureActivity extends Activity {
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
+        boolean grapheme = getIntent().getBooleanExtra(GRAPHEME_DELETE, false);
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
-        editor.setText(selected ? DELETION_TEXT : middle ? " next" : "");
+        editor.setText(grapheme ? GRAPHEME_PREFIX + " tail" : selected ? DELETION_TEXT : middle ? " next" : "");
         if (longClipboard) {
             editor.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
@@ -72,11 +81,17 @@ public final class GagEditorFixtureActivity extends Activity {
         setContentView(editor);
         editor.requestFocus();
         if (selected) editor.setSelection(5, 14);
+        else if (grapheme) editor.setSelection(GRAPHEME_PREFIX.length());
         else editor.setSelection(0);
     }
 
     static String longClipboardResult(CharSequence text) {
         return EDITOR + " length=" + text.length() + " exact=" + TextUtils.equals(LONG_CLIPBOARD_TEXT, text);
+    }
+
+    static Path reserveFailureCapture(String label) throws IOException {
+        var context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        return Files.createTempDirectory(context.getFilesDir().toPath(), label + "-").resolve("failure.png");
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {

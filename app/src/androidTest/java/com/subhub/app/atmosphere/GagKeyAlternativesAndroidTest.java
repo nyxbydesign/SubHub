@@ -24,8 +24,10 @@ import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.Until;
 
+import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.help.HelpActivity;
 
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -33,6 +35,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class GagKeyAlternativesAndroidTest {
+    @Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
+
     @Test public void previewReusesItsLabelAndMovesWithinTheCurrentWindow() throws Exception {
         GagKeyPreview preview = new GagKeyPreview();
         var labelField = GagKeyPreview.class.getDeclaredField("label");

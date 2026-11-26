@@ -20,25 +20,32 @@ import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
 import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
 
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 public final class GagSuggestionServiceAndroidTest {
     private static final String FIXTURE =
             "com.subhub.app.test/com.subhub.app.atmosphere.GagEditorFixtureActivity";
     private static final String IME = "com.subhub.app/.atmosphere.GagKeyboardService";
     private static final long TIMEOUT_MS = 8_000L;
+    @Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
 
     @Test public void explicitSuggestionsPreserveExistingSpaceAndDeferNewSeparators() throws Exception {
         openEditor(true);
         correctHello(" next");
         assertText("hello next");
+        for (char letter : "new".toCharArray()) key(String.valueOf(letter));
+        assertText("hello new next");
 
         acceptHello();
         key(",");
@@ -135,6 +142,15 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("definately");
         key("definitely");
         assertText("definitely");
+    }
+
+    @Test public void backspaceAfterAHeartClusterRefreshesSuggestionsBeforeFollowingText() throws Exception {
+        openEditor(" --ez " + GagEditorFixtureActivity.GRAPHEME_DELETE + " true",
+                GagEditorFixtureActivity.GRAPHEME_PREFIX + " tail");
+        keyDescription(R.string.gag_keyboard_delete);
+        assertText("definately tail");
+        key("definitely");
+        assertText("definitely tail");
     }
 
     @Test public void multipleMissedSpacesRequireSuggestionTapAndPreserveTheFollowingText() throws Exception {
@@ -281,17 +297,18 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     @Test public void characterPreviewTracksTouchAndDoesNotCommitOnSlideOrCancel() throws Exception {
+        Path failedCapture = GagEditorFixtureActivity.reserveFailureCapture("gag-key-preview");
         openEditor(false);
         keyDescription(R.string.gag_keyboard_symbols);
         Rect key = await(By.pkg("com.subhub.app").text("@")).getVisibleBounds();
-        assertPreviewPixels(key, false);
+        assertPreviewPixels(key, false, failedCapture);
         long down = SystemClock.uptimeMillis();
         touch(down, MotionEvent.ACTION_DOWN, key.centerX(), key.centerY());
         try {
-            assertPreviewPixels(key, true);
+            assertPreviewPixels(key, true, failedCapture);
             assertText("");
             touch(down, MotionEvent.ACTION_MOVE, key.right + 1, key.centerY());
-            assertPreviewPixels(key, false);
+            assertPreviewPixels(key, false, failedCapture);
         } finally {
             touch(down, MotionEvent.ACTION_UP, key.right + 1, key.centerY());
         }
@@ -300,14 +317,14 @@ public final class GagSuggestionServiceAndroidTest {
         down = SystemClock.uptimeMillis();
         touch(down, MotionEvent.ACTION_DOWN, key.centerX(), key.centerY());
         try {
-            assertPreviewPixels(key, true);
+            assertPreviewPixels(key, true, failedCapture);
         } finally {
             touch(down, MotionEvent.ACTION_CANCEL, key.centerX(), key.centerY());
         }
-        assertPreviewPixels(key, false);
+        assertPreviewPixels(key, false, failedCapture);
         assertText("");
         key("@");
-        assertPreviewPixels(key, false);
+        assertPreviewPixels(key, false, failedCapture);
         assertText("@");
     }
 
@@ -373,17 +390,22 @@ public final class GagSuggestionServiceAndroidTest {
 
     private static void openEditor(boolean middle, boolean seedClipboard, boolean selectDeletionText,
             boolean watchSeparatorBatch) throws Exception {
-        assertEquals(IME, shell("settings get secure default_input_method").strip());
-        String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
-                + " -n " + FIXTURE + " --ez gag_spacing_middle " + middle
+        openEditor(" --ez gag_spacing_middle " + middle
                 + " --ez gag_seed_clipboard " + seedClipboard
                 + " --ez gag_deletion_selection " + selectDeletionText
-                + " --ez " + GagEditorFixtureActivity.WATCH_SEPARATOR_BATCH + " " + watchSeparatorBatch);
+                + " --ez " + GagEditorFixtureActivity.WATCH_SEPARATOR_BATCH + " " + watchSeparatorBatch,
+                selectDeletionText ? GagEditorFixtureActivity.DELETION_TEXT : middle ? " next" : "");
+    }
+
+    private static void openEditor(String extras, String expectedText) throws Exception {
+        assertEquals(IME, shell("settings get secure default_input_method").strip());
+        String error = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
+                + " -n " + FIXTURE + extras);
         assertTrue(error, error.contains("Status: ok"));
         await(By.pkg("com.subhub.app.test").desc(GagEditorFixtureActivity.EDITOR));
         assertNotNull("The fixture editor opened, but Gag did not show its letter keyboard",
                 device().wait(Until.findObject(By.pkg("com.subhub.app").text("q")), TIMEOUT_MS));
-        assertText(selectDeletionText ? GagEditorFixtureActivity.DELETION_TEXT : middle ? " next" : "");
+        assertText(expectedText);
     }
 
     private static void assertSuggestions(String first, String second, String third) {
@@ -447,7 +469,7 @@ public final class GagSuggestionServiceAndroidTest {
         }
     }
 
-    private static void assertPreviewPixels(Rect key, boolean expected) {
+    private static void assertPreviewPixels(Rect key, boolean expected, Path failedCapture) {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         UiAutomation automation = instrumentation.getUiAutomation();
         int height = Math.round(40 * instrumentation.getTargetContext().getResources().getDisplayMetrics().density);
@@ -466,9 +488,10 @@ public final class GagSuggestionServiceAndroidTest {
                 shown = matching >= 16;
                 if (shown == expected) return;
                 if (SystemClock.uptimeMillis() >= deadline) {
-                    try (FileOutputStream output = instrumentation.getTargetContext().openFileOutput(
-                            "gag-key-preview-failure.png", android.content.Context.MODE_PRIVATE)) {
-                        screen.compress(Bitmap.CompressFormat.PNG, 100, output);
+                    try (var output = Files.newOutputStream(failedCapture, StandardOpenOption.CREATE_NEW,
+                            StandardOpenOption.WRITE)) {
+                        assertTrue("Could not encode " + failedCapture,
+                                screen.compress(Bitmap.CompressFormat.PNG, 100, output));
                     } catch (IOException failure) {
                         throw new AssertionError("Could not preserve the failed preview screenshot", failure);
                     }
@@ -479,7 +502,7 @@ public final class GagSuggestionServiceAndroidTest {
             }
             SystemClock.sleep(25);
         } while (true);
-        assertEquals("Key preview above the active symbol", expected, shown);
+        assertEquals("Key preview above the active symbol. Evidence: " + failedCapture, expected, shown);
     }
 
     private static UiDevice device() {
