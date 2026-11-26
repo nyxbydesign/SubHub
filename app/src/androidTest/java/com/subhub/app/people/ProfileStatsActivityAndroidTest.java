@@ -213,6 +213,8 @@ public final class ProfileStatsActivityAndroidTest {
 
     @Test public void recreatingProfileWaitsForTheProfileCardBeforeRestoringScroll() throws Exception {
         ControllerPinManager.enterSubMode();
+        // Extra Time allowance reads need the same authority lock as the held Journal read.
+        new AppTimerManager(context).saveSettings(false, 30, false, 120);
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
             ProfileActivity initial = resumed(ProfileActivity.class);
             await(() -> profileAndStatisticsLaidOut(initial));
@@ -241,13 +243,23 @@ public final class ProfileStatsActivityAndroidTest {
                 assertTrue("Journal read gate acquired", locked.await(5, TimeUnit.SECONDS));
                 scenario.recreate();
                 ProfileActivity waiting = resumed(ProfileActivity.class);
-                await(() -> onMainValue(() -> {
-                    android.widget.ScrollView scroll = profileScroll(waiting, null);
-                    View card = waiting.getWindow().getDecorView().findViewWithTag("self_profile:sub");
-                    return card == null && statisticsPopulated(waiting) && scroll.isLaidOut() && !scroll.isLayoutRequested()
-                            && scroll.getChildAt(0).getHeight() < expected.get() + scroll.getHeight()
-                            - scroll.getPaddingTop() - scroll.getPaddingBottom();
-                }));
+                AtomicReference<String> lastLayout = new AtomicReference<>("no observed layout");
+                try {
+                    await(() -> onMainValue(() -> {
+                        android.widget.ScrollView scroll = profileScroll(waiting, null);
+                        boolean hasCard = waiting.getWindow().getDecorView().findViewWithTag("self_profile:sub") != null;
+                        boolean hasStatistics = statisticsPopulated(waiting);
+                        boolean laidOut = scroll.isLaidOut() && !scroll.isLayoutRequested();
+                        int viewport = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
+                        int range = Math.max(0, scroll.getChildAt(0).getHeight() - viewport);
+                        lastLayout.set("profile=" + hasCard + ", statistics=" + hasStatistics + ", laidOut=" + laidOut
+                                + ", range=" + range + ", current=" + scroll.getScrollY() + ", saved=" + expected.get());
+                        return !hasCard && hasStatistics && laidOut && range < expected.get();
+                    }));
+                } catch (AssertionError unavailable) {
+                    throw new AssertionError("Expected a laid-out shorter Profile page while Journal is held: "
+                            + lastLayout.get(), unavailable);
+                }
             } finally {
                 release.countDown();
                 heldRead.join(5_000);
