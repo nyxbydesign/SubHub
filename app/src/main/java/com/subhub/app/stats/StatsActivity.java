@@ -11,6 +11,7 @@ import com.subhub.app.people.LocalPersonRepository;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonSnapshot;
 import com.subhub.app.people.PersonUi;
+import com.subhub.app.util.PageScrollView;
 import com.subhub.app.util.PreferencePage;
 
 import java.text.DateFormat;
@@ -19,7 +20,7 @@ import java.util.*;
 /** Current service, lifetime totals, dated activity and recorded sessions share one page. */
 public class StatsActivity extends PreferencePage implements com.subhub.app.util.SubHubNavigation.SectionHome {
     private LinearLayout shell;
-    private ScrollView scroll;
+    private PageScrollView scroll;
     private AchievementsPane catalog;
     private boolean catalogSelected, resumed, hasSections;
     private boolean profileSelected, statisticsBuilt;
@@ -83,7 +84,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         }
         page(R.string.role_stats);
         shell = page;
-        scroll = (ScrollView) shell.getParent();
+        scroll = (PageScrollView) shell.getParent();
         if (state != null) {
             statisticsScroll = state.getInt("stats_scroll");
             catalogScroll = state.getInt("catalog_scroll");
@@ -237,7 +238,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
 
     private void rememberScroll() {
         if (scroll == null) return;
-        if (profileSelected) profileScroll = scroll.getScrollY();
+        if (profileSelected) profileScroll = scroll.position();
         else if (catalogSelected) catalogScroll = scroll.getScrollY();
         else statisticsScroll = scroll.getScrollY();
     }
@@ -277,7 +278,15 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                 hasSections ? (profileSelected ? R.drawable.ic_nav_profile : R.drawable.ic_nav_stats) : 0,
                 profileSelected ? R.string.role_profile : catalogSelected ? R.string.achievements_title : R.string.role_stats, 0);
         int target = profileSelected ? profileScroll : catalogSelected ? catalogScroll : statisticsScroll;
-        ((com.subhub.app.util.PageScrollView) scroll).restorePosition(target);
+        if (profileSelected && target > 0) {
+            scroll.restorePosition(target, this::profileContentReady);
+        } else {
+            scroll.restorePosition(target);
+        }
+    }
+
+    private boolean profileContentReady() {
+        return profile.initialContentReady() && (localFacts != null || !data.isPending("local-statistics"));
     }
 
     private void pauseSection() {

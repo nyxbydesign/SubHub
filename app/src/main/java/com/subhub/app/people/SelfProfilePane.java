@@ -26,6 +26,7 @@ public final class SelfProfilePane {
     private final AsyncUiScope data;
     private long renderedWorkspace = -1;
     private boolean renderedDom;
+    private boolean initialContentReady;
     private final SharedPreferences.OnSharedPreferenceChangeListener hardcoreChange = (settings, key) -> {
         if ((key == null || HardcoreModeManager.KEY_REQUESTED.equals(key)) && view().isShown()) refresh();
     };
@@ -46,16 +47,19 @@ public final class SelfProfilePane {
         });
     }
     public LinearLayout view() { return content; }
+    public boolean initialContentReady() { return initialContentReady; }
 
     public void refresh() {
         boolean dom = DeviceRolePreferences.isDomWorkspace(activity);
         if (!ProfileStore.mayEdit(activity, dom)) {
             data.cancel(OWN_PROFILE_READ);
             content.removeAllViews();
+            settleInitialContent();
             return;
         }
         long revision = ControllerPinManager.domWorkspaceRevision();
         if (renderedWorkspace != revision || renderedDom != dom) content.removeAllViews();
+        if (content.getChildCount() == 0) initialContentReady = false;
         if (dom) {
             data.cancel(OWN_PROFILE_READ);
             render(true, revision, ProfileStore.load(activity, true), null, null);
@@ -72,7 +76,13 @@ public final class SelfProfilePane {
         }, failure -> {
             if (renderedWorkspace != ControllerPinManager.domWorkspaceRevision() || !ProfileStore.mayEdit(activity, false))
                 content.removeAllViews();
+            settleInitialContent();
         });
+    }
+
+    private void settleInitialContent() {
+        initialContentReady = true;
+        content.requestLayout();
     }
 
     private boolean canPublishSub(long revision) {
@@ -104,5 +114,6 @@ public final class SelfProfilePane {
         edit.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_journal_edit, 0, 0, 0);
         edit.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
         edit.setCompoundDrawablePadding(PersonUi.dp(activity, 8)); edit.setPadding(0, 0, 0, 0);
+        settleInitialContent();
     }
 }

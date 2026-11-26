@@ -111,8 +111,8 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_device_pass_contains_battery_and_lifecycle_ui_without_duplicates(self):
         selected = native.suite_selectors("device-pass")
-        self.assertEqual(60, len(selected))
-        self.assertEqual(60, len(set(selected)))
+        self.assertEqual(61, len(selected))
+        self.assertEqual(61, len(set(selected)))
         self.assertTrue(set(native.BATTERY_SELECTORS) < set(selected))
         self.assertEqual({"completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
                           "domOverviewExcludesCompletedAndRefreshesOriginalCounters",
@@ -124,8 +124,9 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertIn("com.subhub.app.journal.JournalUiAndroidTest#queuedRefreshCannotKeepPrivateRowsOrPlaybackAfterControllerLock", selected)
         self.assertIn("com.subhub.app.appmode.LimitsUiAndroidTest#storedRowsSaveOnBlurAndPauseWhileCatalogIsPendingOrFailed", selected)
         self.assertIn("com.subhub.app.appmode.LimitsUiAndroidTest#scopeChurnRestoresSavedRowsDespiteEarlierMetadataSuccessOrFailure", selected)
+        self.assertIn("com.subhub.app.people.ProfileStatsActivityAndroidTest#recreatingProfileWaitsForTheProfileCardBeforeRestoringScroll", selected)
         values = native.SUITES["device-pass"]
-        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "60 unique"):
+        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "61 unique"):
             native.suite_selectors("device-pass")
 
     def test_profile_screenshots_accept_exact_or_configuration_suffix_but_not_failures(self):

@@ -30,6 +30,7 @@ import com.subhub.app.activity.ActivitySources;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
+import com.subhub.app.journal.JournalRuntime;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
@@ -208,6 +209,67 @@ public final class ProfileStatsActivityAndroidTest {
     private void clearObservedSession(SharedPreferences stats) {
         assertTrue(stats.edit().remove("active_session_start_ms").remove("active_session_identity").commit());
         new StatsRepository(context).load();
+    }
+
+    @Test public void recreatingProfileWaitsForTheProfileCardBeforeRestoringScroll() throws Exception {
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            ProfileActivity initial = resumed(ProfileActivity.class);
+            await(() -> profileAndStatisticsLaidOut(initial));
+            AtomicInteger expected = new AtomicInteger();
+            scenario.onActivity(activity -> {
+                android.widget.ScrollView scroll = profileScroll(activity, null);
+                scroll.scrollTo(0, Integer.MAX_VALUE);
+                scroll.scrollTo(0, Math.max(0, scroll.getScrollY() - PersonUi.dp(activity, 12)));
+                expected.set(scroll.getScrollY());
+                assertTrue("Fixture has enough content to scroll", expected.get() > 0);
+            });
+
+            // Hold the Journal read used by the profile card, leaving statistics free to render.
+            JournalRuntime journal = JournalRuntime.get(context);
+            CountDownLatch locked = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            Thread heldRead = new Thread(() -> {
+                synchronized (journal.entries) {
+                    locked.countDown();
+                    try { release.await(15, TimeUnit.SECONDS); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                }
+            }, "profile-test-journal-read");
+            heldRead.start();
+            try {
+                assertTrue("Journal read gate acquired", locked.await(5, TimeUnit.SECONDS));
+                scenario.recreate();
+                ProfileActivity waiting = resumed(ProfileActivity.class);
+                await(() -> onMainValue(() -> {
+                    android.widget.ScrollView scroll = profileScroll(waiting, null);
+                    View card = waiting.getWindow().getDecorView().findViewWithTag("self_profile:sub");
+                    return card == null && statisticsPopulated(waiting) && scroll.isLaidOut() && !scroll.isLayoutRequested()
+                            && scroll.getChildAt(0).getHeight() < expected.get() + scroll.getHeight()
+                            - scroll.getPaddingTop() - scroll.getPaddingBottom();
+                }));
+            } finally {
+                release.countDown();
+                heldRead.join(5_000);
+            }
+            ProfileActivity recreated = resumed(ProfileActivity.class);
+            await(() -> profileAndStatisticsLaidOut(recreated));
+            scenario.onActivity(activity -> assertEquals("Saved offset applied to the full Profile layout",
+                    expected.get(), profileScroll(activity, null).getScrollY()));
+        }
+    }
+
+    private static boolean profileAndStatisticsLaidOut(ProfileActivity activity) {
+        return onMainValue(() -> {
+            View card = activity.getWindow().getDecorView().findViewWithTag("self_profile:sub");
+            android.widget.ScrollView scroll = profileScroll(activity, null);
+            return card != null && card.isLaidOut() && !scroll.isLayoutRequested() && statisticsPopulated(activity);
+        });
+    }
+
+    private static boolean statisticsPopulated(ProfileActivity activity) {
+        return text(activity.findViewById(R.id.stats_totals_details))
+                .contains(activity.getString(R.string.statistics_current_streak));
     }
 
     private static boolean nestedAppTimeReady(Activity activity, boolean active) {

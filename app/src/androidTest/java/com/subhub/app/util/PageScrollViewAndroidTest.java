@@ -6,6 +6,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.LinearLayout;
 import androidx.test.platform.app.InstrumentationRegistry;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 
 /** Actual Android measurement, clamping and gesture precedence, without timing-dependent posts. */
@@ -46,6 +47,28 @@ public final class PageScrollViewAndroidTest {
             scroll.preserve(() -> fill((LinearLayout) scroll.getChildAt(0), 2200));
             assertEquals(620, scroll.position());
             layout(scroll); assertEquals(620, scroll.getScrollY());
+
+            LinearLayout content = (LinearLayout) scroll.getChildAt(0);
+            AtomicBoolean ready = new AtomicBoolean(false);
+            fill(content, 650);
+            scroll.restorePosition(720, ready::get);
+            layout(scroll);
+            assertEquals(150, scroll.getScrollY());
+            assertEquals(720, scroll.position());
+            fill(content, 2200);
+            ready.set(true);
+            layout(scroll);
+            assertEquals(720, scroll.getScrollY());
+
+            ready.set(false);
+            scroll.restorePosition(620, ready::get);
+            layout(scroll);
+            MotionEvent down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 20, 20, 0);
+            try { scroll.onInterceptTouchEvent(down); } finally { down.recycle(); }
+            ready.set(true);
+            scroll.requestLayout();
+            layout(scroll);
+            assertEquals(720, scroll.getScrollY());
         });
     }
 

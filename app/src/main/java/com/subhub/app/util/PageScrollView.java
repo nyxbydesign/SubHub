@@ -6,10 +6,12 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
 import android.widget.ScrollView;
+import java.util.function.BooleanSupplier;
 
-/** Restore synchronous content replacements after measurement, before the next drawn frame. */
+/** Restore content replacements after the content is ready and measured. */
 public final class PageScrollView extends ScrollView {
     private Integer retainedY;
+    private BooleanSupplier restoreReady;
     private boolean layingOut;
 
     public PageScrollView(Context context) { super(context); }
@@ -18,7 +20,13 @@ public final class PageScrollView extends ScrollView {
     public int position() { return retainedY == null ? getScrollY() : retainedY; }
 
     public void restorePosition(int position) {
+        restorePosition(position, null);
+    }
+
+    /** The content must request a layout when it becomes ready. */
+    public void restorePosition(int position, BooleanSupplier ready) {
         retainedY = Math.max(0, position);
+        restoreReady = ready;
         requestLayout();
     }
 
@@ -33,9 +41,9 @@ public final class PageScrollView extends ScrollView {
         layingOut = true;
         try {
             super.onLayout(changed, left, top, right, bottom);
-            if (retainedY != null) {
+            if (retainedY != null && (restoreReady == null || restoreReady.getAsBoolean())) {
                 int position = retainedY;
-                retainedY = null;
+                cancelRestore();
                 super.scrollTo(getScrollX(), position);
             }
         } finally { layingOut = false; }
@@ -43,18 +51,28 @@ public final class PageScrollView extends ScrollView {
 
     /** Explicit navigation and a newer gesture supersede a pending restoration. */
     @Override public void scrollTo(int x, int y) {
-        if (!layingOut) retainedY = null;
+        if (!layingOut) cancelRestore();
         super.scrollTo(x, y);
     }
 
+    @Override protected void onScrollChanged(int x, int y, int oldX, int oldY) {
+        super.onScrollChanged(x, y, oldX, oldY);
+        if (!layingOut && restoreReady != null && y != oldY) cancelRestore();
+    }
+
     @Override public boolean onInterceptTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) retainedY = null;
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) cancelRestore();
         return super.onInterceptTouchEvent(event);
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) retainedY = null;
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) cancelRestore();
         return super.onTouchEvent(event);
+    }
+
+    private void cancelRestore() {
+        retainedY = null;
+        restoreReady = null;
     }
 
     public static PageScrollView containing(View view) {
