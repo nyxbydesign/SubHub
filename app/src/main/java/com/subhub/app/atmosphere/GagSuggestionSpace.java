@@ -24,7 +24,7 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
     static GagSuggestionSpace capture(InputConnection input, GagDeleteSuggestion.Snapshot before,
             int originalLength, String inserted) {
         if (before == null || originalLength < 0 || before.cursor() < originalLength || inserted.isEmpty()
-                || !needsSpace(before.right())) return null;
+                || (!before.right().isEmpty() && joinsPrevious(before.right().codePointAt(0)))) return null;
         int start = before.cursor() - originalLength;
         if (start > Integer.MAX_VALUE - inserted.length()) return null;
         String knownLeft = before.left().substring(0, Math.max(0, before.left().length() - originalLength))
@@ -47,6 +47,12 @@ record GagSuggestionSpace(InputConnection input, GagDeleteSuggestion.Snapshot po
 
     boolean matches(InputConnection current) {
         return current == input && isExpected(GagDeleteSuggestion.editorSnapshot(current));
+    }
+
+    // Typing before existing whitespace still needs a separator on the left of the new word.
+    // Next-word predictions only use a virtual separator when there is no existing boundary.
+    boolean matchesVirtualSeparator(InputConnection current) {
+        return needsSpace(position.right()) && matches(current);
     }
 
     private boolean isExpected(GagDeleteSuggestion.Snapshot current) {

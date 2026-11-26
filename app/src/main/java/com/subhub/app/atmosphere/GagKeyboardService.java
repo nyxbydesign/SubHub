@@ -1877,7 +1877,8 @@ public final class GagKeyboardService extends InputMethodService {
             // A paste completes the text for prediction without altering the editor or literal typing.
             boolean clipboardSeparator = context.equals(clipboardPasteContext) && !before.isEmpty()
                     && !Character.isWhitespace(before.codePointBefore(before.length()));
-            if (clipboardSeparator || (suggestionSpace != null && suggestionSpace.matches(input))) before += " ";
+            if (clipboardSeparator || (suggestionSpace != null && suggestionSpace.matchesVirtualSeparator(input)))
+                before += " ";
             List<String> candidates = nextWords(before);
             if (shifted) {
                 List<String> uppercase = new ArrayList<>(candidates.size());
@@ -1952,7 +1953,7 @@ public final class GagKeyboardService extends InputMethodService {
         GagSuggestionSpace space = suggestionSpace;
         clearPendingSpace();
         if (!context.commit(input, candidate, token -> applyGag(token, token), completed -> {
-            String insertion = clipboardSeparator || (space != null && space.matches(input))
+            String insertion = clipboardSeparator || (space != null && space.matchesVirtualSeparator(input))
                     ? " " + completed : completed;
             if (!commitSuggestion(input, 0, insertion)) return false;
             if (completed.equals(candidate)) {

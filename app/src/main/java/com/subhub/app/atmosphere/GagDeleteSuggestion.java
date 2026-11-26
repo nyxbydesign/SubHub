@@ -29,10 +29,13 @@ final class GagDeleteSuggestion {
         if (current != connection || before == null || before.left().isEmpty()) return -1;
         Snapshot after = editorSnapshot(current);
         if (after == null) return -1;
-        int start = before.left().offsetByCodePoints(before.left().length(), -1);
-        int removed = before.left().length() - start;
-        return after.cursor() == before.cursor() - removed
-                && after.left().endsWith(before.left().substring(0, start))
+        // The editor may delete a whole grapheme, such as a heart with its variation selector.
+        int removed = before.cursor() - after.cursor();
+        if (removed <= 0 || removed > before.left().length()) return -1;
+        int start = before.left().length() - removed;
+        if (start > 0 && Character.isLowSurrogate(before.left().charAt(start))
+                && Character.isHighSurrogate(before.left().charAt(start - 1))) return -1;
+        return after.left().endsWith(before.left().substring(0, start))
                 && after.right().equals(before.right()) ? after.cursor() : -1;
     }
 
