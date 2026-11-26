@@ -4,10 +4,12 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.LocaleList;
 import android.os.SystemClock;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -25,6 +27,8 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.subhub.app.R;
+import com.subhub.app.util.LocaleHelper;
+import java.util.Locale;
 
 /** Edits a history entry in isolation from the receiving app. */
 public final class GagClipboardEditActivity extends Activity {
@@ -56,6 +60,19 @@ public final class GagClipboardEditActivity extends Activity {
             pending = null;
             return false;
         }
+    }
+
+    @Override protected void attachBaseContext(Context base) {
+        if (Build.VERSION.SDK_INT < 33) {
+            String language = LocaleHelper.getLanguage(base);
+            if (!"system".equals(language)) {
+                // Framework activities on these releases do not receive AppCompat's locale override.
+                Configuration override = new Configuration();
+                override.setLocales(new LocaleList(Locale.forLanguageTag(language)));
+                base = base.createConfigurationContext(override);
+            }
+        }
+        super.attachBaseContext(base);
     }
 
     @Override protected void onCreate(Bundle state) {
