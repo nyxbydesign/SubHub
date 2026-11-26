@@ -145,8 +145,15 @@ public final class GagSuggestionServiceAndroidTest {
     }
 
     @Test public void backspaceAfterAHeartClusterRefreshesSuggestionsBeforeFollowingText() throws Exception {
-        openEditor(" --ez " + GagEditorFixtureActivity.GRAPHEME_DELETE + " true",
-                GagEditorFixtureActivity.GRAPHEME_PREFIX + " tail");
+        assertCorrectionAfterClusterDeletion("heart", GagEditorFixtureActivity.GRAPHEME_PREFIX);
+    }
+
+    @Test public void backspaceAfterAFamilyClusterRefreshesSuggestionsBeforeFollowingText() throws Exception {
+        assertCorrectionAfterClusterDeletion("family", GagEditorFixtureActivity.FAMILY_PREFIX);
+    }
+
+    private static void assertCorrectionAfterClusterDeletion(String cluster, String beforeCaret) throws Exception {
+        openEditor(" --es " + GagEditorFixtureActivity.GRAPHEME_DELETE + " " + cluster, beforeCaret + " tail");
         keyDescription(R.string.gag_keyboard_delete);
         assertText("definately tail");
         key("definitely");

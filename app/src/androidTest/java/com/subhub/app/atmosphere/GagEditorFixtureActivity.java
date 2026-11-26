@@ -31,6 +31,7 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String DELETION_TEXT = "keep über café tail";
     static final String GRAPHEME_DELETE = "gag_grapheme_delete";
     static final String GRAPHEME_PREFIX = "definately\u2764\ufe0f";
+    static final String FAMILY_PREFIX = "definately👨‍👩‍👧‍👦";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
     private EditText editor;
     private boolean keyboardRequested;
@@ -66,9 +67,10 @@ public final class GagEditorFixtureActivity extends Activity {
         editor.setContentDescription(EDITOR);
         boolean middle = getIntent().getBooleanExtra("gag_spacing_middle", false);
         boolean selected = getIntent().getBooleanExtra("gag_deletion_selection", false);
-        boolean grapheme = getIntent().getBooleanExtra(GRAPHEME_DELETE, false);
+        String cluster = getIntent().getStringExtra(GRAPHEME_DELETE);
+        String emojiPrefix = "family".equals(cluster) ? FAMILY_PREFIX : "heart".equals(cluster) ? GRAPHEME_PREFIX : null;
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
-        editor.setText(grapheme ? GRAPHEME_PREFIX + " tail" : selected ? DELETION_TEXT : middle ? " next" : "");
+        editor.setText(emojiPrefix != null ? emojiPrefix + " tail" : selected ? DELETION_TEXT : middle ? " next" : "");
         if (longClipboard) {
             editor.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
@@ -81,7 +83,7 @@ public final class GagEditorFixtureActivity extends Activity {
         setContentView(editor);
         editor.requestFocus();
         if (selected) editor.setSelection(5, 14);
-        else if (grapheme) editor.setSelection(GRAPHEME_PREFIX.length());
+        else if (emojiPrefix != null) editor.setSelection(emojiPrefix.length());
         else editor.setSelection(0);
     }
 
