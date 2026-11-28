@@ -8,6 +8,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 
@@ -62,7 +63,7 @@ public class RemoteAssetsTest {
         IOException malformed = assertThrows(IOException.class, () -> assets.open(hash));
         assertFalse(malformed instanceof RemoteAssets.MissingAssetException);
         Files.delete(complete.toPath());
-        Files.writeString(new File(root, hash + ".size").toPath(), "invalid");
+        Files.write(new File(root, hash + ".size").toPath(), "invalid".getBytes(StandardCharsets.UTF_8));
         IOException badReservation = assertThrows(IOException.class, () -> assets.open(hash));
         assertFalse(badReservation instanceof RemoteAssets.MissingAssetException);
     }
