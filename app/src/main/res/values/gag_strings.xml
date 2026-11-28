@@ -54,10 +54,10 @@
     <string name="gag_keyboard_symbol_hint">%1$s, hold for %2$s</string>
     <string name="gag_keyboard_comma_hint">Comma, hold for emoji</string>
     <string name="gag_emoji_open">Open emoji picker</string>
-    <string name="gag_emoji_tab">Emoji</string>
-    <string name="gag_emoji_recent">Recent</string>
+    <string name="gag_emoji_frequently_used">Frequently Used</string>
     <string name="gag_emoji_back_to_keyboard">Back to keyboard</string>
-    <string name="gag_emoji_recent_empty">No recent emoji</string>
+    <string name="gag_emoji_frequently_used_empty">No frequently used emoji yet</string>
+    <string name="gag_emoji_usage_paused">Emoji usage learning is off</string>
     <string name="gag_emoji_unavailable">Could not open emoji</string>
     <string name="gag_keyboard_clipboard">Clipboard history</string>
     <string name="gag_keyboard_clipboard_empty">No recent items</string>

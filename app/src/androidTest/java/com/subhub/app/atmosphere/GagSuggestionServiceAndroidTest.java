@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.UiAutomation;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.os.ParcelFileDescriptor;
@@ -21,6 +22,7 @@ import androidx.test.uiautomator.Until;
 
 import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.settings.SharedPreferenceTestRestore;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -39,6 +41,38 @@ public final class GagSuggestionServiceAndroidTest {
     private static final String IME = "com.subhub.app/.atmosphere.GagKeyboardService";
     private static final long TIMEOUT_MS = 8_000L;
     @Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
+
+    @Test public void emojiPickerKeepsTypingAcrossTabsAndAbcReturnsToLetters() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        var preferences = context.getSharedPreferences(GagEmojiUsage.PREFS, Context.MODE_PRIVATE);
+        var original = preferences.getAll();
+        assertTrue("Enable learning on the synthetic guest", new GagPersonalDictionary(context).isLearningEnabled());
+        try {
+            assertTrue(preferences.edit().clear().commit());
+            openEditor(false);
+            key("?123");
+            await(By.pkg("com.subhub.app").desc(label(R.string.gag_keyboard_comma_hint))).longClick();
+            await(By.pkg("com.subhub.app").desc("grinning face")).click();
+            await(By.pkg("com.subhub.app").desc("grinning face")).click();
+            await(By.pkg("com.subhub.app").desc("grinning face with big eyes")).click();
+            assertText("😀😀😃");
+
+            await(By.pkg("com.subhub.app").desc("People & Body")).click();
+            await(By.pkg("com.subhub.app").text("People & Body"));
+            await(By.pkg("com.subhub.app").desc(label(R.string.gag_emoji_frequently_used))).click();
+            UiObject2 first = await(By.pkg("com.subhub.app").desc("grinning face"));
+            UiObject2 second = await(By.pkg("com.subhub.app").desc("grinning face with big eyes"));
+            assertTrue("Higher count should outrank the latest insertion",
+                    first.getVisibleCenter().x < second.getVisibleCenter().x);
+            first.click();
+            assertText("😀😀😃😀");
+            await(By.pkg("com.subhub.app").desc(label(R.string.gag_emoji_back_to_keyboard))
+                    .text("ABC")).click();
+            await(By.pkg("com.subhub.app").text("q"));
+        } finally {
+            SharedPreferenceTestRestore.restore(preferences, original);
+        }
+    }
 
     @Test public void explicitSuggestionsPreserveExistingSpaceAndDeferNewSeparators() throws Exception {
         openEditor(true);

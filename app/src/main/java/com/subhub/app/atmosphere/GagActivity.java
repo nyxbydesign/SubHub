@@ -154,6 +154,7 @@ public final class GagActivity extends AppCompatActivity {
         findViewById(R.id.gag_clear_learned).setOnClickListener(view -> {
             if (!requireRole()) return;
             dictionary.clearLearned();
+            GagEmojiUsage.clear(getSharedPreferences(GagEmojiUsage.PREFS, MODE_PRIVATE));
             Toast.makeText(this, R.string.gag_learned_cleared, Toast.LENGTH_SHORT).show();
         });
         showDictionary(expanded);

@@ -907,8 +907,9 @@ public final class GagKeyboardService extends InputMethodService {
             clearClipboardSuggestion();
             int height = dp(compact() ? 25 : 43) + 4 * dp(compact() ? 39 : 64.3f);
             GagEmojiPicker picker = new GagEmojiPicker(keyboard.getContext(),
-                    getSharedPreferences(GagEmojiPicker.PREFS, MODE_PRIVATE), emojiCatalog, compact(),
-                    this::insertEmoji, this::closeEmojiPicker);
+                    getSharedPreferences(GagEmojiUsage.PREFS, MODE_PRIVATE), emojiCatalog, compact(),
+                    () -> editorAllowed && personalDictionary().isLearningEnabled(),
+                    this::insertEmoji, this::showLettersFromEmoji);
             keyRows.addView(picker, new LinearLayout.LayoutParams(-1, height));
             return;
         }
@@ -976,9 +977,9 @@ public final class GagKeyboardService extends InputMethodService {
         renderKeysIfNeeded(getCurrentInputEditorInfo());
     }
 
-    private void closeEmojiPicker() {
+    private void showLettersFromEmoji() {
         if (page != Page.EMOJI) return;
-        page = pageBeforeEmoji;
+        page = Page.LETTERS;
         renderKeysIfNeeded(getCurrentInputEditorInfo());
         scheduleSuggestions();
     }
