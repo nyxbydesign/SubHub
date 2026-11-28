@@ -3,12 +3,19 @@ package com.subhub.app.atmosphere;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.os.PersistableBundle;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputConnectionWrapper;
+import android.view.inputmethod.InputContentInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 
@@ -33,9 +40,14 @@ public final class GagEditorFixtureActivity extends Activity {
     static final String GRAPHEME_PREFIX = "definately\u2764\ufe0f";
     static final String FAMILY_PREFIX = "definately👨‍👩‍👧‍👦";
     static final String SUPPRESS_CLIPBOARD_OVERLAY = "gag_suppress_clipboard_overlay";
+    static final String CLEAR_CLIPBOARD = "gag_clear_clipboard";
+    static final String RECEIVE_IMAGE = "gag_receive_clipboard_image";
+    static final String RECEIVED_SYNTHETIC_IMAGE = EDITOR + " received synthetic clipboard image";
+    static final int SYNTHETIC_IMAGE_COLOR = Color.rgb(218, 88, 42);
     private EditText editor;
     private boolean keyboardRequested;
     private boolean seedClipboard;
+    private boolean clearClipboard;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -61,7 +73,8 @@ public final class GagEditorFixtureActivity extends Activity {
                         }
                     }
                 }
-                : new EditText(this);
+                : getIntent().getBooleanExtra(RECEIVE_IMAGE, false)
+                        ? createImageEditor() : new EditText(this);
         editor.setSingleLine(!longClipboard);
         editor.setInputType(InputType.TYPE_CLASS_TEXT | (longClipboard ? InputType.TYPE_TEXT_FLAG_MULTI_LINE : 0));
         editor.setContentDescription(EDITOR);
@@ -70,6 +83,7 @@ public final class GagEditorFixtureActivity extends Activity {
         String cluster = getIntent().getStringExtra(GRAPHEME_DELETE);
         String emojiPrefix = "family".equals(cluster) ? FAMILY_PREFIX : "heart".equals(cluster) ? GRAPHEME_PREFIX : null;
         seedClipboard = getIntent().getBooleanExtra("gag_seed_clipboard", false);
+        clearClipboard = getIntent().getBooleanExtra(CLEAR_CLIPBOARD, false);
         editor.setText(emojiPrefix != null ? emojiPrefix + " tail" : selected ? DELETION_TEXT : middle ? " next" : "");
         if (longClipboard) {
             editor.addTextChangedListener(new TextWatcher() {
@@ -91,6 +105,41 @@ public final class GagEditorFixtureActivity extends Activity {
         return EDITOR + " length=" + text.length() + " exact=" + TextUtils.equals(LONG_CLIPBOARD_TEXT, text);
     }
 
+    private EditText createImageEditor() {
+        return new EditText(this) {
+            @Override public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+                InputConnection input = super.onCreateInputConnection(outAttrs);
+                if (input == null) return null;
+                outAttrs.contentMimeTypes = new String[]{"image/png"};
+                return new InputConnectionWrapper(input, false) {
+                    @Override public boolean commitContent(InputContentInfo content, int flags, Bundle opts) {
+                        if (!content.getDescription().hasMimeType("image/png")
+                                || (flags & InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) == 0)
+                            return false;
+                        boolean granted = false;
+                        Bitmap bitmap = null;
+                        try {
+                            content.requestPermission();
+                            granted = true;
+                            try (var bytes = getContentResolver().openInputStream(content.getContentUri())) {
+                                bitmap = BitmapFactory.decodeStream(bytes);
+                            }
+                            if (bitmap == null || bitmap.getWidth() != 40 || bitmap.getHeight() != 30
+                                    || bitmap.getPixel(0, 0) != SYNTHETIC_IMAGE_COLOR) return false;
+                            post(() -> setContentDescription(RECEIVED_SYNTHETIC_IMAGE));
+                            return true;
+                        } catch (IOException | SecurityException unavailable) {
+                            return false;
+                        } finally {
+                            if (bitmap != null) bitmap.recycle();
+                            if (granted) content.releasePermission();
+                        }
+                    }
+                };
+            }
+        };
+    }
+
     static Path reserveFailureCapture(String label) throws IOException {
         var context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         return Files.createTempDirectory(context.getFilesDir().toPath(), label + "-").resolve("failure.png");
@@ -106,6 +155,10 @@ public final class GagEditorFixtureActivity extends Activity {
                             .showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
                 }
             });
+        }
+        if (hasFocus && clearClipboard) {
+            clearClipboard = false;
+            getSystemService(ClipboardManager.class).clearPrimaryClip();
         }
         if (hasFocus && seedClipboard) {
             seedClipboard = false;

@@ -45,7 +45,6 @@ import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodSubtype;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -107,11 +106,12 @@ public final class GagKeyboardService extends InputMethodService {
     private char pendingPunctuation;
     private int punctuationCursor = -1;
     private List<TextView> suggestionSlots;
-    private HorizontalScrollView suggestionViewport;
     private LinearLayout toolbar;
     private LinearLayout keyRows;
     private ImageButton clipboardButton;
-    private TextView clipboardChip;
+    private FrameLayout clipboardBubble;
+    private ImageView clipboardBubbleImage;
+    private TextView clipboardBubbleText;
     private RemoteFeature backend;
     private AutoCloseable configurationObserver;
     private SharedPreferences participation;
@@ -903,6 +903,7 @@ public final class GagKeyboardService extends InputMethodService {
         shiftKey = null;
         toolbar.setVisibility(page == Page.EMOJI ? View.GONE : View.VISIBLE);
         clipboardButton.setVisibility(editorAllowed ? View.VISIBLE : View.INVISIBLE);
+        clipboardBubble.setVisibility(clipboardButton.getVisibility());
         if (page == Page.EMOJI) {
             clearClipboardSuggestion();
             int height = dp(compact() ? 25 : 43) + 4 * dp(compact() ? 39 : 64.3f);
@@ -1119,23 +1120,10 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardButton.setPadding(0, 0, 0, 0);
         clipboardButton.setOnClickListener(view -> showClipboard());
         tools.addView(clipboardButton, new LinearLayout.LayoutParams(gutter, height));
-        clipboardChip = suggestionLabel(tools.getContext());
-        clipboardChip.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
-        clipboardChip.setSaveEnabled(false);
-        clipboardChip.setVisibility(View.GONE);
-        clipboardChip.setTag("gag_clipboard_suggestion");
-        suggestionViewport = new SuggestionViewport(tools.getContext(), clipboardChip);
-        suggestionViewport.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        suggestionViewport.setHorizontalScrollBarEnabled(false);
-        suggestionViewport.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        tools.addView(suggestionViewport, new LinearLayout.LayoutParams(0, height, 2));
-        clipboardChip.setOnTouchListener(new ClipboardSuggestionDrag());
-        tools.addView(clipboardChip, new LinearLayout.LayoutParams(0, height, 1));
-        tools.addView(new Space(tools.getContext()), new LinearLayout.LayoutParams(gutter, height));
 
         LinearLayout strip = new LinearLayout(tools.getContext());
         strip.setBaselineAligned(false);
-        suggestionViewport.addView(strip, new FrameLayout.LayoutParams(-1, -1));
+        tools.addView(strip, new LinearLayout.LayoutParams(0, height, 1));
         suggestionSlots = new ArrayList<>(3);
         for (int index = 0; index < 3; index++) {
             TextView choice = suggestionLabel(tools.getContext());
@@ -1157,6 +1145,28 @@ public final class GagKeyboardService extends InputMethodService {
             suggestionSlots.add(choice);
             strip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
         }
+
+        clipboardBubble = new FrameLayout(tools.getContext());
+        clipboardBubble.setTag("gag_clipboard_suggestion");
+        clipboardBubble.setBackground(keyFace(MODIFIER_SURFACE, 7));
+        clipboardBubble.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        clipboardBubble.setSaveFromParentEnabled(false);
+        clipboardBubble.setFocusable(true);
+        clipboardBubble.setOnTouchListener(new GagKeyPress(main, null));
+        clipboardBubble.setOnClickListener(view -> acceptClipboardBubble());
+        tools.addView(clipboardBubble, new LinearLayout.LayoutParams(gutter, height));
+        clipboardBubbleText = suggestionLabel(tools.getContext());
+        clipboardBubbleText.setBackground(null);
+        clipboardBubbleText.setTextSize(13);
+        clipboardBubbleText.setPadding(dp(4), 0, dp(4), 0);
+        clipboardBubbleText.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        clipboardBubble.addView(clipboardBubbleText, new FrameLayout.LayoutParams(-1, -1));
+        clipboardBubbleImage = new ImageView(tools.getContext());
+        clipboardBubbleImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        clipboardBubbleImage.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        clipboardBubble.addView(clipboardBubbleImage,
+                new FrameLayout.LayoutParams(dp(24), dp(20), Gravity.CENTER));
+        renderClipboardBubble();
     }
 
     private TextView suggestionLabel(Context context) {
@@ -1169,58 +1179,6 @@ public final class GagKeyboardService extends InputMethodService {
         label.setPadding(dp(6), 0, dp(6), 0);
         label.setBackground(keyFace(MODIFIER_SURFACE, 7));
         return label;
-    }
-
-    /** Allow a horizontal gesture starting on the pinned clipboard tile to scroll the words too. */
-    private final class ClipboardSuggestionDrag implements View.OnTouchListener {
-        private float downX;
-        private int initialScroll;
-        private boolean dragging;
-
-        @Override public boolean onTouch(View view, MotionEvent event) {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN -> {
-                    downX = event.getRawX();
-                    initialScroll = suggestionViewport.getScrollX();
-                    dragging = false;
-                }
-                case MotionEvent.ACTION_MOVE -> {
-                    float distance = downX - event.getRawX();
-                    if (!dragging && Math.abs(distance) <= ViewConfiguration.get(view.getContext()).getScaledTouchSlop())
-                        return false;
-                    dragging = true;
-                    view.setPressed(false);
-                    suggestionViewport.scrollTo(initialScroll + Math.round(distance), 0);
-                    return true;
-                }
-                case MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (dragging) {
-                        dragging = false;
-                        return true;
-                    }
-                }
-                default -> { }
-            }
-            return false;
-        }
-    }
-
-    private static final class SuggestionViewport extends HorizontalScrollView {
-        private final View clipboard;
-
-        SuggestionViewport(Context context, View clipboard) {
-            super(context);
-            this.clipboard = clipboard;
-        }
-
-        @Override protected void measureChildWithMargins(View child, int parentWidthSpec, int widthUsed,
-                int parentHeightSpec, int heightUsed) {
-            // A trailing clipboard tile takes one slot outside the viewport. Scroll the third word.
-            int width = MeasureSpec.getSize(parentWidthSpec);
-            if (clipboard.getVisibility() == View.VISIBLE) width += (width + 1) / 2;
-            int heightSpec = getChildMeasureSpec(parentHeightSpec, heightUsed, child.getLayoutParams().height);
-            child.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), heightSpec);
-        }
     }
 
     /** Rank zero owns the middle physical slot, including when either side is blank. */
@@ -1773,13 +1731,8 @@ public final class GagKeyboardService extends InputMethodService {
 
     private void clearClipboardSuggestion() {
         if (clipboardSuggestion == null) return;
-        clipboardChip.setVisibility(View.GONE);
-        suggestionViewport.scrollTo(0, 0);
-        clipboardChip.setText(null);
-        clipboardChip.setContentDescription(null);
-        clipboardChip.setCompoundDrawablesRelative(null, null, null, null);
-        clipboardChip.setOnClickListener(null);
         clipboardSuggestion = null;
+        renderClipboardBubble();
     }
 
     private void dismissClipboardSuggestion() {
@@ -1788,13 +1741,13 @@ public final class GagKeyboardService extends InputMethodService {
     }
 
     private void refreshClipboardSuggestion() {
-        if (!clipboardAllowed() || clipboardPanel != null || clipboardChip == null || page == Page.EMOJI) return;
+        if (!clipboardAllowed() || clipboardPanel != null || clipboardBubble == null || page == Page.EMOJI) return;
         long now = android.os.SystemClock.elapsedRealtime();
         refreshClipboardSuggestion(clipboard.recentEntries(now), now);
     }
 
     private void refreshClipboardSuggestion(List<GagClipboard.Entry> entries, long now) {
-        if (clipboardChip == null || page == Page.EMOJI) return;
+        if (clipboardBubble == null || page == Page.EMOJI) return;
         EditorInfo editor = getCurrentInputEditorInfo();
         InputConnection input = getCurrentInputConnection();
         boolean empty = word.length() == 0 && isEmptyEditor(input);
@@ -1813,22 +1766,42 @@ public final class GagKeyboardService extends InputMethodService {
         clipboardSuggestion = offered;
         if (offered.copiedAt() == clipboardOfferCandidateAt && now < clipboardOfferExpiry(offered))
             clipboardOfferedThrough = Math.max(clipboardOfferedThrough, offered.copiedAt());
-        clipboardChip.setContentDescription(clipboardTitle(offered));
-        if (offered.image() == null) clipboardChip.setText(clipboardTitle(offered));
-        else {
-            var thumbnail = new android.graphics.drawable.BitmapDrawable(getResources(), offered.image().thumbnail());
-            thumbnail.setBounds(0, 0, dp(24), dp(20));
-            clipboardChip.setCompoundDrawablesRelative(null, thumbnail, null, null);
+        renderClipboardBubble();
+    }
+
+    private void renderClipboardBubble() {
+        GagClipboard.Entry offered = clipboardSuggestion;
+        boolean showText = offered != null && offered.image() == null;
+        String title = offered == null ? getString(R.string.gag_clipboard_open) : clipboardTitle(offered);
+        clipboardBubble.cancelPendingInputEvents();
+        clipboardBubble.setPressed(false);
+        clipboardBubble.setContentDescription(title);
+        clipboardBubbleText.setText(showText ? title : null);
+        clipboardBubbleText.setVisibility(showText ? View.VISIBLE : View.GONE);
+        clipboardBubbleImage.setVisibility(showText ? View.GONE : View.VISIBLE);
+        if (offered != null && offered.image() != null) {
+            clipboardBubbleImage.setImageBitmap(offered.image().thumbnail());
+        } else {
+            clipboardBubbleImage.setImageResource(R.drawable.ic_gag_clipboard);
         }
-        clipboardChip.setOnClickListener(view -> {
-            long elapsed = android.os.SystemClock.elapsedRealtime();
-            if (clipboardSuggestion != offered || !clipboardAllowed() || !clipboard.allows(input)
-                    || !canOfferClipboardSuggestion(offered, getCurrentInputEditorInfo(),
-                            word.length() == 0 && isEmptyEditor(input), clipboardOfferCandidateAt, elapsed)) return;
-            dismissClipboardSuggestion();
-            pasteClipboard(null, input, offered);
-        });
-        clipboardChip.setVisibility(View.VISIBLE);
+    }
+
+    private void acceptClipboardBubble() {
+        if (!clipboardAllowed()) return;
+        GagClipboard.Entry offered = clipboardSuggestion;
+        if (offered == null) {
+            showClipboard();
+            return;
+        }
+        InputConnection input = getCurrentInputConnection();
+        if (!canOfferClipboardSuggestion(offered, getCurrentInputEditorInfo(),
+                word.length() == 0 && isEmptyEditor(input), clipboardOfferCandidateAt,
+                android.os.SystemClock.elapsedRealtime())) {
+            clearClipboardSuggestion();
+            return;
+        }
+        dismissClipboardSuggestion();
+        pasteClipboard(null, input, offered);
     }
 
     static boolean canOfferClipboardSuggestion(GagClipboard.Entry entry, EditorInfo editor, boolean empty,

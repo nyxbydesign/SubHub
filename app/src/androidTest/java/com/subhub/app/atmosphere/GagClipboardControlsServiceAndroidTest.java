@@ -159,49 +159,59 @@ public final class GagClipboardControlsServiceAndroidTest {
 
     @Test
     @SdkSuppress(minSdkVersion = 33)
-    public void clipboardSharesTheSuggestionRowAndDragDoesNotPaste() throws Exception {
+    public void clipboardBubbleKeepsAllThreeSuggestionsVisibleAndPastesOnTap() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
-        openFixture(false);
-        BySelector fixedTool = By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard));
-        Rect toolBounds = await(fixedTool).getVisibleBounds();
+        openFixture(false, false, true, false);
+        BySelector neutral = By.pkg(APP).desc(label(R.string.gag_clipboard_open));
+        Rect neutralBounds = assertMirroredClipboardBubble(neutral);
+        await(neutral).click();
+        await(By.pkg(APP).text(label(R.string.gag_clipboard_title)));
+        await(By.pkg(APP).desc(label(R.string.gag_keyboard_back_to_keys))).click();
         shell("input text thanks%s");
         assertEditor("thanks ");
-        await(By.pkg(APP).text("and"));
+        List<Rect> words = assertThreeWordSlots(neutralBounds);
         shell("input keycombination " + KeyEvent.KEYCODE_CTRL_LEFT + " " + KeyEvent.KEYCODE_A);
         shell("input keycombination " + KeyEvent.KEYCODE_CTRL_LEFT + " " + KeyEvent.KEYCODE_C);
         shell("input keyevent " + KeyEvent.KEYCODE_MOVE_END);
 
         BySelector clip = By.pkg(APP).desc("thanks ");
-        Rect clipBounds = await(clip).getVisibleBounds();
-        Rect wordBounds = await(By.pkg(APP).text("for")).getVisibleBounds();
-        await(By.pkg(APP).text("again"));
-        assertTrue(Math.abs(clipBounds.width() - wordBounds.width()) <= 1);
-        assertEquals(wordBounds.right, clipBounds.left);
-        BySelector trailingWord = By.pkg(APP).text("and");
-        assertFalse(device().hasObject(trailingWord));
-
-        int travel = 2 * clipBounds.width();
-        shell("input swipe " + clipBounds.centerX() + " " + clipBounds.centerY() + " "
-                + (clipBounds.centerX() - travel) + " " + clipBounds.centerY() + " 380");
+        assertEquals(neutralBounds, assertMirroredClipboardBubble(clip));
+        assertEquals(words, assertThreeWordSlots(neutralBounds));
+        shell("input swipe " + neutralBounds.centerX() + " " + neutralBounds.centerY() + " "
+                + words.get(1).centerX() + " " + neutralBounds.centerY() + " 380");
         assertEditor("thanks ");
-        Rect revealed = await(trailingWord).getVisibleBounds();
-        assertTrue("The trailing word did not reach full width: " + revealed,
-                revealed.width() >= wordBounds.width() - 1);
-        assertEquals(clipBounds, await(clip).getVisibleBounds());
-        assertEquals(revealed.right, clipBounds.left);
-        assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
+        assertEquals(words, assertThreeWordSlots(neutralBounds));
 
         await(clip).click();
         await(editor().text("thanks thanks "));
         assertTrue(device().wait(Until.gone(clip), TIMEOUT));
+        assertEquals(neutralBounds, assertMirroredClipboardBubble(neutral));
+        assertEquals(words, assertThreeWordSlots(neutralBounds));
+    }
+
+    private static Rect assertMirroredClipboardBubble(BySelector bubble) {
+        Rect tool = await(By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard))).getVisibleBounds();
+        Rect right = await(bubble).getVisibleBounds();
+        assertEquals(tool.width(), right.width());
+        assertEquals(tool.top, right.top);
+        assertEquals(tool.bottom, right.bottom);
+        assertTrue("Clipboard bubble should be opposite the leading tool: " + right, right.left > tool.right);
+        return right;
+    }
+
+    private static List<Rect> assertThreeWordSlots(Rect bubble) {
+        Rect tool = await(By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard))).getVisibleBounds();
         Rect left = await(By.pkg(APP).text("again")).getVisibleBounds();
         Rect middle = await(By.pkg(APP).text("for")).getVisibleBounds();
-        Rect right = await(trailingWord).getVisibleBounds();
+        Rect right = await(By.pkg(APP).text("and")).getVisibleBounds();
+        assertEquals(tool.right, left.left);
         assertEquals(left.right, middle.left);
         assertEquals(middle.right, right.left);
-        assertEquals(clipBounds.right, right.right);
-        assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
+        assertEquals(bubble.left, right.right);
+        assertTrue("All three word slots should be fully visible with equal widths",
+                Math.abs(left.width() - middle.width()) <= 1 && Math.abs(middle.width() - right.width()) <= 1);
+        return List.of(left, middle, right);
     }
 
     @Test
@@ -305,6 +315,47 @@ public final class GagClipboardControlsServiceAndroidTest {
 
     @Test
     @SdkSuppress(minSdkVersion = 33)
+    public void imageClipboardBubbleKeepsItsSlotAndPastesTheImageOnTap() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        var resolver = target.getContentResolver();
+        var prefs = GagScreenshotClipboard.preferences(target);
+        String enabled = GagScreenshotClipboard.ENABLED_SINCE;
+        String opened = "screenshots_clipboard_opened";
+        boolean hadEnabled = prefs.contains(enabled);
+        long previousEnabled = prefs.getLong(enabled, 0);
+        boolean hadOpened = prefs.contains(opened);
+        boolean previousOpened = prefs.getBoolean(opened, false);
+        long enabledAt = System.currentTimeMillis() / 1_000L * 1_000L;
+        assertTrue(prefs.edit().putLong(enabled, enabledAt).putBoolean(opened, true).commit());
+        Uri screenshot = null;
+        try {
+            openFixture(false, false, true, true);
+            BySelector neutral = By.pkg(APP).desc(label(R.string.gag_clipboard_open));
+            Rect bubble = assertMirroredClipboardBubble(neutral);
+            shell("input text thanks%s");
+            assertEditor("thanks ");
+            List<Rect> words = assertThreeWordSlots(bubble);
+
+            screenshot = syntheticScreenshot(resolver);
+            BySelector image = By.pkg(APP).desc(label(R.string.gag_clipboard_screenshot));
+            assertEquals(bubble, assertMirroredClipboardBubble(image));
+            assertEquals(words, assertThreeWordSlots(bubble));
+            await(image).click();
+            await(By.pkg(FIXTURE).desc(GagEditorFixtureActivity.RECEIVED_SYNTHETIC_IMAGE));
+            assertEquals(bubble, assertMirroredClipboardBubble(neutral));
+            assertTrue(device().wait(Until.gone(image), TIMEOUT));
+        } finally {
+            if (screenshot != null) resolver.delete(screenshot, null, null);
+            var restore = prefs.edit();
+            if (hadEnabled) restore.putLong(enabled, previousEnabled); else restore.remove(enabled);
+            if (hadOpened) restore.putBoolean(opened, previousOpened); else restore.remove(opened);
+            assertTrue(restore.commit());
+        }
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 33)
     public void screenshotCardCanBePinnedUnpinnedAndDeletedByTouch() throws Exception {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
@@ -360,7 +411,7 @@ public final class GagClipboardControlsServiceAndroidTest {
         boolean published = false;
         try {
             Bitmap bitmap = Bitmap.createBitmap(40, 30, Bitmap.Config.ARGB_8888);
-            bitmap.eraseColor(Color.rgb(218, 88, 42));
+                bitmap.eraseColor(GagEditorFixtureActivity.SYNTHETIC_IMAGE_COLOR);
             try (var output = resolver.openOutputStream(screenshot)) {
                 assertNotNull(output);
                 assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output));
@@ -421,12 +472,19 @@ public final class GagClipboardControlsServiceAndroidTest {
     }
 
     private static void openFixture(boolean seed, boolean longText) throws Exception {
+        openFixture(seed, longText, false, false);
+    }
+
+    private static void openFixture(boolean seed, boolean longText, boolean clearClipboard, boolean receiveImage)
+            throws Exception {
         assertEquals(APP + "/.atmosphere.GagKeyboardService",
                 shell("settings get secure default_input_method").trim());
         String started = shell("am start -W -f 0x10008000 -a " + GagEditorFixtureActivity.ACTION
                 + " -n " + FIXTURE + "/" + GagEditorFixtureActivity.class.getName()
                 + " --ez gag_seed_clipboard " + seed
                 + " --ez " + GagEditorFixtureActivity.SEED_LONG_CLIPBOARD + " " + longText
+                + " --ez " + GagEditorFixtureActivity.CLEAR_CLIPBOARD + " " + clearClipboard
+                + " --ez " + GagEditorFixtureActivity.RECEIVE_IMAGE + " " + receiveImage
                 + " --ez " + GagEditorFixtureActivity.SUPPRESS_CLIPBOARD_OVERLAY + " " + seed);
         assertTrue(started, started.contains("Status: ok"));
         await(By.pkg(APP).text("q"));
