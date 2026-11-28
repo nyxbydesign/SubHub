@@ -63,7 +63,6 @@
     <string name="gag_keyboard_clipboard_empty">No recent items</string>
     <string name="gag_keyboard_clipboard_clear">Clear history</string>
     <string name="gag_clipboard_title">Clipboard</string>
-    <string name="gag_clipboard_open">Open clipboard</string>
     <string name="gag_clipboard_recent">Recent</string>
     <string name="gag_clipboard_screenshot">Screenshot</string>
     <string name="gag_clipboard_edit">Edit</string>

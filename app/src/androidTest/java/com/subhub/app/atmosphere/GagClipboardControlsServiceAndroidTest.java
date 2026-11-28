@@ -163,31 +163,36 @@ public final class GagClipboardControlsServiceAndroidTest {
         var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
         openFixture(false, false, true, false);
-        BySelector neutral = By.pkg(APP).desc(label(R.string.gag_clipboard_open));
-        Rect neutralBounds = assertMirroredClipboardBubble(neutral);
-        await(neutral).click();
+        BySelector clipboardTool = By.pkg(APP).desc(label(R.string.gag_keyboard_clipboard));
+        await(clipboardTool).click();
         await(By.pkg(APP).text(label(R.string.gag_clipboard_title)));
         await(By.pkg(APP).desc(label(R.string.gag_keyboard_back_to_keys))).click();
         shell("input text thanks%s");
         assertEditor("thanks ");
-        List<Rect> words = assertThreeWordSlots(neutralBounds);
         shell("input keycombination " + KeyEvent.KEYCODE_CTRL_LEFT + " " + KeyEvent.KEYCODE_A);
         shell("input keycombination " + KeyEvent.KEYCODE_CTRL_LEFT + " " + KeyEvent.KEYCODE_C);
         shell("input keyevent " + KeyEvent.KEYCODE_MOVE_END);
 
         BySelector clip = By.pkg(APP).desc("thanks ");
-        assertEquals(neutralBounds, assertMirroredClipboardBubble(clip));
-        assertEquals(words, assertThreeWordSlots(neutralBounds));
-        shell("input swipe " + neutralBounds.centerX() + " " + neutralBounds.centerY() + " "
-                + words.get(1).centerX() + " " + neutralBounds.centerY() + " 380");
+        Rect bubble = assertMirroredClipboardBubble(clip);
+        List<Rect> words = assertThreeWordSlots(bubble);
+        shell("input swipe " + bubble.centerX() + " " + bubble.centerY() + " "
+                + words.get(1).centerX() + " " + bubble.centerY() + " 380");
         assertEditor("thanks ");
-        assertEquals(words, assertThreeWordSlots(neutralBounds));
+        assertEquals(words, assertThreeWordSlots(bubble));
 
         await(clip).click();
-        await(editor().text("thanks thanks "));
+        assertEditor("thanks thanks ");
+        assertEquals(bubble, assertMirroredClipboardBubble(clip));
+        assertEquals(words, assertThreeWordSlots(bubble));
+        openClipboard();
+        slideTo("thanks ", label(R.string.delete));
+        await(By.pkg(APP).desc(label(R.string.gag_keyboard_back_to_keys))).click();
         assertTrue(device().wait(Until.gone(clip), TIMEOUT));
-        assertEquals(neutralBounds, assertMirroredClipboardBubble(neutral));
-        assertEquals(words, assertThreeWordSlots(neutralBounds));
+        device().click(bubble.centerX(), bubble.centerY());
+        assertEditor("thanks thanks ");
+        assertFalse(device().hasObject(By.pkg(APP).text(label(R.string.gag_clipboard_title))));
+        assertEquals(1, device().findObjects(clipboardTool).size());
     }
 
     private static Rect assertMirroredClipboardBubble(BySelector bubble) {
@@ -266,7 +271,7 @@ public final class GagClipboardControlsServiceAndroidTest {
         await(popupInput().text(GagEditorFixtureActivity.CLIPBOARD_TEXT + letter));
         await(By.pkg(APP).text(label(android.R.string.cancel))).click();
         assertPopupClosed();
-        assertTrue(device().wait(Until.gone(freshClip), TIMEOUT));
+        await(freshClip);
         assertEditor("Draft");
 
         openClipboard();
@@ -276,6 +281,7 @@ public final class GagClipboardControlsServiceAndroidTest {
         await(By.pkg(APP).text(label(R.string.gag_clipboard_save))).click();
         assertPopupClosed();
         assertEditor("Draft");
+        await(By.pkg(APP).desc(EDITED));
 
         openClipboard();
         slideTo(EDITED, label(R.string.gag_clipboard_pin));
@@ -331,20 +337,15 @@ public final class GagClipboardControlsServiceAndroidTest {
         Uri screenshot = null;
         try {
             openFixture(false, false, true, true);
-            BySelector neutral = By.pkg(APP).desc(label(R.string.gag_clipboard_open));
-            Rect bubble = assertMirroredClipboardBubble(neutral);
             shell("input text thanks%s");
             assertEditor("thanks ");
-            List<Rect> words = assertThreeWordSlots(bubble);
-
             screenshot = syntheticScreenshot(resolver);
             BySelector image = By.pkg(APP).desc(label(R.string.gag_clipboard_screenshot));
-            assertEquals(bubble, assertMirroredClipboardBubble(image));
-            assertEquals(words, assertThreeWordSlots(bubble));
+            Rect bubble = assertMirroredClipboardBubble(image);
+            assertThreeWordSlots(bubble);
             await(image).click();
             await(By.pkg(FIXTURE).desc(GagEditorFixtureActivity.RECEIVED_SYNTHETIC_IMAGE));
-            assertEquals(bubble, assertMirroredClipboardBubble(neutral));
-            assertTrue(device().wait(Until.gone(image), TIMEOUT));
+            assertEquals(bubble, assertMirroredClipboardBubble(image));
         } finally {
             if (screenshot != null) resolver.delete(screenshot, null, null);
             var restore = prefs.edit();

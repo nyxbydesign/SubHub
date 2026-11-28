@@ -174,6 +174,12 @@ final class GagClipboard {
         return List.copyOf(history);
     }
 
+    Entry latest(long now) {
+        removeExpired(now);
+        if (!history.isEmpty()) return history.get(0);
+        return pins.isEmpty() ? null : pins.get(0);
+    }
+
     boolean contains(Entry entry, long now) {
         removeExpired(now);
         return entry.pinned() ? pins.contains(entry) : history.contains(entry);
