@@ -400,6 +400,79 @@ public final class GagSuggestionServiceAndroidTest {
         assertText("keep  tail");
     }
 
+    @Test public void commaHintAndWallpaperAreVisibleOnTheTypingKeyboard() throws Exception {
+        Path failedCapture = GagEditorFixtureActivity.reserveFailureCapture("gag-comma-hint");
+        openEditor(false);
+        UiObject2 comma = await(By.pkg("com.subhub.app").desc(label(R.string.gag_keyboard_comma_hint)));
+        Rect bounds = comma.getVisibleBounds();
+        String[] labels = {"q", "t", "p", "s", "g", "k", "v", "n"};
+        Rect[] letterBounds = new Rect[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            letterBounds[i] = await(By.pkg("com.subhub.app").text(labels[i])).getVisibleBounds();
+        }
+        assertKeyboardArtworkPixels(bounds, letterBounds, failedCapture);
+        assertTrue(device().click(bounds.centerX(), bounds.top + bounds.height() / 4));
+        assertText(",");
+
+        await(By.pkg("com.subhub.app").desc(label(R.string.gag_keyboard_comma_hint))).longClick();
+        await(By.pkg("com.subhub.app").desc(label(R.string.gag_emoji_back_to_keyboard)));
+        assertText(",");
+    }
+
+    private static void assertKeyboardArtworkPixels(Rect bounds, Rect[] letterBounds, Path failedCapture)
+            throws IOException {
+        UiAutomation automation = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        long deadline = SystemClock.uptimeMillis() + 2_000;
+        int radius = Math.min(bounds.width(), bounds.height()) / 4;
+        while (true) {
+            Bitmap screen = automation.takeScreenshot();
+            assertNotNull(screen);
+            try {
+                // The stroke is above the comma; the dim wallpaper and key face stay below this range.
+                int lightPixels = 0;
+                for (int y = bounds.top + bounds.height() / 16; y < bounds.top + bounds.height() * 7 / 16; y++) {
+                    for (int x = bounds.centerX() - radius; x < bounds.centerX() + radius; x++) {
+                        int pixel = screen.getPixel(x, y);
+                        if (android.graphics.Color.red(pixel) >= 175
+                                && android.graphics.Color.green(pixel) >= 175
+                                && android.graphics.Color.blue(pixel) >= 175) lightPixels++;
+                    }
+                }
+                int artworkRange = keyFaceArtworkRange(screen, letterBounds);
+                if (lightPixels >= 5 && artworkRange >= 11) return;
+                if (SystemClock.uptimeMillis() >= deadline) {
+                    try (var output = Files.newOutputStream(failedCapture, StandardOpenOption.CREATE_NEW,
+                            StandardOpenOption.WRITE)) {
+                        assertTrue(screen.compress(Bitmap.CompressFormat.PNG, 100, output));
+                    }
+                    throw new AssertionError("Typing keyboard should show the emoji hint and wallpaper through keys"
+                            + " (hint pixels=" + lightPixels + ", face range=" + artworkRange + "). Evidence: "
+                            + failedCapture);
+                }
+            } finally {
+                screen.recycle();
+            }
+            SystemClock.sleep(50);
+        }
+    }
+
+    private static int keyFaceArtworkRange(Bitmap screen, Rect[] letterBounds) {
+        int darkest = 255;
+        int lightest = 0;
+        for (Rect key : letterBounds) {
+            // Sample the plain face above each centered glyph and away from the upper-right hint.
+            int halfWidth = key.width() / 10;
+            for (int y = key.top + key.height() / 7; y < key.top + key.height() / 4; y++) {
+                for (int x = key.centerX() - halfWidth; x < key.centerX() + halfWidth; x++) {
+                    int red = android.graphics.Color.red(screen.getPixel(x, y));
+                    darkest = Math.min(darkest, red);
+                    lightest = Math.max(lightest, red);
+                }
+            }
+        }
+        return lightest - darkest;
+    }
+
     private static UiObject2 deletionAction(int resource, boolean enabled) {
         return await(By.pkg("com.subhub.app").text(label(resource)).enabled(enabled));
     }

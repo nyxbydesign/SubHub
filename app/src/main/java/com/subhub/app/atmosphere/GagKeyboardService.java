@@ -71,7 +71,7 @@ public final class GagKeyboardService extends InputMethodService {
     private static final String[] ALTERNATE_ROWS = {"1234567890", "@#$–&-+()", "*\"':;!?"};
     private static final String[] SYMBOL_ROWS = {"1234567890", "@#$_&-+()/", "*\"':;!?"};
     private static final String[] MORE_SYMBOL_ROWS = {"~`|•√π÷×§Δ", "£¢€¥^°={}\\", "%©®™✓[]"};
-    private static final int LETTER_SURFACE = 0xb36a6a6a;
+    private static final int LETTER_SURFACE = 0x907d7d7d;
     private static final int MODIFIER_SURFACE = 0x88181818;
     private static final int RETURN_SURFACE = 0xff5e97f6;
     private static final int LABEL_COLOR = 0xfff6f6f6;
@@ -950,8 +950,8 @@ public final class GagKeyboardService extends InputMethodService {
         else pageKey(bottom, "ABC", 1.5f, R.string.gag_keyboard_letters, Page.LETTERS);
         String left = page == Page.MORE_SYMBOLS ? "<" : ",";
         String right = page == Page.MORE_SYMBOLS ? ">" : ".";
-        Button punctuation = symbolKey(bottom, left, MODIFIER_SURFACE, 24);
-        if (editorAllowed && ",".equals(left)) GagEmojiPicker.bindComma(punctuation, this::openEmojiPicker);
+        if (editorAllowed && ",".equals(left)) emojiCommaKey(bottom);
+        else symbolKey(bottom, left, MODIFIER_SURFACE, 24);
         if (!lettersPage) pageKey(bottom, "1 2\n3 4", 1f, R.string.gag_keyboard_numbers, Page.NUMBERS);
         renderSpace(bottom, lettersPage ? 5f : 4f);
         symbolKey(bottom, right, MODIFIER_SURFACE, 24);
@@ -2111,8 +2111,31 @@ public final class GagKeyboardService extends InputMethodService {
         letters.add(new LetterKey(button, label, alternate));
     }
 
-    private Button symbolKey(LinearLayout row, String label, int surface, int textSize) {
-        Button button = key(row, label, 1f, surface, textSize, () -> type(label));
+    private void emojiCommaKey(LinearLayout row) {
+        FrameLayout cap = new FrameLayout(row.getContext());
+        addKeySlot(row, cap, 1f);
+
+        Button comma = makeSymbolKey(row.getContext(), ",", MODIFIER_SURFACE, 24);
+        comma.setPadding(0, dp(compact() ? 7 : 12), 0, 0);
+        GagEmojiPicker.bindComma(comma, this::openEmojiPicker);
+        cap.addView(comma, new FrameLayout.LayoutParams(-1, -1));
+
+        ImageView hint = new ImageView(row.getContext());
+        hint.setImageResource(R.drawable.ic_gag_emoji_hint);
+        hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        int size = dp(compact() ? 12 : 15);
+        FrameLayout.LayoutParams position = new FrameLayout.LayoutParams(
+                size, size, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        position.topMargin = dp(compact() ? 4 : 10);
+        cap.addView(hint, position);
+    }
+
+    private void symbolKey(LinearLayout row, String label, int surface, int textSize) {
+        addKeySlot(row, makeSymbolKey(row.getContext(), label, surface, textSize), 1f);
+    }
+
+    private Button makeSymbolKey(Context context, String label, int surface, int textSize) {
+        Button button = makeKey(context, label, surface, textSize, () -> type(label));
         List<String> choices = GagKeyAlternatives.forSymbol(label);
         bindCharacterPress(button, choices.isEmpty() ? null : () -> choices);
         return button;
@@ -2331,8 +2354,7 @@ public final class GagKeyboardService extends InputMethodService {
 
     /** Keep the supplied four-repeat artwork at the same scale in both axes. */
     private static final class KeyboardBackdrop extends Drawable {
-        // Match the reference's dim artwork while retaining contrast with the translucent key faces.
-        private static final int ARTWORK_ALPHA = 74;
+        private static final int ARTWORK_ALPHA = 104;
         private static final float VERTICAL_PHASE = 0.042f;
         private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
         private final BitmapShader shader;
