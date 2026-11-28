@@ -153,12 +153,25 @@ public class TaskPlaybackAndroidTest {
         File file = runtime.assets("local").finish(attachment.hash); assertTrue(file.delete());
         try (ActivityScenario<TasksActivity> page = inline()) {
             awaitInline(page, "task_inline_error");
+            assertInlineUnavailable(page);
             RemoteAssets assets = runtime.assets("local"); assets.reserve(attachment.hash, bytes.length);
             assets.append(attachment.hash, 0, bytes); assets.finish(attachment.hash);
             runtime.store.changed(); awaitInline(page, "task_inline_image");
         }
         try (FileOutputStream stream = new FileOutputStream(file)) { stream.write(new byte[]{0, 1, 2, 3}); }
-        try (ActivityScenario<TasksActivity> page = inline()) { awaitInline(page, "task_inline_error"); }
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_inline_error");
+            assertInlineUnavailable(page);
+        }
+    }
+
+    private void assertInlineUnavailable(ActivityScenario<TasksActivity> page) {
+        page.onActivity(activity -> {
+            android.view.View root = activity.findViewById(android.R.id.content);
+            android.widget.TextView error = root.findViewWithTag("task_inline_error");
+            assertEquals(context.getString(com.subhub.app.R.string.tasks_media_unavailable), error.getText().toString());
+            assertNull(root.findViewWithTag("task_inline_pending"));
+        });
     }
 
     @Test public void inlineMp4NativeControlsSeekPauseAndRetainPlaybackAcrossRefresh() throws Exception {

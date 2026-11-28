@@ -18,8 +18,11 @@ import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.people.RolePage;
+import com.subhub.app.remote.RemoteAssets;
+import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.util.SubHubNavigation;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import org.json.JSONObject;
 
@@ -120,7 +123,7 @@ public final class TaskMediaActivity extends RolePage {
                 player.setMediaController(controls);
                 int height = PersonUi.dp(this, attachment.mime.startsWith("audio/") ? 120 : 280);
                 body.addView(player, new LinearLayout.LayoutParams(-1, height));
-                player.setOnErrorListener((mp, what, extra) -> { showFailure(); return true; });
+                player.setOnErrorListener((mp, what, extra) -> { showStatus(R.string.tasks_media_unavailable); return true; });
                 player.setVideoURI(Uri.fromFile(result.file));
                 player.setOnPreparedListener(mp -> {
                     if (!resumed || requested != generation) return;
@@ -134,7 +137,8 @@ public final class TaskMediaActivity extends RolePage {
         }, failure -> {
             if (!resumed || requested != generation) return;
             if (failure instanceof SecurityException || !liveRole()) revokeAccess();
-            else showFailure();
+            else showStatus(failure instanceof PendingSyncException
+                    ? R.string.tasks_media_sync_pending : R.string.tasks_media_unavailable);
         });
     }
 
@@ -189,7 +193,7 @@ public final class TaskMediaActivity extends RolePage {
         }, failure -> {
             if (!resumed || requested != generation) return;
             if (failure instanceof SecurityException || !liveRole()) revokeAccess();
-            else showFailure();
+            else showStatus(R.string.tasks_media_unavailable);
         });
     }
 
@@ -205,10 +209,11 @@ public final class TaskMediaActivity extends RolePage {
         catch (IllegalArgumentException invalid) { return false; }
     }
 
-    private void showFailure() {
+    private void showStatus(int message) {
         clearMedia();
         if (!resumed || isFinishing()) return;
-        PersonUi.text(body, getString(R.string.tasks_media_unavailable), false);
+        PersonUi.text(body, getString(message), false)
+                .setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     }
 
     private void clearMedia() {
@@ -230,13 +235,26 @@ public final class TaskMediaActivity extends RolePage {
         TaskRepository.Target target = repo.target();
         if ((expected != null && !expected.equals(target.scope)) || dom != repo.isDom() || !repo.allowed())
             throw new SecurityException("Attachment access changed");
-        TaskAttachment actual = TaskMedia.references(repo.engine()).get(media.hash);
+        TaskEngine engine = repo.engine();
+        TaskAttachment actual = TaskMedia.references(engine).get(media.hash);
         if (actual == null || !actual.compatible(media))
             throw new SecurityException("Attachment unavailable");
-        File file = repo.mediaFile(actual);
+        File file;
+        try {
+            file = repo.mediaFile(actual);
+        } catch (RemoteAssets.MissingAssetException missing) {
+            // Match the receiving Task sync path. Locally authored media is never a download.
+            if (target.peer != null && TaskMedia.published(engine, target.peer.localRole == RemoteProtocol.Role.SUB)
+                    .containsKey(actual.hash)) throw new PendingSyncException(missing);
+            throw missing;
+        }
         if (!target.scope.equals(repo.target().scope) || dom != repo.isDom())
             throw new SecurityException("Attachment access changed");
         return file;
+    }
+
+    static final class PendingSyncException extends IOException {
+        PendingSyncException(IOException cause) { super(cause); }
     }
 
     static Loaded load(TaskRepository repo, TaskAttachment media, String expected, boolean dom, Context app) throws Exception {

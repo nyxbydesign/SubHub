@@ -17,7 +17,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.util.AsyncUiScope;
-import java.io.IOException;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -139,7 +138,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
         }, error -> {
             if (closed || token != generation) return;
             if (error instanceof SecurityException || !live()) deny();
-            else failure(error instanceof IOException);
+            else failure(error instanceof TaskMediaActivity.PendingSyncException);
         });
     }
 
@@ -211,10 +210,11 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
         label.setTag(tag); label.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     }
 
-    private void failure(boolean offline) {
+    private void failure(boolean pendingSync) {
         clearContent();
         if (closed) return;
-        status(offline ? R.string.tasks_media_offline : R.string.tasks_media_unavailable, "task_inline_error");
+        if (pendingSync) status(R.string.tasks_media_sync_pending, "task_inline_pending");
+        else status(R.string.tasks_media_unavailable, "task_inline_error");
     }
 
     private void deny() {

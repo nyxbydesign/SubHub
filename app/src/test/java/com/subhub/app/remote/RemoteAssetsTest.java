@@ -44,6 +44,29 @@ public class RemoteAssetsTest {
         assertThrows(IOException.class, () -> assets.finish(hash));
     }
 
+    @Test public void openDistinguishesMissingAndPartialAssetsFromCorruptedFiles() throws Exception {
+        File root = temporary.newFolder();
+        RemoteAssets assets = new RemoteAssets(root);
+        byte[] bytes = {1, 2, 3};
+        String hash = RemoteProtocol.sha256(bytes);
+        assertThrows(RemoteAssets.MissingAssetException.class, () -> assets.open(hash));
+        assets.reserve(hash, bytes.length);
+        assets.append(hash, 0, new byte[]{1});
+        assertThrows(RemoteAssets.MissingAssetException.class, () -> assets.open(hash));
+        assets.append(hash, 1, new byte[]{2, 3});
+        File complete = assets.finish(hash);
+        try (var input = assets.open(hash)) {
+            assertArrayEquals(bytes, input.readAllBytes());
+        }
+        Files.write(complete.toPath(), new byte[]{1});
+        IOException malformed = assertThrows(IOException.class, () -> assets.open(hash));
+        assertFalse(malformed instanceof RemoteAssets.MissingAssetException);
+        Files.delete(complete.toPath());
+        Files.writeString(new File(root, hash + ".size").toPath(), "invalid");
+        IOException badReservation = assertThrows(IOException.class, () -> assets.open(hash));
+        assertFalse(badReservation instanceof RemoteAssets.MissingAssetException);
+    }
+
     @Test public void checksumFailureCannotPublishAndExplicitRestartRepairsOnlyPartial() throws Exception {
         RemoteAssets assets = new RemoteAssets(temporary.newFolder());
         byte[] expected = {1,2,3}; String hash = RemoteProtocol.sha256(expected);

@@ -171,6 +171,40 @@ public class TaskPeerAndroidTest {
         runtime.store.append(domScope, new TaskAction("create", task.id, TaskAction.Kind.CREATE, null, start - 1000,
                 "", "", List.of(), task), true, false);
     }
+    @Test public void remoteProofIsPendingUntilSyncedAndCorruptBytesAreUnavailable() throws Exception {
+        create();
+        session(true, new AtomicInteger());
+        byte[] bytes = android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", 0);
+        TaskAttachment proof = new TaskAttachment(RemoteProtocol.sha256(bytes), "image/gif", bytes.length);
+        TaskAction submission = new TaskAction("pending-proof", task.id, TaskAction.Kind.SUBMIT,
+                task.firstStart.toLocalDate(), start + 60_000, "Done", "", List.of(proof), null);
+        assertTrue(runtime.store.append(subScope, submission, false, false));
+        runtime.store.receive(domScope, runtime.store.outgoing(subScope, 0), false, true);
+        boolean wasDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        try {
+            com.subhub.app.security.ControllerPinManager.enterDomMode();
+            TaskRepository repo = repository();
+            assertThrows(TaskMediaActivity.PendingSyncException.class,
+                    () -> TaskMediaActivity.resolve(repo, proof, domScope, true));
+
+            RemoteAssets source = runtime.assets(subScope);
+            source.reserve(proof.hash, proof.length);
+            source.append(proof.hash, 0, bytes);
+            source.finish(proof.hash);
+            session(true, new AtomicInteger());
+            File received = TaskMediaActivity.resolve(repo, proof, domScope, true);
+            assertArrayEquals(bytes, java.nio.file.Files.readAllBytes(received.toPath()));
+
+            java.nio.file.Files.write(received.toPath(), new byte[]{0});
+            IOException unavailable = assertThrows(IOException.class,
+                    () -> TaskMediaActivity.resolve(repo, proof, domScope, true));
+            assertFalse(unavailable instanceof TaskMediaActivity.PendingSyncException);
+        } finally {
+            if (wasDom) com.subhub.app.security.ControllerPinManager.enterDomMode();
+            else com.subhub.app.security.ControllerPinManager.enterSubMode();
+        }
+    }
+
     @Test public void taskContinuationTracksCommittedPagesAndStopsOnceTheBacklogDrains() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         for (int i = 0; i < TaskStore.PAGE_SIZE + 2; i++) {

@@ -21,6 +21,10 @@ public final class RemoteAssets {
     public static final long MAX_TOTAL_BYTES = 256L * 1024 * 1024;
     public static final int MAX_ENTRIES = 512;
     public static final int CHUNK_BYTES = 64 * 1024;
+    public static final class MissingAssetException extends IOException {
+        private MissingAssetException() { super("Asset incomplete"); }
+    }
+
     private static final ConcurrentHashMap<String,Object> LOCKS = new ConcurrentHashMap<>();
     private final Path root;
     private final Object lock;
@@ -123,8 +127,13 @@ public final class RemoteAssets {
 
     public InputStream open(String hash) throws IOException {
         synchronized (lock) {
+            Path complete = file(hash,"blob");
+            if (Files.notExists(complete)) {
+                if (!Files.notExists(file(hash,"size"))) expected(hash);
+                throw new MissingAssetException();
+            }
             if (!isComplete(hash)) throw new IOException("Asset incomplete");
-            return new FileInputStream(file(hash,"blob").toFile());
+            return new FileInputStream(complete.toFile());
         }
     }
 

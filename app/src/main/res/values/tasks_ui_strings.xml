@@ -28,7 +28,7 @@
         <item quantity="other">%d active tasks</item>
     </plurals>
     <string name="tasks_media_loading">Attachment not yet available</string>
-    <string name="tasks_media_offline">Attachment not downloaded. Sync and retry.</string>
+    <string name="tasks_media_sync_pending">Attachment is still syncing. It will appear automatically.</string>
     <string name="tasks_media_play">Play</string>
     <string name="tasks_media_pause">Pause</string>
     <string name="tasks_media_seek">Seek within attachment</string>
