@@ -27,6 +27,7 @@ import androidx.core.view.accessibility.AccessibilityNodeInfoCompat.Accessibilit
 import com.subhub.app.R;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -38,11 +39,7 @@ final class GagEmojiPicker extends LinearLayout {
     private static final int MUTED_LABEL = 0xffdbdbe4;
     private static final int TAB_SURFACE = 0xff18181c;
     private static final int SELECTED_TAB = 0xff37476b;
-    // The pinned catalog has a fixed group order. Labels come from the catalog.
-    private static final List<String> GROUP_ICONS = List.of(
-            "🙂", "👋", "🏽", "🐾", "🍉", "🚙", "⚽", "💡", "♫", "🏁");
-
-    private final GagEmojiCatalog catalog;
+    private final List<GagEmojiCatalog.Group> groups;
     private final GagEmojiUsage usage;
     private final BooleanSupplier learning;
     private final Predicate<String> insert;
@@ -58,7 +55,9 @@ final class GagEmojiPicker extends LinearLayout {
     GagEmojiPicker(Context context, SharedPreferences preferences, GagEmojiCatalog catalog,
             boolean compact, BooleanSupplier learning, Predicate<String> insert, Runnable close) {
         super(context);
-        this.catalog = catalog;
+        groups = new ArrayList<>(catalog.groups);
+        // Keep standalone modifiers available after the main browsing categories.
+        groups.sort(Comparator.comparing(group -> group.name().equals("Component")));
         this.usage = new GagEmojiUsage(preferences, catalog);
         this.learning = learning;
         this.insert = insert;
@@ -66,25 +65,16 @@ final class GagEmojiPicker extends LinearLayout {
         tileSize = dp(compact ? 44 : 48);
         setOrientation(VERTICAL);
 
-        LinearLayout tabs = new LinearLayout(context);
-        tabs.setBackgroundColor(TAB_SURFACE);
-        addView(tabs, new LayoutParams(-1, dp(48)));
-        Button back = button("ABC", 14);
-        back.setContentDescription(context.getString(R.string.gag_emoji_back_to_keyboard));
-        back.setOnClickListener(view -> close.run());
-        tabs.addView(back, new LayoutParams(dp(52), -1));
-        setSurface(back, Color.TRANSPARENT);
-
         categories = new HorizontalScrollView(context);
+        categories.setBackgroundColor(TAB_SURFACE);
         categories.setHorizontalScrollBarEnabled(false);
-        tabs.addView(categories, new LayoutParams(0, -1, 1));
+        addView(categories, new LayoutParams(-1, dp(48)));
         LinearLayout categoryRow = new LinearLayout(context);
         categories.addView(categoryRow, new HorizontalScrollView.LayoutParams(-2, -1));
-        addCategory(categoryRow, "★", context.getString(R.string.gag_emoji_frequently_used), FREQUENT);
-        for (int index = 0; index < catalog.groups.size(); index++) {
-            String label = catalog.groups.get(index).name();
-            String icon = index < GROUP_ICONS.size() ? GROUP_ICONS.get(index) : "•";
-            addCategory(categoryRow, icon, label, index);
+        addCategory(categoryRow, "🕘", context.getString(R.string.gag_emoji_frequently_used), FREQUENT);
+        for (int index = 0; index < groups.size(); index++) {
+            String label = groups.get(index).name();
+            addCategory(categoryRow, categoryIcon(label), label, index);
         }
 
         frequent = frequentlyUsed();
@@ -96,6 +86,16 @@ final class GagEmojiPicker extends LinearLayout {
         tiles.rebuild(columnsFor(getResources().getDisplayMetrics().widthPixels));
         grid.setAdapter(tiles);
         addView(grid, new LayoutParams(-1, 0, 1));
+
+        LinearLayout footer = new LinearLayout(context);
+        footer.setBackgroundColor(TAB_SURFACE);
+        Button back = button("ABC", 14);
+        back.setContentDescription(context.getString(R.string.gag_emoji_back_to_keyboard));
+        back.setOnClickListener(view -> close.run());
+        setSurface(back, Color.TRANSPARENT);
+        footer.addView(back, new LayoutParams(dp(52), -1));
+        addView(footer, new LayoutParams(-1, dp(48)));
+
         grid.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             int columns = columnsFor(right - left);
             if (columns != tiles.columns) {
@@ -122,6 +122,22 @@ final class GagEmojiPicker extends LinearLayout {
                 highlightCategory(category);
             }
         });
+    }
+
+    private static String categoryIcon(String name) {
+        return switch (name) {
+            case "Smileys & Emotion" -> "☺️";
+            case "People & Body" -> "🧍";
+            case "Animals & Nature" -> "🐝";
+            case "Food & Drink" -> "☕";
+            case "Travel & Places" -> "🚗";
+            case "Activities" -> "🏆";
+            case "Objects" -> "💡";
+            case "Symbols" -> "🔣";
+            case "Flags" -> "🏁";
+            case "Component" -> "🏽";
+            default -> "•";
+        };
     }
 
     static void bindComma(Button comma, Runnable open) {
@@ -158,7 +174,7 @@ final class GagEmojiPicker extends LinearLayout {
     }
 
     private List<GagEmojiCatalog.Entry> entries(int category) {
-        return category == FREQUENT ? frequent : catalog.groups.get(category).entries();
+        return category == FREQUENT ? frequent : groups.get(category).entries();
     }
 
     private boolean refreshFrequent() {
@@ -202,14 +218,14 @@ final class GagEmojiPicker extends LinearLayout {
         private static final int HEADING = 0;
         private static final int EMPTY = 1;
         private static final int EMOJI = 2;
-        private final int[] firstRow = new int[catalog.groups.size() + 1];
+        private final int[] firstRow = new int[groups.size() + 1];
         private final List<Row> rows = new ArrayList<>();
         private int columns;
 
         private void rebuild(int columns) {
             this.columns = columns;
             rows.clear();
-            for (int category = FREQUENT; category < catalog.groups.size(); category++) {
+            for (int category = FREQUENT; category < groups.size(); category++) {
                 firstRow[category + 1] = rows.size();
                 rows.add(new Row(category, HEADING, 0));
                 List<GagEmojiCatalog.Entry> values = entries(category);

@@ -64,10 +64,13 @@ public final class GagSuggestionServiceAndroidTest {
             UiObject2 second = await(By.pkg("com.subhub.app").desc("grinning face with big eyes"));
             assertTrue("Higher count should outrank the latest insertion",
                     first.getVisibleCenter().x < second.getVisibleCenter().x);
+            int tileBottom = first.getVisibleBounds().bottom;
             first.click();
             assertText("😀😀😃😀");
-            await(By.pkg("com.subhub.app").desc(label(R.string.gag_emoji_back_to_keyboard))
-                    .text("ABC")).click();
+            UiObject2 abc = await(By.pkg("com.subhub.app").desc(label(R.string.gag_emoji_back_to_keyboard))
+                    .text("ABC"));
+            assertTrue("ABC stays below the emoji grid", abc.getVisibleBounds().top >= tileBottom);
+            abc.click();
             await(By.pkg("com.subhub.app").text("q"));
         } finally {
             SharedPreferenceTestRestore.restore(preferences, original);

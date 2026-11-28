@@ -195,7 +195,9 @@ public final class GagEmojiPickerAndroidTest {
             host.onActivity(activity -> {
                 GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, catalog, false, () -> false,
                         inserted::add, () -> {});
-                activity.setContentView(picker, new LinearLayout.LayoutParams(320, 256));
+                float density = activity.getResources().getDisplayMetrics().density;
+                activity.setContentView(picker, new LinearLayout.LayoutParams(
+                        Math.round(250 * density), Math.round(181 * density)));
                 reference.set(picker);
             });
             instrumentation.waitForIdleSync();
@@ -242,11 +244,13 @@ public final class GagEmojiPickerAndroidTest {
         SharedPreferences preferences = target.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
         AtomicReference<GagEmojiPicker> reference = new AtomicReference<>();
         AtomicReference<Rect> gesture = new AtomicReference<>();
+        AtomicReference<Rect> footer = new AtomicReference<>();
         AtomicReference<Integer> header = new AtomicReference<>();
+        CountDownLatch closed = new CountDownLatch(1);
         try (ActivityScenario<HelpActivity> host = ActivityScenario.launch(HelpActivity.class)) {
             host.onActivity(activity -> {
                 GagEmojiPicker picker = new GagEmojiPicker(activity, preferences, catalog, true, () -> true,
-                        emoji -> true, () -> {});
+                        emoji -> true, closed::countDown);
                 float density = activity.getResources().getDisplayMetrics().density;
                 activity.setContentView(picker, new LinearLayout.LayoutParams(
                         Math.round(250 * density), Math.round(181 * density)));
@@ -258,9 +262,22 @@ public final class GagEmojiPickerAndroidTest {
                 ListView grid = grid(picker);
                 Button back = button(picker, "ABC");
                 Rect viewport = screenBounds(grid);
-                assertTrue(screenBounds(back).bottom <= viewport.top);
-                assertTrue(screenBounds(button(picker, "Smileys & Emotion")).bottom <= viewport.top);
+                Rect backBounds = screenBounds(back);
+                assertTrue(backBounds.top >= viewport.bottom);
+                Rect visibleBack = new Rect();
+                assertTrue(back.getGlobalVisibleRect(visibleBack));
+                assertEquals(backBounds.width(), visibleBack.width());
+                assertEquals(backBounds.height(), visibleBack.height());
+                Button smileys = button(picker, "Smileys & Emotion");
+                assertTrue(screenBounds(smileys).bottom <= viewport.top);
+                ViewGroup tabs = (ViewGroup) smileys.getParent();
+                List<String> symbols = new ArrayList<>();
+                for (int index = 0; index < tabs.getChildCount(); index++)
+                    symbols.add(((Button) tabs.getChildAt(index)).getText().toString());
+                assertEquals(List.of("🕘", "☺️", "🧍", "🐝", "☕", "🚗", "🏆", "💡", "🔣", "🏁", "🏽"),
+                        symbols);
                 gesture.set(viewport);
+                footer.set(backBounds);
                 int people = sectionStart(grid, button(picker, "People & Body"));
                 header.set(people);
                 grid.setSelectionFromTop(people - 1, 0);
@@ -277,6 +294,7 @@ public final class GagEmojiPickerAndroidTest {
                 assertTrue(grid.getFirstVisiblePosition() >= header.get());
                 assertTrue(button(picker, "People & Body").isSelected());
                 assertEquals(viewport, screenBounds(grid));
+                assertEquals(footer.get(), screenBounds(button(picker, "ABC")));
                 grid.setSelectionFromTop(header.get(), 0);
             });
             instrumentation.waitForIdleSync();
@@ -295,7 +313,10 @@ public final class GagEmojiPickerAndroidTest {
                 GagEmojiPicker picker = reference.get();
                 assertEquals(header.get().intValue(), grid(picker).getFirstVisiblePosition());
                 assertTrue(button(picker, "People & Body").isSelected());
+                assertEquals(footer.get(), screenBounds(button(picker, "ABC")));
             });
+            assertTrue(device.click(footer.get().centerX(), footer.get().centerY()));
+            assertTrue(closed.await(3, TimeUnit.SECONDS));
         } finally {
             target.deleteSharedPreferences(prefsName);
         }
