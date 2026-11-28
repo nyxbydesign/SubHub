@@ -1128,7 +1128,9 @@ public final class GagKeyboardService extends InputMethodService {
         suggestionViewport.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         suggestionViewport.setHorizontalScrollBarEnabled(false);
         suggestionViewport.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        tools.addView(suggestionViewport, new LinearLayout.LayoutParams(0, height, 1));
+        tools.addView(suggestionViewport, new LinearLayout.LayoutParams(0, height, 2));
+        clipboardChip.setOnTouchListener(new ClipboardSuggestionDrag());
+        tools.addView(clipboardChip, new LinearLayout.LayoutParams(0, height, 1));
         tools.addView(new Space(tools.getContext()), new LinearLayout.LayoutParams(gutter, height));
 
         LinearLayout strip = new LinearLayout(tools.getContext());
@@ -1155,8 +1157,6 @@ public final class GagKeyboardService extends InputMethodService {
             suggestionSlots.add(choice);
             strip.addView(choice, new LinearLayout.LayoutParams(0, -1, 1));
         }
-        // Keep the two lead word slots in place and let the third word scroll into view.
-        strip.addView(clipboardChip, 2, new LinearLayout.LayoutParams(0, -1, 1));
     }
 
     private TextView suggestionLabel(Context context) {
@@ -1171,6 +1171,40 @@ public final class GagKeyboardService extends InputMethodService {
         return label;
     }
 
+    /** Allow a horizontal gesture starting on the pinned clipboard tile to scroll the words too. */
+    private final class ClipboardSuggestionDrag implements View.OnTouchListener {
+        private float downX;
+        private int initialScroll;
+        private boolean dragging;
+
+        @Override public boolean onTouch(View view, MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN -> {
+                    downX = event.getRawX();
+                    initialScroll = suggestionViewport.getScrollX();
+                    dragging = false;
+                }
+                case MotionEvent.ACTION_MOVE -> {
+                    float distance = downX - event.getRawX();
+                    if (!dragging && Math.abs(distance) <= ViewConfiguration.get(view.getContext()).getScaledTouchSlop())
+                        return false;
+                    dragging = true;
+                    view.setPressed(false);
+                    suggestionViewport.scrollTo(initialScroll + Math.round(distance), 0);
+                    return true;
+                }
+                case MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) {
+                        dragging = false;
+                        return true;
+                    }
+                }
+                default -> { }
+            }
+            return false;
+        }
+    }
+
     private static final class SuggestionViewport extends HorizontalScrollView {
         private final View clipboard;
 
@@ -1181,9 +1215,9 @@ public final class GagKeyboardService extends InputMethodService {
 
         @Override protected void measureChildWithMargins(View child, int parentWidthSpec, int widthUsed,
                 int parentHeightSpec, int heightUsed) {
-            // Three equal slots fill the viewport. The clipboard adds a fourth slot of the same width.
+            // A trailing clipboard tile takes one slot outside the viewport. Scroll the third word.
             int width = MeasureSpec.getSize(parentWidthSpec);
-            if (clipboard.getVisibility() == View.VISIBLE) width += (width + 2) / 3;
+            if (clipboard.getVisibility() == View.VISIBLE) width += (width + 1) / 2;
             int heightSpec = getChildMeasureSpec(parentHeightSpec, heightUsed, child.getLayoutParams().height);
             child.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), heightSpec);
         }
@@ -1471,12 +1505,11 @@ public final class GagKeyboardService extends InputMethodService {
         TextView heading = clipboardLabel(header, getString(R.string.gag_clipboard_title), 17);
         ViewCompat.setAccessibilityHeading(heading, true);
         header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-        if (!entries.isEmpty())
-            clipboardControl(header, getString(clipboardEditing ? R.string.gag_clipboard_done
-                    : R.string.gag_clipboard_edit), () -> {
-                clipboardEditing = !clipboardEditing;
-                refreshClipboard();
-            });
+        clipboardControl(header, getString(clipboardEditing ? R.string.gag_clipboard_done
+                : R.string.gag_clipboard_edit), () -> {
+            clipboardEditing = !clipboardEditing;
+            refreshClipboard();
+        });
 
         android.widget.ScrollView scroll = new android.widget.ScrollView(clipboardPanel.getContext());
         clipboardPanel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -1486,6 +1519,10 @@ public final class GagKeyboardService extends InputMethodService {
         content.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         content.setSaveFromParentEnabled(false);
         scroll.addView(content);
+        if (clipboardEditing) clipboardControl(content, getString(R.string.gag_clipboard_add_text), () -> {
+            if (clipboardPanel != null && clipboardAllowed() && clipboard.allows(clipboardConnection)
+                    && !GagClipboardEditActivity.open(this, clipboard, null)) clipboardChangeFailed();
+        });
         if (entries.isEmpty()) {
             TextView empty = clipboardLabel(content, getString(R.string.gag_keyboard_clipboard_empty), 14);
             empty.setPadding(dp(8), dp(12), dp(8), 0);
@@ -1538,7 +1575,7 @@ public final class GagKeyboardService extends InputMethodService {
         });
         String pin = getString(entry.pinned() ? R.string.gag_clipboard_unpin : R.string.gag_clipboard_pin);
         String delete = getString(R.string.delete);
-        var choices = entry.text() == null ? List.of(delete) : List.of(pin, delete);
+        var choices = List.of(pin, delete);
         GagKeyPress press = new GagKeyPress(main, null);
         press.setAlternatives(clipboardMenu);
         card.setOnTouchListener(press);
@@ -1567,12 +1604,11 @@ public final class GagKeyboardService extends InputMethodService {
             clipboardChangeFailed();
             return;
         }
-        if (delete && entry.screenshot() != null) {
+        if (entry.screenshot() != null) {
             stopScreenshotClipboard();
             GagScreenshotClipboard.dismiss(this, entry.screenshot());
             startScreenshotClipboard();
         }
-        if (clipboard.entries(elapsed).isEmpty()) clipboardEditing = false;
         refreshClipboard();
     }
 

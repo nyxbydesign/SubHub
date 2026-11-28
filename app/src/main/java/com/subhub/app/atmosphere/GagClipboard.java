@@ -33,12 +33,12 @@ final class GagClipboard {
 
     GagClipboard(GagClipboardPins pinStore) {
         this.pinStore = pinStore;
-        List<String> stored = pinStore == null ? List.of() : pinStore.read();
-        pins = stored == null ? List.of() : stored.stream().map(GagClipboard::pinned).collect(Collectors.toList());
+        List<Entry> stored = pinStore == null ? List.of() : pinStore.read();
+        pins = stored == null ? List.of() : stored;
     }
 
-    private static Entry pinned(String text) {
-        return new Entry(text, null, 0, Long.MAX_VALUE, null, true);
+    static Entry pinned(String text, GagClipboardImage image) {
+        return new Entry(text, image, 0, Long.MAX_VALUE, null, true);
     }
 
     boolean attach(InputConnection editor, EditorInfo info, String keyboardPackage) {
@@ -86,7 +86,7 @@ final class GagClipboard {
     }
 
     void remember(String text, long copiedAt, long wallNow, long elapsedNow) {
-        if (!validText(text) || pins.contains(pinned(text))) return;
+        if (!validText(text)) return;
         remember(text, null, copiedAt, wallNow, elapsedNow);
     }
 
@@ -129,7 +129,8 @@ final class GagClipboard {
             GagScreenshotClipboard.Candidate screenshot) {
         removeExpired(elapsedNow);
         long age = wallNow - copiedAt;
-        if (!eligibleTimestamp(copiedAt) || age < 0 || age >= LIFETIME_MS) return;
+        if (!eligibleTimestamp(copiedAt) || age < 0 || age >= LIFETIME_MS
+                || pins.stream().anyMatch(entry -> sameItem(entry, text, image))) return;
         if (screenshot != null) {
             // Revisions from one media row occupy a single slot. A manually copied image
             // remains independently authorized if screenshot access later changes.
@@ -139,10 +140,22 @@ final class GagClipboard {
             if (sameItem(entry, text, image)
                     && (entry.copiedAt() >= copiedAt || (screenshot != null && entry.screenshot() == null))) return;
         }
-        history.removeIf(entry -> sameItem(entry, text, image));
+        addRecent(new Entry(text, image, copiedAt, elapsedNow + LIFETIME_MS - age, screenshot, false), elapsedNow);
+    }
+
+    boolean addText(String text, long wallNow, long elapsedNow) {
+        if (!validText(text)) return false;
+        addRecent(new Entry(text, null, wallNow, elapsedNow + LIFETIME_MS, null, false), elapsedNow);
+        return true;
+    }
+
+    private void addRecent(Entry added, long now) {
+        removeExpired(now);
+        if (pins.stream().anyMatch(entry -> sameItem(entry, added.text(), added.image()))) return;
+        history.removeIf(entry -> sameItem(entry, added.text(), added.image()));
         int position = 0;
-        while (position < history.size() && history.get(position).copiedAt() > copiedAt) position++;
-        history.add(position, new Entry(text, image, copiedAt, elapsedNow + LIFETIME_MS - age, screenshot, false));
+        while (position < history.size() && history.get(position).copiedAt() > added.copiedAt()) position++;
+        history.add(position, added);
         if (history.size() > MAX_ITEMS) history.remove(history.size() - 1);
     }
 
@@ -167,9 +180,10 @@ final class GagClipboard {
     }
 
     boolean pin(Entry entry, long now) {
-        if (entry.text() == null || entry.pinned() || !contains(entry, now)) return false;
+        if (entry.pinned() || !contains(entry, now)) return false;
         List<Entry> updated = new ArrayList<>(pins);
-        updated.add(0, pinned(entry.text()));
+        // The explicit pin owns the bytes, independent of the original clipboard or gallery URI.
+        updated.add(0, pinned(entry.text(), entry.image()));
         if (!savePins(updated)) return false;
         history.remove(entry);
         return true;
@@ -177,7 +191,7 @@ final class GagClipboard {
 
     boolean unpin(Entry entry, long wallNow, long elapsedNow) {
         if (!entry.pinned() || !remove(entry, 0)) return false;
-        remember(entry.text(), wallNow, wallNow, elapsedNow);
+        addRecent(new Entry(entry.text(), entry.image(), wallNow, elapsedNow + LIFETIME_MS, null, false), elapsedNow);
         return true;
     }
 
@@ -186,12 +200,12 @@ final class GagClipboard {
         if (text.equals(entry.text())) return true;
         if (entry.pinned()) {
             List<Entry> updated = new ArrayList<>(pins);
-            updated.set(updated.indexOf(entry), pinned(text));
+            updated.set(updated.indexOf(entry), pinned(text, null));
             if (!savePins(updated.stream().distinct().collect(Collectors.toList()))) return false;
             history.removeIf(recent -> text.equals(recent.text()));
             clearedThrough = Math.max(clearedThrough, wallNow);
         } else {
-            if (pins.contains(pinned(text))) return remove(entry, 0);
+            if (pins.contains(pinned(text, null))) return remove(entry, 0);
             Entry replacement = new Entry(text, null, entry.copiedAt(), entry.expiresAt(), null, false);
             history.set(history.indexOf(entry), replacement);
             history.removeIf(recent -> recent != replacement && text.equals(recent.text()));
@@ -201,7 +215,7 @@ final class GagClipboard {
     }
 
     private boolean savePins(List<Entry> updated) {
-        if (pinStore == null || !pinStore.write(updated.stream().map(Entry::text).collect(Collectors.toList()))) return false;
+        if (pinStore == null || !pinStore.write(updated)) return false;
         pins = List.copyOf(updated);
         return true;
     }

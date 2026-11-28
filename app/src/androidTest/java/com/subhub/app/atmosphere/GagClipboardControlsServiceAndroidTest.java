@@ -6,11 +6,14 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Instrumentation;
+import android.content.ContentValues;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -185,6 +188,8 @@ public final class GagClipboardControlsServiceAndroidTest {
         Rect revealed = await(trailingWord).getVisibleBounds();
         assertTrue("The trailing word did not reach full width: " + revealed,
                 revealed.width() >= wordBounds.width() - 1);
+        assertEquals(clipBounds, await(clip).getVisibleBounds());
+        assertEquals(revealed.right, clipBounds.left);
         assertEquals(toolBounds, await(fixedTool).getVisibleBounds());
 
         await(clip).click();
@@ -274,6 +279,102 @@ public final class GagClipboardControlsServiceAndroidTest {
         slideTo(EDITED, label(R.string.delete));
         assertTrue(device().wait(Until.gone(By.pkg(APP).text(EDITED)), TIMEOUT));
         assertEditor("Draft" + EDITED);
+    }
+
+    @Test public void editCanAddAndPasteNewTextWithoutTypingIntoTheEditor() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        openFixture(false);
+        String added = "Synthetic new clipboard item";
+        openClipboard();
+        await(By.pkg(APP).text(label(R.string.gag_clipboard_edit))).click();
+        await(By.pkg(APP).clazz(Button.class).text(label(R.string.gag_clipboard_add_text))).click();
+        UiObject2 input = await(popupInput());
+        input.setText(added);
+        await(By.pkg(APP).text(label(R.string.gag_clipboard_save))).click();
+        assertPopupClosed();
+        assertEditor("");
+
+        openClipboard();
+        await(By.pkg(APP).text(added)).click();
+        assertEditor(added);
+        openClipboard();
+        slideTo(added, label(R.string.delete));
+        assertTrue(device().wait(Until.gone(By.pkg(APP).text(added)), TIMEOUT));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 33)
+    public void screenshotCardCanBePinnedUnpinnedAndDeletedByTouch() throws Exception {
+        var target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertEquals(GagScreenshotClipboard.Access.FULL, GagScreenshotClipboard.access(target));
+        var resolver = target.getContentResolver();
+        var prefs = GagScreenshotClipboard.preferences(target);
+        String enabled = GagScreenshotClipboard.ENABLED_SINCE;
+        boolean wasEnabled = prefs.contains(enabled);
+        long previous = prefs.getLong(enabled, 0);
+        String opened = "screenshots_clipboard_opened";
+        boolean hadOpened = prefs.contains(opened);
+        boolean wasOpened = prefs.getBoolean(opened, false);
+        String dismissed = "screenshots_dismissed";
+        boolean hadDismissed = prefs.contains(dismissed);
+        var priorDismissed = java.util.Set.copyOf(prefs.getStringSet(dismissed, java.util.Set.of()));
+        assertTrue(prefs.edit().putLong(enabled, System.currentTimeMillis() - 5_000L).putBoolean(opened, true).commit());
+        Uri screenshot = null;
+        try {
+            openFixture(false);
+            openClipboard();
+            screenshot = syntheticScreenshot(resolver);
+            String title = label(R.string.gag_clipboard_screenshot);
+            String image = label(R.string.gag_clipboard_image);
+            BySelector pinned = By.pkg(APP).text(label(R.string.gag_clipboard_pinned));
+            slideTo(title, label(R.string.gag_clipboard_pin));
+            await(pinned);
+            // A user pin owns the image bytes after the gallery source is removed.
+            assertEquals(1, resolver.delete(screenshot, null, null));
+            screenshot = null;
+            await(By.pkg(APP).text(image));
+            slideTo(image, label(R.string.gag_clipboard_unpin));
+            assertTrue(device().wait(Until.gone(pinned), TIMEOUT));
+            slideTo(image, label(R.string.delete));
+            assertTrue(device().wait(Until.gone(By.pkg(APP).text(image)), TIMEOUT));
+            assertEditor("");
+        } finally {
+            if (screenshot != null) resolver.delete(screenshot, null, null);
+            var restore = prefs.edit();
+            if (wasEnabled) restore.putLong(enabled, previous); else restore.remove(enabled);
+            if (hadOpened) restore.putBoolean(opened, wasOpened); else restore.remove(opened);
+            if (hadDismissed) restore.putStringSet(dismissed, priorDismissed); else restore.remove(dismissed);
+            assertTrue(restore.commit());
+        }
+    }
+
+    private static Uri syntheticScreenshot(android.content.ContentResolver resolver) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.DISPLAY_NAME, "Screenshot_Gag_" + java.util.UUID.randomUUID() + ".png");
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+        values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots/");
+        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+        Uri screenshot = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        assertNotNull(screenshot);
+        boolean published = false;
+        try {
+            Bitmap bitmap = Bitmap.createBitmap(40, 30, Bitmap.Config.ARGB_8888);
+            bitmap.eraseColor(Color.rgb(218, 88, 42));
+            try (var output = resolver.openOutputStream(screenshot)) {
+                assertNotNull(output);
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output));
+            } finally {
+                bitmap.recycle();
+            }
+            ContentValues ready = new ContentValues();
+            ready.put(MediaStore.Images.Media.IS_PENDING, 0);
+            assertEquals(1, resolver.update(screenshot, ready, null, null));
+            published = true;
+            return screenshot;
+        } finally {
+            if (!published) resolver.delete(screenshot, null, null);
+        }
     }
 
     @Test public void numberPadSpaceHasNoVisibleLabelAndStillInsertsSpace() throws Exception {

@@ -14,7 +14,7 @@ import java.io.InputStream;
 import java.util.Arrays;
 
 record GagClipboardImage(byte[] bytes, String mime, Bitmap thumbnail) {
-    private static final int MAX_BYTES = 2 * 1024 * 1024;
+    static final int MAX_BYTES = 2 * 1024 * 1024;
     private static final int MAX_PIXELS = 16 * 1024 * 1024;
     private static final int THUMBNAIL_EDGE = 160;
     private static final int MAX_SCREENSHOT_SOURCE_BYTES = 24 * 1024 * 1024;

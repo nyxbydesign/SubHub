@@ -30,7 +30,7 @@ import com.subhub.app.R;
 import com.subhub.app.util.LocaleHelper;
 import java.util.Locale;
 
-/** Edits a history entry in isolation from the receiving app. */
+/** Adds or edits clipboard text in isolation from the receiving app. */
 public final class GagClipboardEditActivity extends Activity {
     private static Edit pending;
     private Edit editing;
@@ -45,7 +45,7 @@ public final class GagClipboardEditActivity extends Activity {
         Edit(GagClipboard clipboard, GagClipboard.Entry entry) {
             this.clipboard = clipboard;
             this.entry = entry;
-            draft = entry.text();
+            draft = entry == null ? "" : entry.text();
         }
     }
 
@@ -78,7 +78,8 @@ public final class GagClipboardEditActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         editing = pending;
-        if (editing == null || !editing.clipboard.contains(editing.entry, SystemClock.elapsedRealtime())) {
+        if (editing == null || (editing.entry != null
+                && !editing.clipboard.contains(editing.entry, SystemClock.elapsedRealtime()))) {
             finish();
             return;
         }
@@ -100,7 +101,7 @@ public final class GagClipboardEditActivity extends Activity {
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
 
         TextView title = new TextView(this);
-        title.setText(R.string.gag_clipboard_edit);
+        title.setText(editing.entry == null ? R.string.gag_clipboard_add_text : R.string.gag_clipboard_edit);
         title.setTextAppearance(R.style.TextAppearance_SubHub_Section);
         ViewCompat.setAccessibilityHeading(title, true);
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -174,11 +175,14 @@ public final class GagClipboardEditActivity extends Activity {
         String text = input.getText().toString();
         if (!GagClipboard.validText(text)) {
             input.setError(getString(R.string.gag_clipboard_text_required));
-        } else if (editing.clipboard.edit(editing.entry, text, System.currentTimeMillis(), SystemClock.elapsedRealtime())) {
-            finish();
-        } else {
-            input.setError(getString(R.string.gag_clipboard_change_failed));
+            return;
         }
+        long wallNow = System.currentTimeMillis();
+        long elapsedNow = SystemClock.elapsedRealtime();
+        boolean saved = editing.entry == null ? editing.clipboard.addText(text, wallNow, elapsedNow)
+                : editing.clipboard.edit(editing.entry, text, wallNow, elapsedNow);
+        if (saved) finish();
+        else input.setError(getString(R.string.gag_clipboard_change_failed));
     }
 
     @Override protected void onStop() {

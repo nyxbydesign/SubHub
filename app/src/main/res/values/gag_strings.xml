@@ -66,6 +66,7 @@
     <string name="gag_clipboard_recent">Recent</string>
     <string name="gag_clipboard_screenshot">Screenshot</string>
     <string name="gag_clipboard_edit">Edit</string>
+    <string name="gag_clipboard_add_text">Add text</string>
     <string name="gag_clipboard_done">Done</string>
     <string name="gag_clipboard_pin">Pin</string>
     <string name="gag_clipboard_unpin">Unpin</string>
